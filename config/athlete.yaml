@@ -1,0 +1,246 @@
+# Athlete profile, goals, and training architecture.
+#
+# This file is the single source of truth for "who is this system for and what does
+# their week look like." Ingestion, metrics, and the coaching rules engine all read
+# from here rather than hardcoding any of these numbers.
+#
+# NOTE: thresholds and weights for derived metrics (readiness score component
+# weights, HRV/RHR baseline windows, ACWR bands, etc. — see kickoff doc section 6)
+# are NOT in this file yet. They land here in Phase 4 when those metrics are built,
+# so the config and the code that reads it ship together.
+
+profile:
+  name: Francisco
+  age: 24
+  height_cm: 176
+  weight_kg_current: 78.45         # as of 2026-08-21, per comp_prep plan (see docs/comp_prep_2026-10-18.md)
+  weight_kg_current_asof: "2026-08-21"
+  location: "Portals Nous, Mallorca"
+  timezone: "Europe/Madrid"        # store UTC in the DB, render in this zone; handle DST
+  units: metric                    # kg, km, °C, ml throughout
+  week_starts: monday
+
+goals:
+  primary:
+    name: "no-gi BJJ competition"
+    date: "2026-10-18"             # confirmed: Sunday 18 Oct 2026 (docs/comp_prep_2026-10-18.md)
+    weight_division_kg: 77.0       # confirmed by Francisco 2026-08-27; supersedes the 77.27 kg figure in the original kickoff doc
+    weigh_in_format: >
+      Same-day weigh-in, wearing shorts + rashguard (~0.3-0.4 kg over naked weight) is
+      typical for no-gi, but confirm the actual event's format before the final week —
+      some events weigh in the day before, which changes the last 48h plan.
+    note: >
+      Weight must be at or under the division limit on the morning of the comp, with
+      performance intact. This is a weight-making constraint, not a fat-loss target in
+      isolation — see kickoff doc section 6 "Comp countdown" for the red-line logic
+      (required kg/week > 0.7 flips this from a diet problem to a performance-risk
+      problem). Per the comp_prep plan: arrive at weight, don't cut to it — be at
+      competition weight by the end of Week 7 (2026-10-11) and hold it; no water cut,
+      ever, at this weight gap.
+  secondary:
+    - "visible muscle definition"
+    - "better mat conditioning"
+
+# --- Comp-prep block plan (active 2026-08-24 through 2026-10-18) ---
+# This supersedes `weekly_architecture` below for the duration of the camp. Source:
+# docs/comp_prep_2026-10-18.md. After the comp, training reverts to
+# `weekly_architecture` (the steady-state shape) unless Francisco says otherwise.
+comp_prep:
+  active: true
+  starts: "2026-08-24"
+  ends: "2026-10-18"
+  weekly_template:
+    # 4 mat sessions, 2 short strength sessions, 1 aerobic session, 2 rest days.
+    - day: monday
+      sessions:
+        - {type: bjj, subtype: no_gi_technical, notes: "positional focus, strength after the mat, never before"}
+        - {type: calisthenics, subtype: strength_a, duration_min: 25}
+    - day: tuesday
+      sessions:
+        - {type: bjj, subtype: hard_rounds, notes: "highest-intensity sparring day of the week"}
+    - day: wednesday
+      sessions:
+        - {type: bjj, subtype: no_gi_technical, notes: "technical focus, lighter rolls"}
+        - {type: calisthenics, subtype: strength_b, duration_min: 25}
+    - day: thursday
+      sessions:
+        - {type: rest, notes: "mobility / walk / sauna okay, no training"}
+    - day: friday
+      sessions:
+        - {type: bjj, subtype: open_mat, notes: "live competition-style rounds against varied partners"}
+    - day: saturday
+      sessions:
+        - {type: bike, subtype: easy_z2, notes: "conversational pace, with father"}
+    - day: sunday
+      sessions:
+        - {type: rest, notes: "full rest, or 20 min easy mobility"}
+  blocks:
+    - name: base
+      weeks: "1-2"
+      starts: "2026-08-24"
+      ends: "2026-09-06"
+      goal: "build work capacity, get used to 5 training days/week"
+      mat: "broad positional sparring over free rolling; start narrowing competition game"
+      strength: "full sessions, slow tempo, quality over reps"
+      bike_km_range: [60, 70]
+      bike_notes: "normal range with full elevation — biggest aerobic block of the camp"
+      weight_checkpoint: "start tracking honestly, slow downward drift, nothing aggressive"
+    - name: build
+      weeks: "3-5"
+      starts: "2026-09-07"
+      ends: "2026-09-27"
+      goal: "highest total intensity of the camp"
+      mat: "hard rounds Tue + Fri, 6-min rounds with short rests mirroring match length; add a 5th round"
+      strength: "same two sessions, add explosive work (broad jumps, clap push-ups, sprawl-to-sprint)"
+      bike_km_range: [50, 70]
+      bike_notes: "strictly Z2; cap Saturday at 50km if Friday open mat is wrecking recovery"
+      weight_checkpoint: "within 2 kg of competition weight by end of week 5 (2026-09-27)"
+    - name: sharpen
+      weeks: "6-7"
+      starts: "2026-09-28"
+      ends: "2026-10-11"
+      goal: "competition-specific; volume drops, intensity stays high"
+      mat: >
+        tournament simulations — 2-3 six-minute matches with 10-15 min between them,
+        exactly like a bracket, at least twice this block, ideally on a Friday. A-game
+        drilling only, no new techniques from here.
+      strength: "cut to 1 session/week, power + grip only, 20 min"
+      bike_km_range: [40, 50]
+      bike_notes: "reduce elevation"
+      weight_checkpoint: "at or comfortably under the division limit by end of week 7 (2026-10-11)"
+    - name: taper
+      weeks: "8"
+      starts: "2026-10-12"
+      ends: "2026-10-18"
+      goal: "arrive fresh, sharp, light — cannot get fitter this week, only more tired"
+      daily_schedule:
+        - {date: "2026-10-12", day: monday,    plan: "BJJ, technical + light positional, 60% effort"}
+        - {date: "2026-10-13", day: tuesday,   plan: "BJJ, last hard-rounds day — 3-4 good rounds, then stop"}
+        - {date: "2026-10-14", day: wednesday, plan: "BJJ, drilling only — movement, warm-up flows, top 3 sequences"}
+        - {date: "2026-10-15", day: thursday,  plan: "OFF"}
+        - {date: "2026-10-16", day: friday,    plan: "30 min light drilling or full rest — no sparring"}
+        - {date: "2026-10-17", day: saturday,  plan: "NO long ride — 40 min very easy flat spin, or full rest"}
+        - {date: "2026-10-18", day: sunday,    plan: "COMPETE"}
+      critical_note: >
+        Skipping the Saturday long ride is the single most important change this week —
+        tell his father in advance, not the night before.
+  strength_sessions:
+    strength_a:
+      day: monday
+      duration_min: 25
+      exercises:
+        - "weighted or slow-tempo pull-ups: 4x5 (superset with next)"
+        - "pseudo-planche push-ups: 3x8"
+        - "Bulgarian split squats or pistol progressions: 3x6/leg"
+        - "towel pull-ups: 3x6"
+        - "Nordic curl negatives: 3x4 (knee/hamstring insurance)"
+        - "hollow hold: 3x30s"
+    strength_b:
+      day: wednesday
+      duration_min: 25
+      exercises:
+        - "dips, weighted if bodyweight is easy: 4x6"
+        - "archer or deficit push-ups (3s down, 1s pause): 3x8/side"
+        - "single-leg RDL (bodyweight or backpack loaded): 3x8/leg"
+        - "dead hangs, towel or thick bar: 3x max time"
+        - "Copenhagen plank: 3x20s/side (adductors — guard retention transfer)"
+    notes: >
+      25 min cap, a supplement not a second workout — cut if it would compromise
+      Tuesday's rolls. Neck is deliberately not programmed here since it's already
+      trained 3x/week with partners; don't stack more on top. Grip endurance (dead
+      hangs, towel work) is a deliberate over-investment — no-gi grip failure is a
+      distinct limiter from gi grip failure.
+  weekly_self_check:
+    # Francisco's own simplified tracking heuristic for the camp, layered on top of
+    # (not a replacement for) the full daily_metrics/subjective_log schema.
+    signals:
+      - "bodyweight, same conditions, 2-3 mornings/week"
+      - "resting heart rate on waking"
+      - "subjective energy 1-10, after each mat session"
+      - "anything that hurts, and for how long"
+    rule: >
+      If 2 of the 4 signals go red in the same week, add an extra rest day. That's the
+      plan working, not falling behind. This is a simple athlete-authored heuristic to
+      carry into the Phase 7 rules engine alongside the computed readiness bands — it
+      should be checkable, not just advisory prose.
+  hard_no_water_cut: true
+  ruleset_reference: docs/comp_prep_2026-10-18.md   # full white-belt no-gi game plan lives there; not modeled in DB/rules — nothing in it is machine-actionable
+
+# Steady-state weekly architecture. NOT currently active — see `comp_prep` above,
+# which supersedes this until 2026-10-18. Kept here as what training reverts to
+# after the comp, pending confirmation from Francisco post-comp.
+weekly_architecture:
+  active: false
+  supersededBy: comp_prep
+  schedule:
+    - day: monday
+      sessions:
+        - {type: mobility, time: pre_breakfast, duration_min: 15}
+        - {type: bjj, subtype: class, time: "18:00", duration_min: 90}
+    - day: tuesday
+      sessions:
+        - {type: mobility, time: pre_breakfast, duration_min: 15}
+        - {type: calisthenics, subtype: push_and_lower, time: morning, duration_min: 45}
+        - {type: gi_drilling, subtype: technique_only, time: evening}
+    - day: wednesday
+      sessions:
+        - {type: mobility, time: pre_breakfast, duration_min: 15}
+        - {type: bjj, subtype: class, time: "18:00", duration_min: 90}
+    - day: thursday
+      sessions:
+        - {type: mobility, time: pre_breakfast, duration_min: 15}
+        - {type: calisthenics, subtype: pull_and_posterior, time: morning, duration_min: 45}
+    - day: friday
+      sessions:
+        - {type: mobility, time: pre_breakfast, duration_min: 15}
+        - {type: bjj, subtype: open_mat, time: "18:00", duration_min: 120}
+    - day: saturday
+      sessions:
+        - {type: mobility, time: pre_breakfast, duration_min: 15}
+        - {type: bike, subtype: easy_z2, time: "07:30", duration_min_range: [90, 120]}
+    - day: sunday
+      sessions:
+        - {type: rest_or_active_recovery}
+        - {type: weekly_retro}
+  dinner_time: "21:00"
+
+# Nutrition guardrails the coaching layer must respect and never violate.
+# See kickoff doc section 7 "hard safety rails" — these are enforced in the
+# rules engine (coach/rules.py), not just documented here.
+nutrition:
+  protein_g_daily_min: 180         # the one hard number
+  calorie_target_kcal: 2300        # ~500 kcal deficit; "the plate framework" governs everything else
+  deficit_kcal_max: 500            # never recommend deeper than this implies
+  weekly_weight_loss_kg_max: 0.5   # per comp_prep plan: more than this during a hard camp costs strength/recovery
+  alcohol_allowed: false
+  coffee_black_daily: 2
+  water_cut_allowed: false          # hard no, per comp_prep plan — grip/reaction-time/cognition tradeoff isn't worth it at this weight gap
+  social_meal_policy: >
+    Saturday restaurant dinner is allowed and planned for. Social meals are the
+    primary known deficit disruptor — deficit compliance, not programming, is
+    the binding constraint on comp weight. Never compensate for a social meal
+    with extra training or skipped meals; never recommend fasting or
+    calorie-obsession tactics.
+
+equipment:
+  - {item: pull_up_bar, location: outdoor_terrace}
+  - {item: kettlebell, weight_kg: 12}
+  - {item: barbell, weight_kg: 10}
+  - {item: plates, total_kg: 50}
+  - {item: bench, adjustable: true}
+
+# Injury history encoded as guardrails. The rules engine (Phase 7) must enforce
+# these, not just document them.
+injuries:
+  hard_no:
+    - condition: "prior right knee injury from running"
+      rule: "never recommend running, in any readiness band, permanently"
+  conditional:
+    - condition: "recurring neck vulnerability, aggravated by forward head position under load"
+      rule: >
+        never recommend increasing load on pressing or overhead work in any week
+        where a neck niggle was logged in subjective_log
+
+body_measurements:
+  waist_baseline_cm: 86
+  waist_measurement_protocol: "Sunday, fasted, below navel"
