@@ -83,6 +83,41 @@ its presence/absence and says so clearly. Once it exists, inspect its real struc
 the same way Strava/Apple Health's were inspected — do not assume from public docs —
 before writing `ingest/garmin_bulk.py`. That's the last piece of Phase 2.
 
+**While waiting on Garmin (2026-08-27), two things got built out of strict phase
+order** — both deliberately chosen because neither depends on Garmin data or Phase 3
+dedup, so there was no rework risk:
+
+1. **Manual BJJ logger** (`scripts/log_bjj.py`, kickoff doc 2.4) — the first-class,
+   not-an-afterthought ingestion path for the one training stimulus no export
+   captures. Flag-driven (`--type class --duration 90 --rpe 7 ...`) or fully
+   interactive (run with no flags). Upserts on `(date, session_type)`, warns before
+   overwriting an existing session. `computed_load` (Foster's method) is computed
+   automatically by `core.models.BjjSession`, never entered by hand. Added a
+   `training_load.bjj_rpe_calibration_factor` placeholder (1.0, marked
+   "uncalibrated") to `config/athlete.yaml` — real calibration against Garmin's own
+   `training_load` waits for Garmin data, per kickoff doc 2.4.
+2. **Weight trend / comp countdown preview** (`metrics/body_comp.py` +
+   `scripts/weight_report.py`) — a deliberately partial slice of Phase 4, pulled
+   forward because weight has no Garmin dependency to reconcile (Apple Health/Renpho
+   is the sole source). Pure, hand-verified functions: `compute_weight_ewma()` (7-day
+   EWMA, recursive form), `weight_trend_ols()` (21-day trailing OLS slope + 95% CI,
+   `confidence="insufficient_data"` below 3 real points in the window — never a false
+   CI), `comp_countdown()` (kg/weeks remaining, required vs. actual kg/week, red flag
+   above 0.7 kg/week). Nothing here writes to `derived_daily` yet — that's part of
+   doing the full Phase 4 metric suite together, not this early slice.
+
+   **Real output against Francisco's actual data** (2026-08-27): 112 days of weight,
+   2021-06-17 to 2026-08-21 (sparse historically, picking up cadence in 2026 — not a
+   data artifact, checked). Latest weigh-in 78.45 kg; 7-day EWMA 79.37 kg. 21-day
+   trend: **+0.552 kg/week, 95% CI [-1.507, +0.404]** (n=6) — the interval straddles
+   zero, meaning the trend isn't statistically distinguishable from flat or even
+   losing yet. This is the system doing exactly what it's supposed to (kickoff doc
+   section 6: "the noise is comparable to the signal at these magnitudes") — not a
+   bug, and it'll tighten up fast now that Block 1 of the comp-prep camp has daily
+   logging going. Comp countdown: 52 days / 7.4 weeks to 2026-10-18, 2.37 kg to lose,
+   required 0.319 kg/week — under the 0.7 red line, currently "on track" (though the
+   "actual" rate is unreliable this early per the CI above).
+
 **Phase 1 summary** (2026-08-27): `core/migrations/0001_initial_schema.sql` is the
 source of truth for the schema (all 7 tables from the target schema below, applied via
 `core/db.py: apply_migrations()`, tracked in a `schema_migrations` table);
@@ -312,13 +347,13 @@ data/
   raw/                 immutable per-source downloads (gitignored)
   health.db             the one canonical store (gitignored)
 src/health_os/
-  ingest/               strava_bulk.py, apple_health.py, common.py (shared helpers) — garmin.py/garmin_bulk.py/bjj_manual.py not yet written
+  ingest/               strava_bulk.py, apple_health.py, common.py (shared helpers) — garmin.py/garmin_bulk.py not yet written
   core/                 db.py, timezones.py, schema.sql (snapshot), migrations/0001_initial_schema.sql (source of truth), models.py, dedupe.py (Phase 3)
-  metrics/              baselines.py, readiness.py, load.py, body_comp.py
+  metrics/              body_comp.py (weight trend + comp countdown) — baselines.py, readiness.py, load.py not yet written (wait on Garmin)
   coach/                rules.py, briefing.py, weekly_retro.py
   dashboard/             app.py (Streamlit)
-scripts/                backfill.py (Phase 2 entrypoint) — sync.py, log_bjj.py not yet written
-tests/                  core/, ingest/, fixtures/ (synthetic — never real personal data, fixtures are committed to git)
+scripts/                backfill.py (Phase 2 entrypoint), log_bjj.py (manual BJJ logger), weight_report.py (Phase 4 preview) — sync.py not yet written
+tests/                  core/, ingest/, metrics/, scripts/, fixtures/ (synthetic — never real personal data, fixtures are committed to git)
 docs/decisions/          ADRs, one per non-obvious choice
 ```
 
