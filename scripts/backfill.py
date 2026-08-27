@@ -26,6 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from health_os.core import db  # noqa: E402
+from health_os.core.dedupe import dedupe_activities  # noqa: E402
 from health_os.ingest import apple_health, strava_bulk  # noqa: E402
 
 DATA_RAW = Path("data/raw")
@@ -149,6 +150,19 @@ def main(argv: list[str] | None = None) -> int:
     conn = db.init_db(args.db_path)
     try:
         results = {source: _BACKFILLERS[source](conn) for source in sources}
+
+        # Cross-source dedup (design principle 5) always runs after ingestion,
+        # never inside it — see core/dedupe.py's module docstring for why.
+        # Correct (idempotent) even with only some sources loaded, e.g. Garmin
+        # not yet backfilled: it just dedupes whatever's actually in the table.
+        dedupe_result = dedupe_activities(conn)
+        if dedupe_result.groups_merged:
+            print(
+                f"dedupe: merged {dedupe_result.groups_merged} duplicate group(s), "
+                f"removed {dedupe_result.rows_deleted} row(s)"
+            )
+        else:
+            print("dedupe: no duplicates found")
     finally:
         conn.close()
 
