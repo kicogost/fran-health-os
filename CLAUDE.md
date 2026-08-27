@@ -149,6 +149,80 @@ verified against real data first, not spec-guessed:**
    warns before overwriting). `body_measurements` was sitting empty; the comp-prep
    plan calls for a weekly Sunday measurement, so this is immediately usable.
 
+## Proprietary training-load / readiness build-out (2026-08-27)
+
+Francisco asked directly: since HRV needs to wait for real Garmin data, can the
+system build its own training-load and readiness signals from what's already
+available (Strava, Apple Health, BJJ/wellness logs) plus whatever he logs himself —
+researched first, not invented. Findings (sources in the chat, worth re-reading
+before touching this area again):
+
+- **ACWR has real, documented problems** — Impellizzeri et al. and multiple
+  systematic reviews found "severe mathematical coupling" and inconsistent
+  injury association. Still implemented (the kickoff doc explicitly asked for
+  it) but should be read as a rough ramp-rate signal, not a validated predictor.
+- **CTL/ATL/TSB (Banister impulse-response model — TrainingPeaks' "Performance
+  Manager Chart" math) is the better-regarded alternative.** Exponentially-weighted
+  fitness (42-day time constant) minus fatigue (7-day) = freshness. Built
+  alongside ACWR, not instead of it.
+- **Session-RPE (already in `bjj_sessions`) is specifically validated for BJJ**,
+  not just borrowed from other sports — a 2020 study on BJJ athletes found it
+  correlated with creatine kinase (muscle damage) and reduced sleep quality.
+- **The single highest-value addition, and the one needing zero new hardware, is
+  a structured daily wellness questionnaire** — the Hooper-Mackinnon protocol
+  (sleep quality, stress, fatigue, muscle soreness, each 1-10). Subjective ratings
+  like this are validated to correlate with recovery/performance at least as well
+  as objective measures, and it's the one signal that works today, independent of
+  Garmin entirely.
+- **RPE/RIR-anchored autoregulation** (RPE 8 ~ 2 reps in reserve, RPE 9 ~ 1, RPE
+  10 ~ failure) is the validated way to make "Amber: hold load" concrete for the
+  calisthenics sessions — not built yet, noted for when the coaching layer
+  (Phase 7) lands.
+
+**Built as a result (migration 0002, `core/migrations/0002_bjj_wellness_and_load.sql`)**:
+
+- **`bjj_sessions`**: the boolean `gassed` is replaced with `rounds_gassed` (a
+  count, strictly more informative — "gassed=true" doesn't say if that was 1
+  round of 8 or 6) and a new `session_feeling` column, CHECK-constrained to
+  `dizzy < gassed < tired < okay` (worst to best) — these are Francisco's own
+  three BJJ-specific tracking questions, alongside the existing `rounds_rolled`.
+  `dizzy` is deliberately treated as a genuine safety signal, not just "very
+  tired" — `log_bjj.py` prints a note when it's logged. `rounds_rolled`/
+  `rounds_gassed`/`session_feeling` are only asked for `class`/`open_mat` — never
+  for `gi_drilling` (technique-only, nothing to roll).
+- **`subjective_log`**: four new 1-10 fields (`sleep_quality`, `stress`,
+  `fatigue`, `muscle_soreness`) — all the SAME polarity (1=best, 10=worst) so
+  they sum cleanly into `hooper_index` (4=excellent, 40=terrible), computed
+  automatically by `core.models.SubjectiveLogEntry` only when all four are
+  present (a partial sum would misrepresent the day). New
+  `scripts/log_wellness.py` covers the *entire* `subjective_log` row (this
+  table never had a dedicated logger before) — every field optional, flag mode
+  if any content flag is passed, interactive prompts otherwise.
+- **`metrics/load.py`** (new): `build_daily_load_series()` combines
+  `activities.training_load` with BJJ `computed_load` (scaled by the
+  still-uncalibrated `bjj_rpe_calibration_factor`) into one total per calendar
+  day — walking every day and filling rest days with **0.0, a real value**,
+  unlike weight's "missing = unknown." `compute_acwr()`, `compute_monotony_strain()`
+  (Foster), and `compute_ctl_atl()` (Banister/TrainingPeaks) all build on that
+  series. 19 tests, several hand-computed exactly (e.g. a 28-days-at-50 then
+  7-days-at-200 load pattern giving an exact ACWR of 2.8).
+
+**Important real finding, worth remembering before trusting these numbers**:
+ran the load metrics against the actual database (2026-08-27) and the result is
+*stale*, not current — `activities.training_load` is populated for only 9 of
+251 real Strava activities, **all of them runs**, and only in a March-June 2026
+window. Every other sport (rides, weight training, walks — i.e. everything
+Francisco has actually done since June, including the current comp-prep block)
+has zero `training_load` coverage in the Strava export. Combined with no BJJ
+sessions logged yet (table's still empty — that's on Francisco to start using
+`log_bjj.py`), the daily load series currently ends 2026-06-13, ~2.5 months
+stale. The machinery is correct and tested; **the current live inputs just
+don't cover recent training yet.** This will fix itself as BJJ/wellness logging
+accumulates and once Garmin lands — until then, don't read today's ACWR/CTL/ATL
+as if they describe today. The Hooper wellness index doesn't have this problem
+(it's whatever Francisco logs that day), which is part of why it's the
+highest-value piece of this build-out.
+
 **Phase 1 summary** (2026-08-27): `core/migrations/0001_initial_schema.sql` is the
 source of truth for the schema (all 7 tables from the target schema below, applied via
 `core/db.py: apply_migrations()`, tracked in a `schema_migrations` table);
@@ -379,11 +453,11 @@ data/
   health.db             the one canonical store (gitignored)
 src/health_os/
   ingest/               strava_bulk.py, apple_health.py, common.py (shared helpers) — garmin.py/garmin_bulk.py not yet written
-  core/                 db.py, timezones.py, dedupe.py (activities cross-source dedup, live), schema.sql (snapshot), migrations/0001_initial_schema.sql (source of truth), models.py
-  metrics/              body_comp.py (weight trend + comp countdown) — baselines.py, readiness.py, load.py not yet written (wait on Garmin)
+  core/                 db.py, timezones.py, dedupe.py (activities cross-source dedup, live), schema.sql (snapshot, v2), migrations/000{1,2}_*.sql (source of truth), models.py
+  metrics/              body_comp.py (weight trend + comp countdown), load.py (ACWR, monotony/strain, CTL/ATL/TSB) — baselines.py, readiness.py not yet written (wait on Garmin/HRV)
   coach/                rules.py, briefing.py, weekly_retro.py
   dashboard/             app.py (Streamlit)
-scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview) — sync.py not yet written
+scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview) — sync.py not yet written
 tests/                  core/, ingest/, metrics/, scripts/, fixtures/ (synthetic — never real personal data, fixtures are committed to git)
 docs/decisions/          ADRs, one per non-obvious choice
 ```
@@ -396,12 +470,16 @@ Minimum tables, full column lists in kickoff doc section 5:
   Battery, stress, steps, kcal, VO2max, training readiness, respiration, SpO2, skin temp.
 - **`activities`** — one row/session: `source`/`source_id`, timing, sport, HR zones,
   training load, TE, power, `merged_from` (JSON of superseded rows).
-- **`bjj_sessions`** — the manual log, joined into `activities` with computed load. Once
+- **`bjj_sessions`** — the manual log, joined into `activities` with computed load.
+  Also `rounds_rolled`/`rounds_gassed`/`session_feeling` (dizzy/gassed/tired/okay,
+  worst-best — migration 0002, Francisco's own three BJJ tracking questions). Once
   the chest strap (ADR 0002) is in use, also carries a `linked_activity_id` pointing at
   the matching Garmin-recorded activity for that session — linked, not deduplicated
   against it; see `docs/bjj_recording_workflow.md`.
 - **`subjective_log`** — one row/date: felt note, protein_hit, gassed, niggles, day_note,
-  `social_meal` (correlated against weight trend — this is the known deficit disruptor).
+  `social_meal` (correlated against weight trend — this is the known deficit disruptor),
+  plus a Hooper-Mackinnon-inspired `sleep_quality`/`stress`/`fatigue`/`muscle_soreness`
+  (1-10 each) summing into `hooper_index` (migration 0002).
 - **`body_measurements`** — waist_cm (Sunday, fasted, below navel; baseline 86 cm) + other tape measures.
 - **`derived_daily`** — every computed metric below, with the input values and window
   sizes that produced it.
