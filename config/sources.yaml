@@ -1,0 +1,32 @@
+# Per-source ingestion settings. General cross-source precedence for `activities`
+# (Garmin > Strava > Apple Health) is design principle 5 in CLAUDE.md and gets
+# implemented in Phase 3 (core/dedupe.py) — this file is for source-specific
+# filtering decisions that have to happen at parse time, before dedup exists.
+
+apple_health:
+  # sourceName values to drop entirely at ingest time — verified against
+  # Francisco's real export (2026-08-27), not guessed:
+  exclude_source_names:
+    - "Connect" # Garmin Connect syncing into Apple Health — duplicate; Garmin is ingested directly
+    - "Strava" # Strava syncing into Apple Health — duplicate; Strava is ingested directly
+  # Case-insensitive substring match, for sources whose exact name isn't worth
+  # hardcoding (family members' devices via Family Sharing, etc.):
+  exclude_source_name_substrings:
+    - "roberta" # another person's Apple Watch, mixed in via Family Sharing — not Francisco's data
+
+  # Only these sourceNames are trusted for daily_metrics.weight_kg. Deliberately an
+  # allowlist, not a denylist: weight is the one field where getting the source
+  # wrong is easy to silently get wrong (any random HealthKit-writing app could log
+  # a bogus weight), so we only take it from the known scale.
+  weight_source_names:
+    - "Renpho"
+    - "RENPHO Health"
+
+strava:
+  precedence_note: >
+    Historical depth only (pre-Forerunner 165, kickoff doc section 2.3). Any Strava
+    activity that also exists in Garmin gets superseded during Phase 3 dedup, per
+    design principle 5 — not handled here.
+
+garmin:
+  precedence_note: "Primary source of truth for all activities and daily wellness metrics."
