@@ -418,7 +418,9 @@ models rather than buffering through the gap. Still lands in Garmin Connect with
 new ingestion pipeline, fully hidden under a rashguard, and removes the wrist/bicep
 snag risk entirely rather than just reducing it. **Don't buy until Phase 3 is running
 and the BJJ data gap is provably the bottleneck** — unchanged from 0001, only the device
-pick changed. Francisco confirmed 2026-08-27 he's buying a Garmin strap.
+pick changed. **Francisco confirmed 2026-08-27 he ordered the Garmin HRM 600**
+specifically (not the HRM-Pro Plus alternative) — that's the model
+`docs/bjj_recording_workflow.md` should assume once it's in hand.
 
 ## Design principles (non-negotiable)
 
