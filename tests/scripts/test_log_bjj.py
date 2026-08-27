@@ -17,8 +17,9 @@ def _args(**overrides) -> argparse.Namespace:
         session_type=None,
         duration=None,
         rpe=None,
-        rounds=None,
-        gassed=None,
+        rounds_rolled=None,
+        rounds_gassed=None,
+        session_feeling=None,
         niggles=None,
         notes=None,
         db_path=None,
@@ -31,7 +32,13 @@ class TestResolveSessionFlagMode:
     def test_builds_session_from_flags(self) -> None:
         session = log_bjj.resolve_session(
             _args(
-                date="2026-08-27", session_type="class", duration=90, rpe=7, rounds=6, gassed=True
+                date="2026-08-27",
+                session_type="class",
+                duration=90,
+                rpe=7,
+                rounds_rolled=6,
+                rounds_gassed=1,
+                session_feeling="tired",
             )
         )
         assert session.date == "2026-08-27"
@@ -39,16 +46,19 @@ class TestResolveSessionFlagMode:
         assert session.duration_min == 90
         assert session.session_rpe == 7
         assert session.rounds_rolled == 6
-        assert session.gassed is True
+        assert session.rounds_gassed == 1
+        assert session.session_feeling == "tired"
         assert session.computed_load == 630.0
 
     def test_defaults_date_to_today_madrid(self) -> None:
         session = log_bjj.resolve_session(_args(session_type="open_mat", duration=120, rpe=9))
         assert session.date == log_bjj._today_madrid()
 
-    def test_gassed_defaults_false_when_unset(self) -> None:
+    def test_rolling_fields_default_none_when_unset(self) -> None:
         session = log_bjj.resolve_session(_args(session_type="class", duration=90, rpe=5))
-        assert session.gassed is False
+        assert session.rounds_rolled is None
+        assert session.rounds_gassed is None
+        assert session.session_feeling is None
 
     def test_missing_required_flag_raises(self) -> None:
         with pytest.raises(SystemExit, match="--rpe"):
@@ -60,11 +70,29 @@ class TestResolveSessionFlagMode:
         # argparse's choices= would normally catch this before resolve_session ever
         # sees it in real use — this exercises BjjSession's own validation directly.
 
+    def test_rounds_gassed_exceeding_rounds_rolled_raises(self) -> None:
+        with pytest.raises(ValueError):
+            log_bjj.resolve_session(
+                _args(session_type="class", duration=90, rpe=7, rounds_rolled=2, rounds_gassed=5)
+            )
+
 
 class TestResolveSessionInteractiveMode:
-    def test_prompts_for_every_field(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_prompts_for_every_field_on_rolling_session(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         answers = iter(
-            ["2026-08-27", "open_mat", "120", "9", "8", "y", "left knee", "worked passing"]
+            [
+                "2026-08-27",
+                "open_mat",
+                "120",
+                "9",
+                "8",
+                "3",
+                "gassed",
+                "left knee",
+                "worked passing",
+            ]
         )
         monkeypatch.setattr("builtins.input", lambda _: next(answers))
         session = log_bjj.resolve_session(_args())
@@ -73,20 +101,29 @@ class TestResolveSessionInteractiveMode:
         assert session.duration_min == 120
         assert session.session_rpe == 9
         assert session.rounds_rolled == 8
-        assert session.gassed is True
+        assert session.rounds_gassed == 3
+        assert session.session_feeling == "gassed"
         assert session.niggles == "left knee"
         assert session.notes == "worked passing"
 
-    def test_optional_fields_blank_become_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        answers = iter(["2026-08-27", "class", "90", "7", "", "n", "", ""])
+    def test_gi_drilling_skips_rolling_questions(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # No rounds/gassed/feeling prompts for a technique-only session.
+        answers = iter(["2026-08-27", "gi_drilling", "60", "4", "", ""])
         monkeypatch.setattr("builtins.input", lambda _: next(answers))
         session = log_bjj.resolve_session(_args())
         assert session.rounds_rolled is None
+        assert session.rounds_gassed is None
+        assert session.session_feeling is None
+
+    def test_optional_fields_blank_become_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        answers = iter(["2026-08-27", "class", "90", "7", "0", "0", "okay", "", ""])
+        monkeypatch.setattr("builtins.input", lambda _: next(answers))
+        session = log_bjj.resolve_session(_args())
         assert session.niggles is None
         assert session.notes is None
 
     def test_rejects_invalid_choice_until_valid(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        answers = iter(["2026-08-27", "sparring", "class", "90", "7", "", "n", "", ""])
+        answers = iter(["2026-08-27", "sparring", "class", "90", "7", "0", "0", "okay", "", ""])
         monkeypatch.setattr("builtins.input", lambda _: next(answers))
         session = log_bjj.resolve_session(_args())
         assert session.session_type == "class"
@@ -111,6 +148,31 @@ class TestMainEndToEnd:
 
         out = capsys.readouterr().out
         assert "load 630" in out
+
+    def test_dizzy_feeling_prints_safety_note(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        db_path = tmp_path / "test.db"
+        log_bjj.main(
+            [
+                "--type",
+                "open_mat",
+                "--duration",
+                "120",
+                "--rpe",
+                "9",
+                "--rounds-rolled",
+                "6",
+                "--rounds-gassed",
+                "4",
+                "--feeling",
+                "dizzy",
+                "--db-path",
+                str(db_path),
+            ]
+        )
+        out = capsys.readouterr().out
+        assert "more than normal hard-training fatigue" in out
 
     def test_reupserting_same_date_type_updates_not_duplicates(
         self, tmp_path: Path, capsys: pytest.CaptureFixture

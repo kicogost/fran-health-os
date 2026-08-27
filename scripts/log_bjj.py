@@ -8,12 +8,16 @@ Interactive (prompts for every field):
 Or pass flags directly for a quick one-liner after class:
 
     uv run python scripts/log_bjj.py --type class --duration 90 --rpe 7 \\
-        --rounds 6 --gassed --niggles "left knee tight"
+        --rounds-rolled 6 --rounds-gassed 1 --feeling tired --niggles "left knee tight"
 
 Upserts on (date, session_type) — logging the same type twice for the same date
 updates the existing row rather than creating a duplicate (warns before doing so).
 `computed_load` is Foster's method (duration_min x session_rpe), computed
 automatically by `core.models.BjjSession` — never entered by hand.
+
+`rounds_rolled`/`rounds_gassed`/`feeling` are only asked for `class` and
+`open_mat` sessions — `gi_drilling` is technique-only (config/athlete.yaml), so
+there's nothing to roll and asking would just train you to enter zeros.
 """
 
 from __future__ import annotations
@@ -28,9 +32,10 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from health_os.core import db  # noqa: E402
-from health_os.core.models import BjjSession  # noqa: E402
+from health_os.core.models import SESSION_FEELINGS, BjjSession  # noqa: E402
 
 SESSION_TYPES = ("class", "open_mat", "gi_drilling")
+ROLLING_SESSION_TYPES = ("class", "open_mat")
 
 
 def _today_madrid() -> str:
@@ -50,7 +55,7 @@ def _prompt(label: str, default: str | None = None, *, required: bool = True) ->
         print("  required.")
 
 
-def _prompt_choice(label: str, choices: tuple[str, ...], default: str) -> str:
+def _prompt_choice(label: str, choices: tuple[str, ...], default: str | None = None) -> str:
     while True:
         val = _prompt(f"{label} ({'/'.join(choices)})", default)
         if val in choices:
@@ -72,20 +77,17 @@ def _prompt_int(label: str, *, lo: int, hi: int) -> int:
         return val
 
 
-def _prompt_bool(label: str, *, default: bool = False) -> bool:
-    raw = _prompt(f"{label} (y/n)", "y" if default else "n").lower()
-    return raw.startswith("y")
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--date", help="YYYY-MM-DD, default today (Europe/Madrid)")
     parser.add_argument("--type", dest="session_type", choices=SESSION_TYPES)
     parser.add_argument("--duration", type=int, help="minutes")
     parser.add_argument("--rpe", type=int, help="session RPE, 1-10")
-    parser.add_argument("--rounds", type=int, default=None, help="rounds rolled")
-    parser.add_argument("--gassed", action="store_true", default=None)
-    parser.add_argument("--not-gassed", dest="gassed", action="store_false")
+    parser.add_argument("--rounds-rolled", type=int, default=None)
+    parser.add_argument(
+        "--rounds-gassed", type=int, default=None, help="how many of those you got gassed on"
+    )
+    parser.add_argument("--feeling", dest="session_feeling", choices=SESSION_FEELINGS, default=None)
     parser.add_argument("--niggles", default=None)
     parser.add_argument("--notes", default=None)
     parser.add_argument("--db-path", default=None)
@@ -105,9 +107,12 @@ def resolve_session(args: argparse.Namespace) -> BjjSession:
         session_type = _prompt_choice("Session type", SESSION_TYPES, "class")
         duration_min = _prompt_int("Duration (min)", lo=1, hi=600)
         session_rpe = _prompt_int("Session RPE", lo=1, hi=10)
-        rounds_raw = _prompt("Rounds rolled", required=False)
-        rounds_rolled = int(rounds_raw) if rounds_raw else None
-        gassed = _prompt_bool("Gassed")
+        if session_type in ROLLING_SESSION_TYPES:
+            rounds_rolled = _prompt_int("Rounds rolled", lo=0, hi=30)
+            rounds_gassed = _prompt_int("Rounds gassed on", lo=0, hi=rounds_rolled)
+            session_feeling = _prompt_choice("Feeling at the end", SESSION_FEELINGS, "tired")
+        else:
+            rounds_rolled = rounds_gassed = session_feeling = None
         niggles = _prompt("Niggles (free text)", required=False) or None
         notes = _prompt("Notes", required=False) or None
     else:
@@ -129,8 +134,9 @@ def resolve_session(args: argparse.Namespace) -> BjjSession:
         session_type = args.session_type
         duration_min = args.duration
         session_rpe = args.rpe
-        rounds_rolled = args.rounds
-        gassed = bool(args.gassed)
+        rounds_rolled = args.rounds_rolled
+        rounds_gassed = args.rounds_gassed
+        session_feeling = args.session_feeling
         niggles = args.niggles
         notes = args.notes
 
@@ -140,7 +146,8 @@ def resolve_session(args: argparse.Namespace) -> BjjSession:
         duration_min=duration_min,
         session_rpe=session_rpe,
         rounds_rolled=rounds_rolled,
-        gassed=gassed,
+        rounds_gassed=rounds_gassed,
+        session_feeling=session_feeling,
         niggles=niggles,
         notes=notes,
     )
@@ -166,10 +173,17 @@ def _print_summary(session: BjjSession) -> None:
         f"@ RPE {session.session_rpe} -> load {session.computed_load:.0f}"
     ]
     if session.rounds_rolled is not None:
-        parts.append(f"{session.rounds_rolled} rounds")
-    if session.gassed:
-        parts.append("gassed")
+        rounds_desc = f"{session.rounds_rolled} rounds"
+        if session.rounds_gassed:
+            rounds_desc += f" ({session.rounds_gassed} gassed)"
+        parts.append(rounds_desc)
+    if session.session_feeling:
+        parts.append(f"felt {session.session_feeling}")
     print(", ".join(parts))
+    if session.session_feeling == "dizzy":
+        print(
+            "  logged 'dizzy' — that's more than normal hard-training fatigue, keep an eye on it."
+        )
     if session.niggles:
         print(f"  niggles: {session.niggles}")
     if session.notes:
