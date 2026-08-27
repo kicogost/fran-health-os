@@ -157,14 +157,16 @@ available (Strava, Apple Health, BJJ/wellness logs) plus whatever he logs himsel
 researched first, not invented. Findings (sources in the chat, worth re-reading
 before touching this area again):
 
-- **ACWR has real, documented problems** — Impellizzeri et al. and multiple
-  systematic reviews found "severe mathematical coupling" and inconsistent
-  injury association. Still implemented (the kickoff doc explicitly asked for
-  it) but should be read as a rough ramp-rate signal, not a validated predictor.
+- **ACWR (what the kickoff doc originally specced for this) has real, documented
+  problems** — Impellizzeri et al. and multiple systematic reviews found "severe
+  mathematical coupling" and inconsistent injury association. Built first, then
+  **dropped entirely** once Francisco weighed in on the caveat — see ADR
+  [0003](docs/decisions/0003-drop-acwr-for-ctl-atl-tsb.md) for the full reasoning.
+  It is **not** in this codebase.
 - **CTL/ATL/TSB (Banister impulse-response model — TrainingPeaks' "Performance
-  Manager Chart" math) is the better-regarded alternative.** Exponentially-weighted
-  fitness (42-day time constant) minus fatigue (7-day) = freshness. Built
-  alongside ACWR, not instead of it.
+  Manager Chart" math) is the sole training-load-ratio signal**, per ADR 0003.
+  Exponentially-weighted fitness (42-day time constant) minus fatigue (7-day) =
+  freshness.
 - **Session-RPE (already in `bjj_sessions`) is specifically validated for BJJ**,
   not just borrowed from other sports — a 2020 study on BJJ athletes found it
   correlated with creatine kinase (muscle damage) and reduced sleep quality.
@@ -202,10 +204,9 @@ before touching this area again):
   `activities.training_load` with BJJ `computed_load` (scaled by the
   still-uncalibrated `bjj_rpe_calibration_factor`) into one total per calendar
   day — walking every day and filling rest days with **0.0, a real value**,
-  unlike weight's "missing = unknown." `compute_acwr()`, `compute_monotony_strain()`
-  (Foster), and `compute_ctl_atl()` (Banister/TrainingPeaks) all build on that
-  series. 19 tests, several hand-computed exactly (e.g. a 28-days-at-50 then
-  7-days-at-200 load pattern giving an exact ACWR of 2.8).
+  unlike weight's "missing = unknown." `compute_monotony_strain()` (Foster) and
+  `compute_ctl_atl()` (Banister/TrainingPeaks) build on that series — no ACWR
+  function (ADR 0003). 15 tests, several hand-computed exactly.
 
 **Important real finding, worth remembering before trusting these numbers**:
 ran the load metrics against the actual database (2026-08-27) and the result is
@@ -218,7 +219,7 @@ sessions logged yet (table's still empty — that's on Francisco to start using
 `log_bjj.py`), the daily load series currently ends 2026-06-13, ~2.5 months
 stale. The machinery is correct and tested; **the current live inputs just
 don't cover recent training yet.** This will fix itself as BJJ/wellness logging
-accumulates and once Garmin lands — until then, don't read today's ACWR/CTL/ATL
+accumulates and once Garmin lands — until then, don't read today's CTL/ATL/TSB
 as if they describe today. The Hooper wellness index doesn't have this problem
 (it's whatever Francisco logs that day), which is part of why it's the
 highest-value piece of this build-out.
@@ -454,7 +455,7 @@ data/
 src/health_os/
   ingest/               strava_bulk.py, apple_health.py, common.py (shared helpers) — garmin.py/garmin_bulk.py not yet written
   core/                 db.py, timezones.py, dedupe.py (activities cross-source dedup, live), schema.sql (snapshot, v2), migrations/000{1,2}_*.sql (source of truth), models.py
-  metrics/              body_comp.py (weight trend + comp countdown), load.py (ACWR, monotony/strain, CTL/ATL/TSB) — baselines.py, readiness.py not yet written (wait on Garmin/HRV)
+  metrics/              body_comp.py (weight trend + comp countdown), load.py (monotony/strain, CTL/ATL/TSB — no ACWR, ADR 0003) — baselines.py, readiness.py not yet written (wait on Garmin/HRV)
   coach/                rules.py, briefing.py, weekly_retro.py
   dashboard/             app.py (Streamlit)
 scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview) — sync.py not yet written
@@ -493,9 +494,11 @@ Minimum tables, full column lists in kickoff doc section 5:
   placeholder — switch to the computed baseline automatically at 60 days, log the
   switchover.
 - **RHR baseline** — same structure. Flag a >1 SD sustained rise across 3 consecutive days.
-- **ACWR** — acute = 7-day rolling load sum; chronic = 28-day rolling avg of those sums;
-  ACWR = acute/chronic. Sweet spot 0.8-1.3; >1.5 = ramping too fast; <0.8 = detraining.
-  Must include BJJ manual load or the number is meaningless.
+- **CTL/ATL/TSB (Banister/TrainingPeaks)** — built in `metrics/load.py`, replaces the
+  kickoff doc's original ACWR spec (ADR 0003: the sports-science literature has moved
+  against ACWR — mathematical coupling, inconsistent injury association). CTL =
+  fitness (42-day-time-constant EWMA of daily load), ATL = fatigue (7-day), TSB =
+  CTL−ATL = freshness. Must include BJJ manual load or the numbers are meaningless.
 - **Monotony/strain (Foster)** — monotony = mean daily load ÷ SD of daily load over 7
   days; strain = weekly load × monotony. Flag monotony >2.0.
 - **Sleep debt** — rolling 14-day sum of (8.0h need − actual), reported in hours.
@@ -508,8 +511,11 @@ Minimum tables, full column lists in kickoff doc section 5:
 - **Readiness score (0-100)** — own composite alongside Garmin's Training Readiness, so
   disagreement is visible. Weights live in `config/athlete.yaml` (tunable): 35% HRV
   deviation (SD units, clamped ±2), 25% sleep (last-night vs 8h need + 14-day debt), 15%
-  RHR deviation (inverted), 15% ACWR-vs-sweet-spot, 10% subjective input. Always emit
-  the component breakdown alongside the score.
+  RHR deviation (inverted), 15% TSB scored self-relatively (e.g. a z-score within the
+  athlete's own trailing TSB distribution — raw TSB magnitude depends on load units
+  that aren't universally comparable, so don't borrow an absolute threshold from
+  elsewhere), 10% subjective input (`hooper_index`, already available — see the
+  2026-08-27 build-out above). Always emit the component breakdown alongside the score.
 
 ## Coaching layer (target — lands in Phase 7)
 
@@ -523,7 +529,11 @@ don't manufacture an insight daily.
 - **Green ≥75** — train as scheduled; BJJ live rounds fine; lifting days get a load progression attempt.
 - **Amber 55-74** — train as scheduled, cap intensity; BJJ technical/no-ego rolls; hold calisthenics load; bike strictly Z2.
 - **Red <55** — downgrade, don't delete: BJJ → drilling only; calisthenics → mobility + light kettlebell. Never prescribe a full rest day off one bad number — require 2 consecutive red days or 3 amber days first.
-- **Structural triggers** — 3 consecutive days HRV < baseline−1SD, or ACWR >1.5 for 4 days, or monotony >2.0 with strain in the last-8-weeks top quartile → formal capped-week/deload recommendation. Deloads are already ~every 4 weeks on the calendar — flag when calendar and data disagree.
+- **Structural triggers** — 3 consecutive days HRV < baseline−1SD, or TSB persistently
+  very negative (deep accumulated fatigue without recovery, threshold TBD once real
+  load-unit calibration exists) for 4+ days, or monotony >2.0 with strain in the
+  last-8-weeks top quartile → formal capped-week/deload recommendation. Deloads are
+  already ~every 4 weeks on the calendar — flag when calendar and data disagree.
 
 **Hard safety rails (in the rules engine, not just prose):** never recommend running;
 never increase pressing/overhead load in a week with a logged neck niggle; never a
@@ -531,7 +541,7 @@ deficit deeper than 2,300 kcal implies, never fasting, never "making up" for a s
 meal; never add a 4th/5th hard session — the architecture is fixed.
 
 **Weekly retro** (Sunday): 7-day weight trend + CI, sessions completed vs planned, total
-load with ACWR/monotony, sleep totals, protein adherence rate, social-meal count
+load with TSB/monotony, sleep totals, protein adherence rate, social-meal count
 correlated against weight trend, waist delta, proposed calisthenics progression.
 
 **Correlation engine** (last, needs 90 days of data): Spearman rho with n and p between
@@ -544,7 +554,7 @@ Never present correlation as causal. Top 3 findings max.
 Streamlit, Plotly, dark theme, raw points always shown behind smoothed lines (lighter
 shade). Pages: **Today** (readiness + breakdown, prescription, sleep, weight EWMA, comp
 countdown) · **Trends** (weight/HRV/RHR/sleep stages, 30/90/365-day windows) ·
-**Training** (load by day/sport, ACWR gauge, monotony, calisthenics progression) ·
+**Training** (load by day/sport, CTL/ATL/TSB chart, monotony, calisthenics progression) ·
 **Comp prep** (weight trajectory vs required line, projected finish + uncertainty) ·
 **Log** (BJJ/subjective/waist forms) · **Data health** (freshness, missing days, dedupe
 log, last ingest run — not optional, it's how pipeline breakage gets noticed).

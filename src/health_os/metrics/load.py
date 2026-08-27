@@ -1,17 +1,17 @@
-"""Training load metrics: ACWR, monotony/strain (Foster), and CTL/ATL/TSB
-(Banister impulse-response model) — kickoff doc section 6, research grounding
-in CLAUDE.md (2026-08-27 "proprietary training load" discussion).
+"""Training load metrics: monotony/strain (Foster) and CTL/ATL/TSB (Banister
+impulse-response model) — kickoff doc section 6, research grounding in CLAUDE.md
+(2026-08-27 "proprietary training load" discussion), ADR 0003.
 
 Pure functions, deterministic, hand-verifiable — same rules as metrics/body_comp.py
 (design principle 9, section 12: no LLM calls in this layer, ever).
 
-**On ACWR specifically**: the sports science literature has moved against it —
-Impellizzeri et al. and multiple systematic reviews document severe mathematical
-coupling and inconsistent injury association. It's implemented here because the
-kickoff doc explicitly asked for it, but it should be read as a rough ramp-rate
-signal, not a validated predictor. CTL/ATL/TSB (the same math TrainingPeaks calls
-the Performance Manager Chart) is the better-regarded alternative, kept alongside
-it rather than instead of it.
+**No ACWR here — see ADR 0003.** The kickoff doc originally asked for it, but the
+sports science literature has moved against it (Impellizzeri et al. and multiple
+systematic reviews document severe mathematical coupling and inconsistent injury
+association), and Francisco asked to drop it once that was surfaced rather than
+keep a metric flagged as scientifically shaky. CTL/ATL/TSB (the same math
+TrainingPeaks calls the Performance Manager Chart) is the leading-data
+replacement — kept as the sole training-load-ratio signal here.
 
 **Zero is a real value here, unlike weight.** A rest day genuinely has zero
 training load — it isn't "missing data" the way a day with no weigh-in is
@@ -29,10 +29,6 @@ from typing import Any
 
 DEFAULT_CTL_TAU_DAYS = 42.0  # "fitness", slow to build, slow to fade
 DEFAULT_ATL_TAU_DAYS = 7.0  # "fatigue", fast to build, fast to fade
-DEFAULT_ACWR_ACUTE_DAYS = 7
-DEFAULT_ACWR_CHRONIC_DAYS = 28
-ACWR_SWEET_SPOT = (0.8, 1.3)
-ACWR_RAMP_FLAG = 1.5
 MONOTONY_FLAG = 2.0
 
 
@@ -74,60 +70,6 @@ def build_daily_load_series(
         series.append((iso, totals.get(iso, 0.0)))
         current += timedelta(days=1)
     return series
-
-
-def compute_acwr(
-    daily_loads: list[tuple[str, float]],
-    *,
-    acute_window_days: int = DEFAULT_ACWR_ACUTE_DAYS,
-    chronic_window_days: int = DEFAULT_ACWR_CHRONIC_DAYS,
-) -> dict[str, Any]:
-    """Acute:chronic workload ratio, as of the last date in `daily_loads`.
-    Acute = trailing 7-day load sum. Chronic = 28-day rolling average of that
-    same 7-day-sum series. Sweet spot 0.8-1.3; >1.5 flagged as ramping too
-    fast, <0.8 as detraining — see module docstring for the caveat on how much
-    to trust this number.
-    """
-    n = len(daily_loads)
-    min_required = acute_window_days + chronic_window_days
-    if n < min_required:
-        return {
-            "acwr": None,
-            "acute_load": None,
-            "chronic_load": None,
-            "n_days": n,
-            "confidence": "insufficient_data",
-        }
-
-    loads = [load for _, load in daily_loads]
-
-    def rolling_sum(end_idx: int, window: int) -> float:
-        return sum(loads[end_idx - window + 1 : end_idx + 1])
-
-    acute = rolling_sum(n - 1, acute_window_days)
-    seven_day_sums = [rolling_sum(i, acute_window_days) for i in range(n - chronic_window_days, n)]
-    chronic = sum(seven_day_sums) / len(seven_day_sums)
-
-    acwr = acute / chronic if chronic > 0 else None
-    flag = None
-    if acwr is not None:
-        if acwr > ACWR_RAMP_FLAG:
-            flag = "ramping_too_fast"
-        elif acwr < ACWR_SWEET_SPOT[0]:
-            flag = "detraining"
-        elif acwr <= ACWR_SWEET_SPOT[1]:
-            flag = "sweet_spot"
-        else:
-            flag = "moderate"
-
-    return {
-        "acwr": acwr,
-        "acute_load": acute,
-        "chronic_load": chronic,
-        "n_days": n,
-        "confidence": "full",
-        "flag": flag,
-    }
 
 
 def compute_monotony_strain(
@@ -189,8 +131,9 @@ def compute_ctl_atl(
     atl_tau_days: float = DEFAULT_ATL_TAU_DAYS,
 ) -> list[tuple[str, float, float, float]]:
     """CTL ("fitness"), ATL ("fatigue"), and TSB = CTL - ATL ("freshness") —
-    the Banister impulse-response model. Standard exponential-decay recursive
-    form:
+    the Banister impulse-response model, and the primary training-load-ratio
+    signal in this system (see module docstring on why ACWR isn't). Standard
+    exponential-decay recursive form:
 
         value_today = value_yesterday + (load_today - value_yesterday) * (1 - exp(-1/tau))
 

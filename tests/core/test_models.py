@@ -208,23 +208,23 @@ class TestDerivedMetric:
     def test_inputs_round_trip_as_json(self, conn: sqlite3.Connection) -> None:
         m = DerivedMetric(
             date="2026-08-27",
-            metric_name="acwr",
-            value=1.12,
-            unit="ratio",
-            window_days=28,
-            n_days=28,
+            metric_name="tsb",
+            value=12.5,
+            unit="load units",
+            window_days=42,
+            n_days=42,
             confidence="full",
-            inputs={"acute_load": 450, "chronic_load": 402},
+            inputs={"ctl": 120.0, "atl": 107.5},
         )
         db_module.upsert(
             conn, "derived_daily", m.to_row(), ["date", "metric_name"], touch_column=None
         )
         row = conn.execute(
-            "SELECT * FROM derived_daily WHERE date = ? AND metric_name = ?", ("2026-08-27", "acwr")
+            "SELECT * FROM derived_daily WHERE date = ? AND metric_name = ?", ("2026-08-27", "tsb")
         ).fetchone()
         reloaded = DerivedMetric.from_row(row)
-        assert reloaded.value == 1.12
-        assert reloaded.inputs == {"acute_load": 450, "chronic_load": 402}
+        assert reloaded.value == 12.5
+        assert reloaded.inputs == {"ctl": 120.0, "atl": 107.5}
 
 
 class TestIngestRun:

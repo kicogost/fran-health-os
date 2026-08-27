@@ -56,7 +56,8 @@ chest strap worn under the rashguard, not a different optical wearable.
 ## When to revisit
 
 Do not buy anything until Phase 3 (deduplication and canonical merge) is running and
-the BJJ data gap is *provably* the bottleneck — i.e. once ACWR and readiness are
-computed from manual logs alone, and it's clear that missing HR/load-during-rolling
-data is limiting what the coaching layer can say. Buying hardware before then is
+the BJJ data gap is *provably* the bottleneck — i.e. once CTL/ATL/TSB (ADR 0003) and
+readiness are computed from manual logs alone, and it's clear that missing
+HR/load-during-rolling data is limiting what the coaching layer can say. Buying
+hardware before then is
 solving a problem that hasn't been confirmed yet.

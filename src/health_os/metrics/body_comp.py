@@ -5,8 +5,9 @@ derived number traceable) and section 12 (no LLM calls in the metrics layer,
 ever). This is a deliberately partial slice of Phase 4, built early: weight has
 no Garmin dependency to reconcile (Apple Health/Renpho is the sole source for
 `daily_metrics.weight_kg`), so there's nothing to wait on Phase 3/Garmin for here.
-The rest of Phase 4 — HRV/RHR baselines, ACWR, monotony, the readiness score —
-still waits on Garmin data, same as originally planned.
+HRV/RHR baselines and the readiness score still wait on Garmin data, same as
+originally planned. Monotony/strain and CTL/ATL/TSB are built separately in
+`metrics/load.py` (ADR 0003 dropped ACWR from that module in favor of CTL/ATL/TSB).
 
 Nothing here writes to `derived_daily` yet. That lands with the full metric
 suite in Phase 4 proper, not this early slice — these are just the functions,

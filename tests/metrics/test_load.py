@@ -7,7 +7,6 @@ import pytest
 
 from health_os.metrics.load import (
     build_daily_load_series,
-    compute_acwr,
     compute_ctl_atl,
     compute_monotony_strain,
 )
@@ -42,44 +41,6 @@ class TestBuildDailyLoadSeries:
 
     def test_empty_input(self) -> None:
         assert build_daily_load_series([], []) == []
-
-
-class TestComputeAcwr:
-    def test_insufficient_data_below_35_days(self) -> None:
-        loads = [(f"2026-01-{d:02d}", 100.0) for d in range(1, 20)]
-        result = compute_acwr(loads)
-        assert result["confidence"] == "insufficient_data"
-        assert result["acwr"] is None
-
-    def test_constant_load_gives_acwr_one_sweet_spot(self) -> None:
-        # 35 days, all load=100: acute=700, every 7-day-sum=700, chronic=700, acwr=1.0.
-        loads = [(f"2026-01-{d:02d}", 100.0) for d in range(1, 36)]
-        result = compute_acwr(loads)
-        assert result["confidence"] == "full"
-        assert result["acute_load"] == pytest.approx(700.0)
-        assert result["chronic_load"] == pytest.approx(700.0)
-        assert result["acwr"] == pytest.approx(1.0)
-        assert result["flag"] == "sweet_spot"
-
-    def test_ramping_too_fast_hand_computed(self) -> None:
-        # 28 days @ 50/day, then 7 days @ 200/day. Hand-computed:
-        # acute = 200*7 = 1400. chronic = 14000/28 = 500. acwr = 1400/500 = 2.8.
-        loads = [(f"d{i}", 50.0) for i in range(28)] + [(f"d{i}", 200.0) for i in range(28, 35)]
-        result = compute_acwr(loads)
-        assert result["acute_load"] == pytest.approx(1400.0)
-        assert result["chronic_load"] == pytest.approx(500.0)
-        assert result["acwr"] == pytest.approx(2.8)
-        assert result["flag"] == "ramping_too_fast"
-
-    def test_detraining_hand_computed(self) -> None:
-        # 28 days @ 200/day, then 7 days @ 20/day. Hand-computed:
-        # acute = 20*7 = 140. chronic = 34160/28 = 1220. acwr = 140/1220 ~ 0.1148.
-        loads = [(f"d{i}", 200.0) for i in range(28)] + [(f"d{i}", 20.0) for i in range(28, 35)]
-        result = compute_acwr(loads)
-        assert result["acute_load"] == pytest.approx(140.0)
-        assert result["chronic_load"] == pytest.approx(1220.0)
-        assert result["acwr"] == pytest.approx(140 / 1220)
-        assert result["flag"] == "detraining"
 
 
 class TestComputeMonotonyStrain:

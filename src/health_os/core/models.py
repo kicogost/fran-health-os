@@ -330,8 +330,9 @@ class DerivedMetric:
     """One row of `derived_daily` — grain: (date, metric_name).
 
     See kickoff doc section 6 for the full list of metrics this holds (HRV
-    baseline, ACWR, monotony/strain, readiness score + components, ...). `inputs`
-    is the traceability payload (design principle 9) — the actual input values and
+    baseline, CTL/ATL/TSB, monotony/strain, readiness score + components, ... —
+    ADR 0003 replaces the kickoff doc's ACWR with CTL/ATL/TSB). `inputs` is the
+    traceability payload (design principle 9) — the actual input values and
     intermediate arithmetic that produced `value`, so any dashboard number can be
     explained down to its inputs.
     """

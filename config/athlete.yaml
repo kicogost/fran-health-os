@@ -5,9 +5,10 @@
 # from here rather than hardcoding any of these numbers.
 #
 # NOTE: thresholds and weights for derived metrics (readiness score component
-# weights, HRV/RHR baseline windows, ACWR bands, etc. — see kickoff doc section 6)
-# are NOT in this file yet. They land here in Phase 4 when those metrics are built,
-# so the config and the code that reads it ship together.
+# weights, HRV/RHR baseline windows, TSB bands, etc. — see kickoff doc section 6 and
+# ADR 0003, which replaces ACWR with CTL/ATL/TSB) are NOT in this file yet. They
+# land here in Phase 4 when those metrics are built, so the config and the code
+# that reads it ship together.
 
 profile:
   name: Francisco
@@ -248,10 +249,11 @@ body_measurements:
 training_load:
   # BJJ manual-log load (Foster's method: duration_min x session_rpe, computed
   # automatically by core.models.BjjSession) x this factor should land on the same
-  # axis as Garmin's own training_load, so ACWR/monotony can sum across BJJ and
-  # everything else meaningfully (kickoff doc section 2.4). Placeholder until
-  # Garmin data exists to calibrate against — do not trust this value for ACWR math
-  # yet. Recompute in Phase 3/4 once bjj_sessions and Garmin activities overlap on
-  # enough days to fit a real factor.
+  # axis as Garmin's own training_load, so CTL/ATL/TSB and monotony (metrics/load.py;
+  # ADR 0003 dropped ACWR in favor of CTL/ATL/TSB) can sum across BJJ and everything
+  # else meaningfully (kickoff doc section 2.4). Placeholder until Garmin data exists
+  # to calibrate against — do not trust this value for load math yet. Recompute in
+  # Phase 3/4 once bjj_sessions and Garmin activities overlap on enough days to fit
+  # a real factor.
   bjj_rpe_calibration_factor: 1.0
   bjj_rpe_calibration_status: "uncalibrated — no Garmin training_load data yet"
