@@ -163,12 +163,18 @@ class Activity:
         )
 
 
-_BOOL_COLUMNS_BJJ = ("gassed",)
+SESSION_FEELINGS = ("dizzy", "gassed", "tired", "okay")  # worst to best
 
 
 @dataclass(slots=True)
 class BjjSession:
-    """One row of `bjj_sessions` — the manual log (kickoff doc section 2.4)."""
+    """One row of `bjj_sessions` — the manual log (kickoff doc section 2.4).
+
+    `rounds_gassed` and `session_feeling` (migration 0002) are the athlete's own
+    three BJJ-specific tracking questions, alongside `rounds_rolled`. `dizzy` in
+    `session_feeling` is a genuine safety signal — worse than ordinary hard-session
+    fatigue — not just the bottom of a tiredness scale.
+    """
 
     date: str
     session_type: str  # "class" | "open_mat" | "gi_drilling"
@@ -176,7 +182,8 @@ class BjjSession:
     session_rpe: int  # 1-10
     id: int | None = None
     rounds_rolled: int | None = None
-    gassed: bool = False
+    rounds_gassed: int | None = None
+    session_feeling: str | None = None  # one of SESSION_FEELINGS
     niggles: str | None = None
     notes: str | None = None
     computed_load: float | None = None
@@ -187,14 +194,22 @@ class BjjSession:
             raise ValueError(f"invalid session_type: {self.session_type!r}")
         if not 1 <= self.session_rpe <= 10:
             raise ValueError(f"session_rpe must be 1-10, got {self.session_rpe!r}")
+        if self.session_feeling is not None and self.session_feeling not in SESSION_FEELINGS:
+            raise ValueError(f"invalid session_feeling: {self.session_feeling!r}")
+        if (
+            self.rounds_gassed is not None
+            and self.rounds_rolled is not None
+            and self.rounds_gassed > self.rounds_rolled
+        ):
+            raise ValueError(
+                f"rounds_gassed ({self.rounds_gassed}) can't exceed "
+                f"rounds_rolled ({self.rounds_rolled})"
+            )
         if self.computed_load is None:
             self.computed_load = float(self.duration_min * self.session_rpe)
 
     def to_row(self, *, include_none: bool = False) -> dict[str, Any]:
-        row = _row_dict(self, include_none=include_none)
-        if "gassed" in row:
-            row["gassed"] = int(row["gassed"])
-        return row
+        return _row_dict(self, include_none=include_none)
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> BjjSession:
@@ -205,8 +220,9 @@ class BjjSession:
             session_type=row["session_type"],
             duration_min=row["duration_min"],
             rounds_rolled=row["rounds_rolled"] if "rounds_rolled" in keys else None,
+            rounds_gassed=row["rounds_gassed"] if "rounds_gassed" in keys else None,
+            session_feeling=row["session_feeling"] if "session_feeling" in keys else None,
             session_rpe=row["session_rpe"],
-            gassed=bool(row["gassed"]) if "gassed" in keys and row["gassed"] is not None else False,
             niggles=row["niggles"] if "niggles" in keys else None,
             notes=row["notes"] if "notes" in keys else None,
             computed_load=row["computed_load"] if "computed_load" in keys else None,
@@ -214,9 +230,22 @@ class BjjSession:
         )
 
 
+_HOOPER_FIELDS = ("sleep_quality", "stress", "fatigue", "muscle_soreness")
+
+
 @dataclass(slots=True)
 class SubjectiveLogEntry:
-    """One row of `subjective_log` — grain: one calendar date."""
+    """One row of `subjective_log` — grain: one calendar date.
+
+    `sleep_quality`/`stress`/`fatigue`/`muscle_soreness` (migration 0002) are a
+    Hooper-Mackinnon-inspired daily wellness questionnaire: each 1-10, and
+    deliberately all the SAME polarity (1 = best, 10 = worst) so they sum
+    cleanly into `hooper_index` (4 = excellent wellness, 40 = terrible) without
+    needing to remember which fields invert. `hooper_index` is computed here
+    automatically, same pattern as `BjjSession.computed_load` — never entered
+    by hand, and only set once all four sub-scores are present (a partial sum
+    would misrepresent the day, not just be imprecise).
+    """
 
     date: str
     felt_note: str | None = None
@@ -225,6 +254,20 @@ class SubjectiveLogEntry:
     niggles: str | None = None
     day_note: str | None = None
     social_meal: bool | None = None
+    sleep_quality: int | None = None
+    stress: int | None = None
+    fatigue: int | None = None
+    muscle_soreness: int | None = None
+    hooper_index: int | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in _HOOPER_FIELDS:
+            value = getattr(self, field_name)
+            if value is not None and not 1 <= value <= 10:
+                raise ValueError(f"{field_name} must be 1-10, got {value!r}")
+        sub_scores = [getattr(self, f) for f in _HOOPER_FIELDS]
+        if self.hooper_index is None and all(s is not None for s in sub_scores):
+            self.hooper_index = sum(sub_scores)
 
     def to_row(self, *, include_none: bool = False) -> dict[str, Any]:
         row = _row_dict(self, include_none=include_none)
@@ -240,6 +283,9 @@ class SubjectiveLogEntry:
         def _bool(col: str) -> bool | None:
             return bool(row[col]) if col in keys and row[col] is not None else None
 
+        def _int(col: str) -> int | None:
+            return row[col] if col in keys else None
+
         return cls(
             date=row["date"],
             felt_note=row["felt_note"] if "felt_note" in keys else None,
@@ -248,6 +294,11 @@ class SubjectiveLogEntry:
             niggles=row["niggles"] if "niggles" in keys else None,
             day_note=row["day_note"] if "day_note" in keys else None,
             social_meal=_bool("social_meal"),
+            sleep_quality=_int("sleep_quality"),
+            stress=_int("stress"),
+            fatigue=_int("fatigue"),
+            muscle_soreness=_int("muscle_soreness"),
+            hooper_index=_int("hooper_index"),
         )
 
 

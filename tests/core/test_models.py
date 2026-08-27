@@ -92,14 +92,15 @@ class TestBjjSession:
         with pytest.raises(ValueError):
             BjjSession(date="2026-08-27", session_type="class", duration_min=90, session_rpe=11)
 
-    def test_round_trip_bool_gassed(self, conn: sqlite3.Connection) -> None:
+    def test_round_trip_rounds_gassed_and_feeling(self, conn: sqlite3.Connection) -> None:
         s = BjjSession(
             date="2026-08-27",
             session_type="open_mat",
             duration_min=120,
             session_rpe=9,
             rounds_rolled=8,
-            gassed=True,
+            rounds_gassed=3,
+            session_feeling="gassed",
             niggles="left knee tender",
         )
         db_module.upsert(conn, "bjj_sessions", s.to_row(), ["date", "session_type"])
@@ -108,9 +109,31 @@ class TestBjjSession:
             ("2026-08-27", "open_mat"),
         ).fetchone()
         reloaded = BjjSession.from_row(row)
-        assert reloaded.gassed is True
         assert reloaded.rounds_rolled == 8
+        assert reloaded.rounds_gassed == 3
+        assert reloaded.session_feeling == "gassed"
         assert reloaded.computed_load == 1080.0
+
+    def test_rejects_invalid_session_feeling(self) -> None:
+        with pytest.raises(ValueError):
+            BjjSession(
+                date="2026-08-27",
+                session_type="class",
+                duration_min=90,
+                session_rpe=7,
+                session_feeling="exhausted",
+            )
+
+    def test_rejects_rounds_gassed_exceeding_rounds_rolled(self) -> None:
+        with pytest.raises(ValueError):
+            BjjSession(
+                date="2026-08-27",
+                session_type="class",
+                duration_min=90,
+                session_rpe=7,
+                rounds_rolled=3,
+                rounds_gassed=5,
+            )
 
 
 class TestSubjectiveLogEntry:
@@ -125,6 +148,43 @@ class TestSubjectiveLogEntry:
         assert reloaded.gassed is False
         assert reloaded.social_meal is True
         assert reloaded.niggles is None
+
+    def test_hooper_index_computed_when_all_four_present(self) -> None:
+        e = SubjectiveLogEntry(
+            date="2026-08-27", sleep_quality=3, stress=2, fatigue=4, muscle_soreness=5
+        )
+        assert e.hooper_index == 14
+
+    def test_hooper_index_not_computed_when_partial(self) -> None:
+        e = SubjectiveLogEntry(date="2026-08-27", sleep_quality=3, stress=2)
+        assert e.hooper_index is None
+
+    def test_explicit_hooper_index_not_overwritten(self) -> None:
+        e = SubjectiveLogEntry(
+            date="2026-08-27",
+            sleep_quality=3,
+            stress=2,
+            fatigue=4,
+            muscle_soreness=5,
+            hooper_index=99,
+        )
+        assert e.hooper_index == 99
+
+    def test_rejects_out_of_range_wellness_score(self) -> None:
+        with pytest.raises(ValueError):
+            SubjectiveLogEntry(date="2026-08-27", sleep_quality=11)
+
+    def test_round_trip_wellness_fields(self, conn: sqlite3.Connection) -> None:
+        e = SubjectiveLogEntry(
+            date="2026-08-27", sleep_quality=2, stress=3, fatigue=2, muscle_soreness=4
+        )
+        db_module.upsert(conn, "subjective_log", e.to_row(), ["date"])
+        row = conn.execute(
+            "SELECT * FROM subjective_log WHERE date = ?", ("2026-08-27",)
+        ).fetchone()
+        reloaded = SubjectiveLogEntry.from_row(row)
+        assert reloaded.sleep_quality == 2
+        assert reloaded.hooper_index == 11
 
 
 class TestBodyMeasurement:

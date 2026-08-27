@@ -30,7 +30,7 @@ class TestMigrations:
 
     def test_records_applied_version(self, conn: sqlite3.Connection) -> None:
         versions = [row["version"] for row in conn.execute("SELECT version FROM schema_migrations")]
-        assert versions == [1]
+        assert versions == [1, 2]
 
     def test_is_idempotent(self, conn: sqlite3.Connection) -> None:
         newly_applied = db_module.apply_migrations(conn)

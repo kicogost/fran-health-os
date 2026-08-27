@@ -7,7 +7,15 @@
 -- without reading every migration in sequence. tests/core/test_schema_sync.py fails
 -- if this drifts from the migrations.
 --
--- Current version: 1 (core/migrations/0001_initial_schema.sql)
+-- Current version: 2 (core/migrations/0001_initial_schema.sql,
+-- core/migrations/0002_bjj_wellness_and_load.sql)
+--
+-- Note: this snapshot is semantically compared against the migrated schema
+-- (column name/type/notnull/pk/default per table), not byte-for-byte SQL text —
+-- ALTER TABLE ADD/DROP COLUMN rewrites a table's stored CREATE TABLE text with
+-- new columns appended in an ugly, hard-to-read order, so this file's column
+-- ordering is deliberately hand-arranged for readability instead. See
+-- tests/core/test_schema_sync.py for exactly what's (and isn't) verified.
 
 PRAGMA foreign_keys = ON;
 
@@ -85,14 +93,20 @@ CREATE INDEX IF NOT EXISTS idx_activities_local_date ON activities (local_date);
 -- afterthought. `linked_activity_id` points at the chest-strap-recorded Garmin
 -- activity for the same class once that hardware is in use (ADR 0002) — linked, not
 -- deduplicated against it; see docs/bjj_recording_workflow.md.
+-- `rounds_gassed` (a count, not a bool — added migration 0002) and
+-- `session_feeling` (dizzy < gassed < tired < okay, worst to best) are the
+-- athlete's own three BJJ-specific tracking questions; `dizzy` is a genuine
+-- safety signal, not just "very tired", given the injury/safety-rail history
+-- already encoded elsewhere in this project.
 CREATE TABLE IF NOT EXISTS bjj_sessions (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     date               TEXT NOT NULL,
     session_type       TEXT NOT NULL CHECK (session_type IN ('class', 'open_mat', 'gi_drilling')),
     duration_min       INTEGER NOT NULL,
     rounds_rolled      INTEGER,
+    rounds_gassed      INTEGER,
+    session_feeling    TEXT CHECK (session_feeling IN ('dizzy', 'gassed', 'tired', 'okay')),
     session_rpe        INTEGER NOT NULL CHECK (session_rpe BETWEEN 1 AND 10),
-    gassed             INTEGER NOT NULL DEFAULT 0 CHECK (gassed IN (0, 1)),
     niggles            TEXT,
     notes              TEXT,
     computed_load      REAL,                   -- Foster's method: duration_min * session_rpe
@@ -105,16 +119,26 @@ CREATE TABLE IF NOT EXISTS bjj_sessions (
 -- One row per date: subjective/qualitative input. `social_meal` is the known deficit
 -- disruptor (config/athlete.yaml: nutrition.social_meal_policy) — correlated against
 -- the weight trend once the correlation engine lands.
+-- `sleep_quality`/`stress`/`fatigue`/`muscle_soreness` (added migration 0002) are a
+-- Hooper-Mackinnon-inspired daily wellness questionnaire — all four use the SAME
+-- polarity (1 = best, 10 = worst) so they sum cleanly into `hooper_index`
+-- (4 = excellent, 40 = terrible), computed by core.models.SubjectiveLogEntry, same
+-- pattern as bjj_sessions.computed_load — never entered by hand.
 CREATE TABLE IF NOT EXISTS subjective_log (
-    date          TEXT PRIMARY KEY,
-    felt_note     TEXT,
-    protein_hit   INTEGER CHECK (protein_hit IN (0, 1)),
-    gassed        INTEGER CHECK (gassed IN (0, 1)),
-    niggles       TEXT,
-    day_note      TEXT,
-    social_meal   INTEGER CHECK (social_meal IN (0, 1)),
-    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    date            TEXT PRIMARY KEY,
+    felt_note       TEXT,
+    protein_hit     INTEGER CHECK (protein_hit IN (0, 1)),
+    gassed          INTEGER CHECK (gassed IN (0, 1)),
+    niggles         TEXT,
+    day_note        TEXT,
+    social_meal     INTEGER CHECK (social_meal IN (0, 1)),
+    sleep_quality   INTEGER CHECK (sleep_quality BETWEEN 1 AND 10),
+    stress          INTEGER CHECK (stress BETWEEN 1 AND 10),
+    fatigue         INTEGER CHECK (fatigue BETWEEN 1 AND 10),
+    muscle_soreness INTEGER CHECK (muscle_soreness BETWEEN 1 AND 10),
+    hooper_index    INTEGER,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 -- Tape measurements. One row per (date, measurement_type) so it's not locked to waist
