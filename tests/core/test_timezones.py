@@ -6,8 +6,10 @@ import pytest
 
 from health_os.core.timezones import (
     attribute_sleep_to_wake_date,
+    localize_to_utc,
     parse_utc,
     to_local_date,
+    to_utc_iso,
 )
 
 
@@ -60,3 +62,28 @@ class TestAttributeSleepToWakeDate:
         start_date_wrongly = to_local_date("2026-08-26T21:40:00Z")
         assert start_date_wrongly == "2026-08-26"
         assert wake_date != start_date_wrongly
+
+
+class TestLocalizeToUtc:
+    def test_summer_local_to_utc(self) -> None:
+        # 6:52:17 local Madrid time in August (CEST, UTC+2) -> 4:52:17 UTC.
+        # This is the real Strava CSV case: "Aug 22, 2026, 6:52:17 AM", no offset.
+        naive = datetime(2026, 8, 22, 6, 52, 17)
+        assert localize_to_utc(naive) == datetime(2026, 8, 22, 4, 52, 17, tzinfo=UTC)
+
+    def test_winter_local_to_utc(self) -> None:
+        # January is CET, UTC+1.
+        naive = datetime(2026, 1, 15, 9, 0, 0)
+        assert localize_to_utc(naive) == datetime(2026, 1, 15, 8, 0, 0, tzinfo=UTC)
+
+    def test_rejects_aware_datetime(self) -> None:
+        with pytest.raises(ValueError, match="naive"):
+            localize_to_utc(datetime(2026, 8, 22, 6, 52, 17, tzinfo=UTC))
+
+
+class TestToUtcIso:
+    def test_formats_with_z_suffix(self) -> None:
+        assert to_utc_iso(datetime(2026, 8, 27, 17, 0, 0, tzinfo=UTC)) == "2026-08-27T17:00:00Z"
+
+    def test_converts_non_utc_offset(self) -> None:
+        assert to_utc_iso("2026-08-27T19:00:00+02:00") == "2026-08-27T17:00:00Z"

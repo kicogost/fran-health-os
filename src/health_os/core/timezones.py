@@ -46,3 +46,25 @@ def attribute_sleep_to_wake_date(sleep_end_utc: str | datetime, tz_name: str = D
     session's END timestamp here, not its start.
     """
     return to_local_date(sleep_end_utc, tz_name)
+
+
+def localize_to_utc(naive_local: datetime, tz_name: str = DEFAULT_TZ) -> datetime:
+    """Attach a local timezone to a naive datetime and convert to UTC.
+
+    For sources that report local wall-clock time with no explicit offset at all
+    (e.g. Strava's bulk-export CSV `Activity Date` column — verified empirically
+    against real export data, see `ingest/strava_bulk.py`'s module docstring, not
+    assumed). Raises if `naive_local` is already timezone-aware, since that's a
+    sign the caller has the wrong kind of input for this function.
+    """
+    if naive_local.tzinfo is not None:
+        raise ValueError(f"expected a naive datetime, got timezone-aware: {naive_local!r}")
+    return naive_local.replace(tzinfo=ZoneInfo(tz_name)).astimezone(UTC)
+
+
+def to_utc_iso(value: str | datetime) -> str:
+    """Canonical UTC ISO8601 string for `start_utc`-style columns, e.g.
+    '2026-08-27T17:00:00Z'. Every ingester should format through here so the
+    `activities.start_utc` / similar columns look identical regardless of source.
+    """
+    return parse_utc(value).isoformat().replace("+00:00", "Z")
