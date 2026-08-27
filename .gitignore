@@ -1,0 +1,28 @@
+# Secrets
+.env
+
+# Raw data (immutable, large, personal) and the canonical DB — never committed
+data/raw/
+data/health.db
+data/.garth_tokens/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# uv
+.uv/
+
+# OS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
