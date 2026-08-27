@@ -244,3 +244,14 @@ injuries:
 body_measurements:
   waist_baseline_cm: 86
   waist_measurement_protocol: "Sunday, fasted, below navel"
+
+training_load:
+  # BJJ manual-log load (Foster's method: duration_min x session_rpe, computed
+  # automatically by core.models.BjjSession) x this factor should land on the same
+  # axis as Garmin's own training_load, so ACWR/monotony can sum across BJJ and
+  # everything else meaningfully (kickoff doc section 2.4). Placeholder until
+  # Garmin data exists to calibrate against — do not trust this value for ACWR math
+  # yet. Recompute in Phase 3/4 once bjj_sessions and Garmin activities overlap on
+  # enough days to fit a real factor.
+  bjj_rpe_calibration_factor: 1.0
+  bjj_rpe_calibration_status: "uncalibrated — no Garmin training_load data yet"
