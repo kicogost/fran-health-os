@@ -1,0 +1,160 @@
+-- Migration 0001: initial schema.
+-- Applied wholesale to a fresh database. See kickoff doc section 5 for the original
+-- spec; core/schema.sql is a human-readable snapshot of the schema this produces,
+-- kept in sync manually (tests/core/test_schema_sync.py guards against drift).
+
+PRAGMA foreign_keys = ON;
+
+-- One row per calendar date (Europe/Madrid local date). Wellness/wearable metrics.
+-- Design principle 6: missing = NULL, never invented/interpolated.
+-- Design principle 9: `sources` records which source populated which field, as JSON
+-- (e.g. {"weight_kg": "apple_health:renpho", "resting_hr": "garmin"}), so every value
+-- is traceable to where it came from. Weight specifically follows its own precedence
+-- (Apple Health / Renpho is authoritative, not the general Garmin > Strava > Apple
+-- Health rule in design principle 5 — Garmin has no scale on this hardware) — see
+-- CLAUDE.md "chest strap purchase confirmed" note for the equivalent BJJ-side decision.
+CREATE TABLE IF NOT EXISTS daily_metrics (
+    date                TEXT PRIMARY KEY,      -- ISO 'YYYY-MM-DD', Europe/Madrid local date
+    weight_kg           REAL,
+    resting_hr          REAL,
+    hrv_overnight_ms    REAL,
+    hrv_status          TEXT,                  -- Garmin's own status label, verbatim
+    sleep_total_min     INTEGER,
+    sleep_deep_min      INTEGER,
+    sleep_rem_min       INTEGER,
+    sleep_light_min     INTEGER,
+    sleep_awake_min     INTEGER,
+    sleep_score         INTEGER,
+    body_battery_max    INTEGER,
+    body_battery_min    INTEGER,
+    stress_avg          INTEGER,
+    steps               INTEGER,
+    active_kcal         INTEGER,
+    total_kcal          INTEGER,
+    vo2max              REAL,
+    training_readiness  INTEGER,               -- Garmin's own; our computed readiness lives in derived_daily
+    respiration_avg     REAL,
+    spo2_avg            REAL,
+    skin_temp_delta     REAL,
+    sources             TEXT,                  -- JSON: {"<column>": "<source>[:<detail>]"}
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+-- One row per training session, any source. Design principle 5: (source, source_id)
+-- is the natural key; merged_from records which other source rows were superseded by
+-- this one during dedup (Phase 3), so every merge decision stays auditable.
+CREATE TABLE IF NOT EXISTS activities (
+    activity_id      TEXT PRIMARY KEY,         -- synthesized: "<source>:<source_id>"
+    source           TEXT NOT NULL,            -- garmin | strava | apple_health | manual
+    source_id        TEXT NOT NULL,            -- source's native activity id
+    start_utc        TEXT NOT NULL,            -- ISO8601 UTC
+    local_date       TEXT NOT NULL,            -- Europe/Madrid calendar date attribution
+    sport            TEXT,
+    sub_sport        TEXT,
+    duration_s       INTEGER,
+    distance_m       REAL,
+    avg_hr           INTEGER,
+    max_hr           INTEGER,
+    hr_zone_1_s      INTEGER,
+    hr_zone_2_s      INTEGER,
+    hr_zone_3_s      INTEGER,
+    hr_zone_4_s      INTEGER,
+    hr_zone_5_s      INTEGER,
+    training_load    REAL,
+    aerobic_te       REAL,
+    anaerobic_te     REAL,
+    avg_power        REAL,
+    elevation_gain_m REAL,
+    perceived_rpe    INTEGER,
+    merged_from      TEXT,                     -- JSON array of superseded {"source":...,"source_id":...} rows
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE (source, source_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_activities_local_date ON activities (local_date);
+
+-- Manual BJJ log — first-class ingestion path (kickoff doc section 2.4), not an
+-- afterthought. `linked_activity_id` points at the chest-strap-recorded Garmin
+-- activity for the same class once that hardware is in use (ADR 0002) — linked, not
+-- deduplicated against it; see docs/bjj_recording_workflow.md.
+CREATE TABLE IF NOT EXISTS bjj_sessions (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    date               TEXT NOT NULL,
+    session_type       TEXT NOT NULL CHECK (session_type IN ('class', 'open_mat', 'gi_drilling')),
+    duration_min       INTEGER NOT NULL,
+    rounds_rolled      INTEGER,
+    session_rpe        INTEGER NOT NULL CHECK (session_rpe BETWEEN 1 AND 10),
+    gassed             INTEGER NOT NULL DEFAULT 0 CHECK (gassed IN (0, 1)),
+    niggles            TEXT,
+    notes              TEXT,
+    computed_load      REAL,                   -- Foster's method: duration_min * session_rpe
+    linked_activity_id TEXT REFERENCES activities (activity_id),
+    created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE (date, session_type)
+);
+
+-- One row per date: subjective/qualitative input. `social_meal` is the known deficit
+-- disruptor (config/athlete.yaml: nutrition.social_meal_policy) — correlated against
+-- the weight trend once the correlation engine lands.
+CREATE TABLE IF NOT EXISTS subjective_log (
+    date          TEXT PRIMARY KEY,
+    felt_note     TEXT,
+    protein_hit   INTEGER CHECK (protein_hit IN (0, 1)),
+    gassed        INTEGER CHECK (gassed IN (0, 1)),
+    niggles       TEXT,
+    day_note      TEXT,
+    social_meal   INTEGER CHECK (social_meal IN (0, 1)),
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+-- Tape measurements. One row per (date, measurement_type) so it's not locked to waist
+-- alone. Baseline waist is 86 cm (config/athlete.yaml), measured Sunday, fasted, below
+-- navel.
+CREATE TABLE IF NOT EXISTS body_measurements (
+    date             TEXT NOT NULL,
+    measurement_type TEXT NOT NULL DEFAULT 'waist',
+    value_cm         REAL NOT NULL,
+    notes            TEXT,
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    PRIMARY KEY (date, measurement_type)
+);
+
+-- Every computed metric from the kickoff doc's "Derived metrics" section (HRV
+-- baseline, ACWR, monotony/strain, sleep debt, weight trend, comp countdown,
+-- readiness score + components, ...). Long/tidy format — one row per (date,
+-- metric_name) — so every metric self-documents the inputs and window size that
+-- produced it (design principle 9), without a wide table growing a column per metric
+-- across every future phase.
+CREATE TABLE IF NOT EXISTS derived_daily (
+    date         TEXT NOT NULL,
+    metric_name  TEXT NOT NULL,                -- e.g. "hrv_baseline_status", "acwr", "readiness_score"
+    value        REAL,
+    unit         TEXT,
+    window_days  INTEGER,
+    n_days       INTEGER,                      -- actual data points behind this value
+    confidence   TEXT,                         -- e.g. "insufficient_data" | "provisional" | "full"
+    inputs_json  TEXT,                         -- JSON blob: the inputs/intermediate arithmetic behind `value`
+    computed_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    PRIMARY KEY (date, metric_name)
+);
+
+-- Audit log for every ingestion run, any source. Read by the "Data health" dashboard
+-- page (kickoff doc section 8) — this is how a silently-broken pipeline gets noticed.
+CREATE TABLE IF NOT EXISTS ingest_runs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    source        TEXT NOT NULL,
+    started_at    TEXT NOT NULL,
+    finished_at   TEXT,
+    status        TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'success', 'failed')),
+    rows_in       INTEGER,
+    rows_upserted INTEGER,
+    rows_skipped  INTEGER,
+    errors        TEXT                         -- JSON array of error messages, if any
+);
+
+CREATE INDEX IF NOT EXISTS idx_ingest_runs_source ON ingest_runs (source, started_at);

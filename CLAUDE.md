@@ -13,10 +13,27 @@ as the project evolves.
 
 ## Current status
 
-**Phase 0 complete** (repo scaffold, config, this file, ADR 0001). No data code exists
-yet — no schema, no ingestion, no metrics, no dashboard. Next up: **Phase 1**, the
-SQLite schema and database layer (DDL, upsert helpers, audit tables), tested against
-fixtures, still with zero network calls.
+**Phase 0 and Phase 1 complete.** Schema + DB layer is built and tested (38 tests,
+`uv run pytest`), still zero network calls. Next up: **Phase 2**, historical backfill
+from the three bulk exports (Garmin zip, Apple Health `export.xml`, Strava archive).
+
+**Phase 1 summary** (2026-08-27): `core/migrations/0001_initial_schema.sql` is the
+source of truth for the schema (all 7 tables from the target schema below, applied via
+`core/db.py: apply_migrations()`, tracked in a `schema_migrations` table);
+`core/schema.sql` is a human-readable snapshot kept in sync by a drift-guard test
+(`tests/core/test_schema_sync.py`). `core/db.py` provides `init_db()` (connect + apply
+pending migrations), a generic `upsert()` (idempotent, natural-key-based, JSON-encodes
+`dict`/`list` values automatically — used for `daily_metrics.sources`,
+`activities.merged_from`, `derived_daily.inputs_json`), and `start_ingest_run()` /
+`finish_ingest_run()` for the audit table. `core/models.py` has a dataclass per table
+with `to_row()`/`from_row()`; `to_row()` omits `None` fields by default specifically so
+partial upserts from different sources (e.g. Garmin fills `resting_hr`, Apple
+Health/Renpho fills `weight_kg`, same date, separate ingestion runs) don't clobber each
+other — covered by `tests/core/test_db.py::TestUpsert::test_partial_upsert_does_not_clobber_other_columns`.
+Environment note: this machine had no `uv` and only system Python 3.9 (project needs
+3.12+) — installed `uv` via Homebrew, which then installed Python 3.12.14 itself
+(`uv python install 3.12`); `uv sync` + `uv run pytest`/`uv run ruff` work normally from
+here on.
 
 **2026-08-27 update — comp-prep plan received.** Francisco sent a full 8-week block
 plan for the Oct 18 2026 comp, saved verbatim at
@@ -230,7 +247,7 @@ data/
   health.db             the one canonical store (gitignored)
 src/health_os/
   ingest/               garmin.py, garmin_bulk.py, apple_health.py, strava.py, bjj_manual.py
-  core/                 db.py, schema.sql, dedupe.py, models.py
+  core/                 db.py, schema.sql (snapshot), migrations/0001_initial_schema.sql (source of truth), models.py, dedupe.py (Phase 3)
   metrics/              baselines.py, readiness.py, load.py, body_comp.py
   coach/                rules.py, briefing.py, weekly_retro.py
   dashboard/             app.py (Streamlit)
