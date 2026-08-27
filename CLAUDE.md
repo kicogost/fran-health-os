@@ -118,6 +118,37 @@ dedup, so there was no rework risk:
    required 0.319 kg/week — under the 0.7 red line, currently "on track" (though the
    "actual" rate is unreliable this early per the CI above).
 
+**Still while waiting on Garmin (2026-08-27, continued) — two more pieces, both
+verified against real data first, not spec-guessed:**
+
+3. **Cross-source activity dedup** (`core/dedupe.py`, a real slice of Phase 3) — built
+   after *confirming* (not assuming) Francisco's actual database had genuine
+   duplicates: 5 activities existed in both `strava` and `apple_health` with identical
+   start times and near-identical durations (Strava's generic "workout" label vs.
+   Apple's "functional_strength_training" — same real sessions). `dedupe_activities()`
+   implements the full design-principle-5 matching rule (start within 120s, duration
+   within 60s, compatible sport family via a small mapping table) and precedence
+   (Garmin > Strava > Apple Health, configurable), even though only 2 of the 3 sources
+   are loaded yet — adding Garmin later needs zero changes here, its rows will just
+   out-rank on the same precedence list. Deletes the loser row(s), records them in the
+   winner's `merged_from` JSON (that JSON *is* the audit trail — no separate table).
+   Now wired into `scripts/backfill.py` as the automatic last step after every
+   ingestion run, not a separate command to remember.
+
+   **Real bug found and fixed the same session**: re-running the backfill re-ingests
+   a source and resurrects an already-merged-away row (expected/by design — the next
+   dedupe pass just re-merges it), but the first implementation appended to
+   `merged_from` without deduplicating, so the same (source, source_id) pair piled up
+   duplicate entries on every re-run. Fixed with `_dedupe_merged_from()`; regression
+   test added (`test_reingested_loser_does_not_duplicate_merged_from_entry`). Real
+   result against the actual DB: 5 duplicate groups merged, 426 activities remain
+   (down from 431), stable and idempotent across repeated `scripts/backfill.py` runs
+   — verified by running it twice in a row.
+4. **Waist measurement logger** (`scripts/log_measurement.py`) — same shape as
+   `log_bjj.py` (flag-driven or interactive, upserts on `(date, measurement_type)`,
+   warns before overwriting). `body_measurements` was sitting empty; the comp-prep
+   plan calls for a weekly Sunday measurement, so this is immediately usable.
+
 **Phase 1 summary** (2026-08-27): `core/migrations/0001_initial_schema.sql` is the
 source of truth for the schema (all 7 tables from the target schema below, applied via
 `core/db.py: apply_migrations()`, tracked in a `schema_migrations` table);
@@ -348,11 +379,11 @@ data/
   health.db             the one canonical store (gitignored)
 src/health_os/
   ingest/               strava_bulk.py, apple_health.py, common.py (shared helpers) — garmin.py/garmin_bulk.py not yet written
-  core/                 db.py, timezones.py, schema.sql (snapshot), migrations/0001_initial_schema.sql (source of truth), models.py, dedupe.py (Phase 3)
+  core/                 db.py, timezones.py, dedupe.py (activities cross-source dedup, live), schema.sql (snapshot), migrations/0001_initial_schema.sql (source of truth), models.py
   metrics/              body_comp.py (weight trend + comp countdown) — baselines.py, readiness.py, load.py not yet written (wait on Garmin)
   coach/                rules.py, briefing.py, weekly_retro.py
   dashboard/             app.py (Streamlit)
-scripts/                backfill.py (Phase 2 entrypoint), log_bjj.py (manual BJJ logger), weight_report.py (Phase 4 preview) — sync.py not yet written
+scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview) — sync.py not yet written
 tests/                  core/, ingest/, metrics/, scripts/, fixtures/ (synthetic — never real personal data, fixtures are committed to git)
 docs/decisions/          ADRs, one per non-obvious choice
 ```
