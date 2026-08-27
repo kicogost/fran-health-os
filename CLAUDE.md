@@ -13,27 +13,75 @@ as the project evolves.
 
 ## Current status
 
-**Phase 0 and Phase 1 complete. Phase 2 (historical backfill) blocked on Francisco's
-real export files as of 2026-08-27** — none of the three (Garmin, Apple Health, Strava)
-had been requested yet when Phase 2 kicked off. Per the kickoff doc, don't write
-per-source parsers against assumed/documented export formats — "the parsing will be
-uglier than the docs suggest," verify actual structure from the real files. Garmin's
-export alone takes days to generate, so getting all three requested is the actual
-critical path right now, not code.
+**Phase 0, Phase 1, and two-thirds of Phase 2 complete as of 2026-08-27.** Strava and
+Apple Health are backfilled into the real `data/health.db`; Garmin is still blocked —
+Francisco requested it but it hadn't arrived (takes the platform days to generate).
 
-What *did* get built in the meantime (structure-independent, safe ahead of the real
-files): `core/timezones.py` — `parse_utc()`, `to_local_date()`,
-`attribute_sleep_to_wake_date()` — the UTC-storage/Europe-Madrid-render/wake-date
-attribution logic from design principle 7, DST-aware, pure date math with no
-dependency on any export's file format. 48 tests total now. Every future ingester
-should route local-date attribution through this rather than rolling its own.
+**Phase 2 summary — Strava.** `ingest/strava_bulk.py` parses `activities.csv` from a
+Strava data-export archive (per kickoff doc section 2.3, the per-activity `.fit.gz`/
+`.gpx` files aren't touched — the CSV's own summary columns, including a `Training
+Load` column, already cover everything `activities` needs). Two real-export gotchas
+verified against Francisco's actual archive, not assumed:
+- The header has 5 **duplicate column names** (Elapsed Time, Distance, Max Heart Rate,
+  Relative Effort, Commute each appear twice, 103 columns total) — parsed by column
+  index, not name, since a plain `csv.DictReader` would silently drop one of each pair.
+- `Activity Date` carries **no timezone offset** at all (e.g. "Aug 22, 2026, 6:52:17
+  AM"). Verified via each row's own sunrise/sunset epoch columns that this is
+  Europe/Madrid local time — the implied local sunrise/sunset times land exactly right
+  for Mallorca in that season. `core/timezones.py` gained `localize_to_utc()` for this
+  exact case (local wall-clock time, no offset given).
+- Result: 251 activities backfilled (matches the CSV's row count exactly).
 
-**Next session: check whether the three exports have arrived** (Garmin Account
-Management Center zip → `data/raw/garmin/bulk_export/`, Apple Health `export.zip` →
-`data/raw/apple_health/`, Strava archive → `data/raw/strava/`). Once real files exist,
-inspect their actual structure before writing `ingest/garmin_bulk.py`,
-`ingest/apple_health.py`, or the Strava backfill parser — do not guess at it from
-public docs.
+**Phase 2 summary — Apple Health.** `ingest/apple_health.py` streams `export.xml`
+(464MB real file; `lxml.etree.iterparse` handled 1.1M elements in ~5.5s) and
+deliberately extracts only two things, not the whole export — see the module
+docstring for the full reasoning:
+1. **Workouts** → `activities`, source `apple_health`, filtered against
+   `config/sources.yaml`'s `apple_health.exclude_source_names`/
+   `exclude_source_name_substrings` (new file, per-source ingestion settings).
+2. **Body mass** (`HKQuantityTypeIdentifierBodyMass`) → `daily_metrics.weight_kg`,
+   restricted to an *allowlist* (`weight_source_names: [Renpho, RENPHO Health]`) rather
+   than a denylist — weight is the one field where a wrong source is easy to get
+   silently wrong. When a date has multiple readings, the latest wins — never averaged
+   (design principle 6).
+
+Steps/sleep/HR are deliberately **not** ingested from Apple Health yet — the kickoff
+doc's own guidance is that Apple Health only adds value for watch-not-worn movement
+data and non-Garmin apps, which needs Garmin's own daily data to reconcile against
+(Phase 3's job, and Garmin isn't loaded yet). Building that now would just need
+reworking once Garmin lands.
+
+Real findings from Francisco's actual 621MB export, not assumed:
+- Multiple non-Francisco/duplicate sources are mixed into one export: Garmin syncs in
+  as sourceName `"Connect"` (excluded), Strava as `"Strava"` (excluded, ingested
+  directly instead), and a family member's watch as `"Apple Watch de roberta"`
+  (excluded, confirmed with Francisco — not his data).
+- `<Workout>` elements have no natural unique ID in this export version — `source_id`
+  is synthesized via `ingest/common.py: synthetic_source_id()` from
+  (source, start, end, type), so re-running the backfill stays idempotent.
+- No reliable inline HR summary exists on real `<Workout>` elements (checked both
+  BJJBuddy- and native-Watch-recorded workouts) — `avg_hr`/`max_hr` left `None` for
+  Apple-Health-sourced activities rather than guessed at.
+- **Real find: ~51 historical BJJ sessions already existed** — 39 via a "BJJBuddy" app
+  (`workoutActivityType=MartialArts`) and 12 tagged "Wrestling" (closest built-in Apple
+  category) via the Watch/Health app directly. Confirmed with Francisco: backfilled
+  into `activities` (source=apple_health, sport=martial_arts/wrestling), **not**
+  `bjj_sessions` — that table requires `session_rpe` (the manual-log schema), which
+  this historical data doesn't have and shouldn't have invented for it.
+- Result: 180 activities backfilled (301 total Workouts − 11 Connect − 110 Strava,
+  exact match) + 112 days of weight. The weight parser found **78.45 kg on
+  2026-08-21** — cross-validated against the figure Francisco gave directly in the
+  comp-prep plan. Real end-to-end correctness signal, not just internal consistency.
+
+Both backfills are idempotent (verified: re-running produced identical row counts) and
+logged to `ingest_runs`. Entry point: `uv run python scripts/backfill.py [--source
+strava|apple_health|garmin|all]`.
+
+**Next session: check whether Garmin's export has arrived** under
+`data/raw/garmin/bulk_export/`. `scripts/backfill.py --source garmin` already detects
+its presence/absence and says so clearly. Once it exists, inspect its real structure
+the same way Strava/Apple Health's were inspected — do not assume from public docs —
+before writing `ingest/garmin_bulk.py`. That's the last piece of Phase 2.
 
 **Phase 1 summary** (2026-08-27): `core/migrations/0001_initial_schema.sql` is the
 source of truth for the schema (all 7 tables from the target schema below, applied via
@@ -116,8 +164,8 @@ Build phases, in order — **stop at the end of each and show the result before
 continuing; do not run ahead**:
 
 0. ✅ Repo scaffold, `pyproject.toml`, `.env.example`, `config/athlete.yaml`, this file, ADR 0001.
-1. ⬜ Schema + DB layer (`core/db.py`, `core/schema.sql`, upsert helpers, `ingest_runs` audit table).
-2. ⬜ Historical backfill from the three bulk exports (Garmin zip, Apple Health `export.xml`, Strava archive).
+1. ✅ Schema + DB layer (`core/db.py`, `core/schema.sql`, upsert helpers, `ingest_runs` audit table).
+2. 🟡 Historical backfill — Strava ✅, Apple Health ✅, Garmin ⬜ (export not yet received).
 3. ⬜ Deduplication and canonical merge across sources.
 4. ⬜ Derived metrics (section "Derived metrics" below), with unit tests.
 5. ⬜ Dashboard (Streamlit), read-only first, then logging forms.
@@ -259,18 +307,18 @@ pick changed. Francisco confirmed 2026-08-27 he's buying a Garmin strap.
 ```
 config/
   athlete.yaml        profile, goals, training architecture, nutrition, equipment, injuries
-  sources.yaml         (not yet created — per-source settings/precedence, lands with ingestion)
+  sources.yaml        per-source ingest settings (Apple Health exclude/weight-allow lists)
 data/
   raw/                 immutable per-source downloads (gitignored)
   health.db             the one canonical store (gitignored)
 src/health_os/
-  ingest/               garmin.py, garmin_bulk.py, apple_health.py, strava.py, bjj_manual.py
-  core/                 db.py, schema.sql (snapshot), migrations/0001_initial_schema.sql (source of truth), models.py, dedupe.py (Phase 3)
+  ingest/               strava_bulk.py, apple_health.py, common.py (shared helpers) — garmin.py/garmin_bulk.py/bjj_manual.py not yet written
+  core/                 db.py, timezones.py, schema.sql (snapshot), migrations/0001_initial_schema.sql (source of truth), models.py, dedupe.py (Phase 3)
   metrics/              baselines.py, readiness.py, load.py, body_comp.py
   coach/                rules.py, briefing.py, weekly_retro.py
   dashboard/             app.py (Streamlit)
-scripts/                sync.py (single daily entrypoint), backfill.py, log_bjj.py
-tests/
+scripts/                backfill.py (Phase 2 entrypoint) — sync.py, log_bjj.py not yet written
+tests/                  core/, ingest/, fixtures/ (synthetic — never real personal data, fixtures are committed to git)
 docs/decisions/          ADRs, one per non-obvious choice
 ```
 
