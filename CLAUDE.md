@@ -13,9 +13,27 @@ as the project evolves.
 
 ## Current status
 
-**Phase 0 and Phase 1 complete.** Schema + DB layer is built and tested (38 tests,
-`uv run pytest`), still zero network calls. Next up: **Phase 2**, historical backfill
-from the three bulk exports (Garmin zip, Apple Health `export.xml`, Strava archive).
+**Phase 0 and Phase 1 complete. Phase 2 (historical backfill) blocked on Francisco's
+real export files as of 2026-08-27** — none of the three (Garmin, Apple Health, Strava)
+had been requested yet when Phase 2 kicked off. Per the kickoff doc, don't write
+per-source parsers against assumed/documented export formats — "the parsing will be
+uglier than the docs suggest," verify actual structure from the real files. Garmin's
+export alone takes days to generate, so getting all three requested is the actual
+critical path right now, not code.
+
+What *did* get built in the meantime (structure-independent, safe ahead of the real
+files): `core/timezones.py` — `parse_utc()`, `to_local_date()`,
+`attribute_sleep_to_wake_date()` — the UTC-storage/Europe-Madrid-render/wake-date
+attribution logic from design principle 7, DST-aware, pure date math with no
+dependency on any export's file format. 48 tests total now. Every future ingester
+should route local-date attribution through this rather than rolling its own.
+
+**Next session: check whether the three exports have arrived** (Garmin Account
+Management Center zip → `data/raw/garmin/bulk_export/`, Apple Health `export.zip` →
+`data/raw/apple_health/`, Strava archive → `data/raw/strava/`). Once real files exist,
+inspect their actual structure before writing `ingest/garmin_bulk.py`,
+`ingest/apple_health.py`, or the Strava backfill parser — do not guess at it from
+public docs.
 
 **Phase 1 summary** (2026-08-27): `core/migrations/0001_initial_schema.sql` is the
 source of truth for the schema (all 7 tables from the target schema below, applied via
