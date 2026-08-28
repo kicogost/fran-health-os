@@ -19,6 +19,7 @@ import pandas as pd
 import streamlit as st
 import yaml
 
+from health_os.coach import briefing
 from health_os.core import db
 
 CACHE_TTL_S = 60  # short enough that a fresh `scripts/sync.py` run shows up quickly
@@ -106,6 +107,22 @@ def ingest_runs_df() -> pd.DataFrame:
         return pd.read_sql_query(
             "SELECT * FROM ingest_runs ORDER BY started_at DESC LIMIT 100", conn
         )
+    finally:
+        conn.close()
+
+
+@st.cache_data(ttl=CACHE_TTL_S)
+def daily_plan(today: str) -> dict[str, Any]:
+    """The real coaching-rules output for `today` — `coach/briefing.py:
+    compute_daily_plan()`, the same computation `scripts/briefing.py` prints
+    from the CLI, not a dashboard-only preview. Cached the same way every
+    other loader here is (`today` alone is the cache key; a fresh
+    `scripts/sync.py`/log entry shows up within the TTL, same as everywhere
+    else on this page).
+    """
+    conn = db.init_db()
+    try:
+        return briefing.compute_daily_plan(conn, load_athlete_config(), today)
     finally:
         conn.close()
 

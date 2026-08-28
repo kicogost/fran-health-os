@@ -14,6 +14,8 @@ from math import pi
 import plotly.graph_objects as go
 import streamlit as st
 
+from health_os.coach.rules import classify_readiness_band
+
 # IBM Carbon's g100 dark theme tokens (carbondesignsystem.com) — a real,
 # published, accessibility-tested dark palette built specifically for dense
 # dashboards, rather than colors eyeballed from screenshots.
@@ -119,25 +121,16 @@ def configure_page(title: str) -> None:
     )
 
 
+_BAND_COLORS = {"green": GREEN, "amber": AMBER, "red": RED, "no_data": MUTED}
+
+
 def band_color(score: float | None) -> str:
-    """Kickoff doc readiness bands: Green >=75, Amber 55-74, Red <55."""
-    if score is None:
-        return MUTED
-    if score >= 75:
-        return GREEN
-    if score >= 55:
-        return AMBER
-    return RED
-
-
-def band_label(score: float | None) -> str:
-    if score is None:
-        return "No data"
-    if score >= 75:
-        return "Green"
-    if score >= 55:
-        return "Amber"
-    return "Red"
+    """Maps a readiness score to its display color. Threshold classification
+    itself lives in `coach/rules.py: classify_readiness_band()` — the
+    canonical single source for the 75/55 cutoffs — this just adds the UI
+    color mapping on top rather than keeping its own duplicate thresholds.
+    """
+    return _BAND_COLORS[classify_readiness_band(score)]
 
 
 def ring_svg(

@@ -678,7 +678,11 @@ continuing; do not run ahead**:
    support either feature) — see current-status section for the full investigation.
    Live-activity units (seconds/meters) confirmed correct against real ride/strength
    data, no longer an open question.
-7. ⬜ Coaching rules engine + briefing generator.
+7. 🟡 Coaching rules engine + briefing generator — `coach/rules.py` (deterministic
+   decisions), `coach/briefing.py` (assembles real data, narrates via rules.py,
+   shared by both `scripts/briefing.py` and the dashboard's Today page — no more
+   dashboard-only preview logic). Not yet: weekly retro, correlation engine (needs
+   90 days of real data, don't have it yet). See current-status section below.
 8. ⬜ Scheduling (launchd/cron) + correlation analysis.
 
 ## Athlete profile
@@ -900,37 +904,109 @@ Minimum tables, full column lists in kickoff doc section 5:
   above for the full component-by-component read and its caveats (TSB stale, no
   subjective data logged yet).
 
-## Coaching layer (target — lands in Phase 7)
+## Coaching layer — rules engine + briefing built, Phase 7 (2026-08-28)
 
 **Deterministic rules first, prose second.** The rules engine produces a decision + reasons; the language layer only narrates that — it never invents a recommendation the rules didn't produce.
 
-**Daily briefing** (morning): (1) today's session adjusted for readiness, (2) one
-nutrition focus, (3) one trend observation *only if actually notable* — silence is valid,
-don't manufacture an insight daily.
+`coach/rules.py` (pure, deterministic, no LLM calls ever) and `coach/briefing.py`
+(assembles real data, calls `rules.py` for every decision, formats the result) are
+built and real — this is the module `dashboard/views/today.py`'s "simplified preview"
+(2026-08-28, earlier the same day) was explicitly a stand-in for; the preview is gone
+now, replaced by `dashboard/data.py: daily_plan()` calling the real
+`coach/briefing.compute_daily_plan()` directly. `scripts/briefing.py` is the CLI
+entrypoint (`uv run python scripts/briefing.py [--date YYYY-MM-DD]`).
 
-**Readiness bands** (against the fixed weekly shape):
+**Readiness bands** (against the fixed weekly shape) — `classify_readiness_band()`,
+the one canonical source for the 75/55 thresholds (the dashboard's `theme.py` imports
+it rather than keeping its own copy):
 - **Green ≥75** — train as scheduled; BJJ live rounds fine; lifting days get a load progression attempt.
 - **Amber 55-74** — train as scheduled, cap intensity; BJJ technical/no-ego rolls; hold calisthenics load; bike strictly Z2.
-- **Red <55** — downgrade, don't delete: BJJ → drilling only; calisthenics → mobility + light kettlebell. Never prescribe a full rest day off one bad number — require 2 consecutive red days or 3 amber days first.
-- **Structural triggers** — 3 consecutive days HRV < baseline−1SD, or TSB persistently
-  very negative (deep accumulated fatigue without recovery, threshold TBD once real
-  load-unit calibration exists) for 4+ days, or monotony >2.0 with strain in the
-  last-8-weeks top quartile → formal capped-week/deload recommendation. Deloads are
-  already ~every 4 weeks on the calendar — flag when calendar and data disagree.
+- **Red <55** — downgrade, don't delete: BJJ → drilling only; calisthenics → mobility + light kettlebell.
 
-**Hard safety rails (in the rules engine, not just prose):** never recommend running;
-never increase pressing/overhead load in a week with a logged neck niggle; never a
-deficit deeper than 2,300 kcal implies, never fasting, never "making up" for a social
-meal; never add a 4th/5th hard session — the architecture is fixed.
+`session_guidance()` combines today's *actual scheduled session* (from
+`comp_prep.weekly_template`, not a generic weekly sentence) with the band — e.g.
+Friday's Amber guidance is specifically "cap it — aim for roughly 2/3 of your usual
+open-mat rounds," not the same text a Monday technical class would get.
 
-**Weekly retro** (Sunday): 7-day weight trend + CI, sessions completed vs planned, total
-load with TSB/monotony, sleep totals, protein adherence rate, social-meal count
-correlated against weight trend, waist delta, proposed calisthenics progression.
+**Structural triggers, all built and real** (not the placeholder text the dashboard
+preview had):
+- `hrv_sustained_low()` — 3 consecutive days HRV >1 SD below baseline, recomputing
+  `compute_hrv_baseline()` for each of the last 3 days by truncating the observation
+  list (same "baseline slides day to day" approach `compute_rhr_baseline()` already
+  used internally).
+- `tsb_persistently_negative()` — TSB negative for 4+ straight days. Kickoff doc flags
+  the real numeric threshold as "TBD once load-unit calibration exists" — "negative at
+  all" is the documented placeholder condition, not a made-up magnitude.
+- `monotony_strain_flag()` — current week's monotony >2.0 AND strain in the top
+  quartile of the last 8 weeks. Real bug caught in testing: `compute_monotony_strain()`
+  returns one result *per day* (a daily-sliding 7-day window), not one per calendar
+  week — an early draft's `weekly_results[-lookback_weeks:]` only looked back
+  ~2 weeks' worth of days while claiming 8. Fixed to
+  `weekly_results[-lookback_weeks * 7:]`.
+- `should_downgrade_to_rest()` — the "never prescribe a full rest day off one bad
+  number, require 2 consecutive red days or 3 amber days first" gate. Needs real
+  trailing readiness-*band* history, not just today's score — `compute_daily_plan()`
+  builds this by recomputing the full readiness score as of each of the last 3 days
+  (truncating every observation series per day), not by reading a persisted history
+  (`derived_daily` still isn't written to by anything).
 
-**Correlation engine** (last, needs 90 days of data): Spearman rho with n and p between
-candidate inputs (sleep, deep sleep, social meals, steps, BJJ load, gi/no-gi) and
-outcomes (next-day HRV/readiness, weekly weight slope, gassed rate). n<30 = provisional.
-Never present correlation as causal. Top 3 findings max.
+**Two hard safety rails, enforced BY CONSTRUCTION rather than by a runtime check —
+documented explicitly in `rules.py` rather than left implicit:**
+- *Never recommend running* — `_SESSION_GUIDANCE`'s vocabulary of session types (from
+  `comp_prep.weekly_template`) never includes running in the first place; the
+  athlete's own weekly architecture never schedules it (the knee injury guardrail
+  already lives at the config layer).
+- *Never add a 4th/5th hard session* — `session_guidance()` only ever narrates
+  sessions already present in `weekly_template`; it has no mechanism to add one.
+
+**One rail that's genuinely checked at runtime**: the neck-niggle → no pressing/
+overhead progression rule. `has_recent_neck_niggle()` scans `subjective_log.niggles`
+and `bjj_sessions.niggles` (trailing 7 days) for "neck" (case-insensitive substring —
+a blunt instrument, deliberately erring toward pausing progression too often rather
+than missing a real one) and forces calisthenics guidance to "hold current load"
+regardless of readiness band if found.
+
+**Nutrition focus**: `nutrition_focus()`'s only possible outputs are two fixed,
+pre-approved sentences (never fasting, never a deficit deeper than
+`deficit_kcal_max` implies, never "making up" for a social meal) — the guardrail is
+enforced by construction, not by checking generated text after the fact.
+
+**One trend observation, only if notable**: `_notable_trend_observation()` checks a
+small fixed priority list (RHR `sustained_rise_flag`, comp-countdown red flag) and
+returns the first that fires, or nothing — "silence is valid" is implemented literally
+as "return `None`, the caller adds no line."
+
+**Real output against the actual database, 2026-08-28** (Friday):
+```
+Health OS briefing — 2026-08-28 (Friday)
+
+Readiness: AMBER
+  Bjj (open mat): Cap it — aim for roughly 2/3 of your usual rounds, technical focus on the rest.
+
+Nutrition: Hit 180g protein today — the one hard number that matters most.
+```
+And for a real historical date with worse readiness (2026-08-24, a real red run in the
+account's actual data):
+```
+Health OS briefing — 2026-08-24 (Monday)
+
+Readiness: RED
+  Bjj (no gi technical): Drilling only — skip the live rolling portion entirely.
+  Calisthenics (strength a): Mobility + light kettlebell instead of the full session.
+  ⚠ Structural: 2+ consecutive red days or 3 amber days in a row — consider downgrading today's session further, not just per-band guidance above.
+
+Nutrition: Hit 180g protein today — the one hard number that matters most.
+```
+
+35 new tests (`tests/coach/test_rules.py`) — every rule function individually, including
+the monotony/strain lookback bug caught above. 262 tests total, all passing.
+
+**Not yet done**: **weekly retro** (Sunday summary — 7-day weight trend, sessions vs
+planned, protein adherence, waist delta) and the **correlation engine** (explicitly
+deferred — the kickoff doc itself says it needs 90 days of data, and this account's
+actual multi-source overlap doesn't have that yet, per the training-load staleness
+notes above; building it now would mean building against data too thin to trust,
+not a real capability yet).
 
 ## Dashboard — built, Phase 5 (2026-08-28)
 
