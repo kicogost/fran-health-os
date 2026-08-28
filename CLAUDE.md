@@ -1925,6 +1925,59 @@ backend test suite) — worth doing once Francisco actually uses it for a real e
 - When a real API/library behaves differently than documented here, trust the API and
   update this file.
 
+## Schedule fluidity + custom calisthenics exercises (2026-08-28)
+
+Francisco asked directly: how fluid is the system — next week is a one-week holiday,
+he won't follow the normal comp-prep schedule, but will get in a few runs and reduced
+calisthenics (push-ups/abs instead of the prescribed exercises). Answered honestly
+against what's actually built, not guessed:
+
+- **A run is safe to log, but only via Garmin/Strava auto-detection, never a manual
+  "running" session type** — the knee-injury guardrail (`coach/rules.py`) is enforced
+  by construction: the session-type vocabulary the coaching layer narrates from
+  (`comp_prep.weekly_template`) simply never includes running, so there's no
+  mechanism to *recommend* it. But nothing stops the activity itself from landing in
+  `activities` as `sport="running"` the same as any other Garmin-recorded session —
+  ingestion doesn't gate on sport type, only the coaching/guidance layer does. A
+  holiday-week run shows up on Trends/Training like any other cardio session; the
+  system just never tells him to do another one.
+- **The weekly retro and comp-prep weekly-template comparison will correctly show a
+  week of "missed" BJJ/bike sessions during the holiday** — this is design principle 6
+  working as intended (never invent data, never silently adjust the plan), not a bug
+  to route around. `coach/weekly_retro.py` has no "vacation mode" that suppresses
+  missed-session flags, and shouldn't grow one just to make one deviated week look
+  clean — an honest gap report is more useful than a plan that quietly rewrites itself.
+- **Reduced calisthenics (push-ups/abs) had a real, closed gap**: the interactive
+  logger (`scripts/log_calisthenics.py`) and the dashboard/frontend Log page's
+  Calisthenics tab only ever walked the prescribed `config/athlete.yaml:
+  comp_prep.strength_sessions` exercise list — there was no way to log a substituted
+  exercise with real sets/reps, only the free-text `notes` field. Confirmed first that
+  `core/models.py: CalisthenicsSession` already had zero exercise-name validation
+  (only `session_type` and `session_rpe` are constrained), so this was purely a
+  CLI-loop and frontend-form gap, not a schema change. Closed same day, both sides:
+  - `scripts/log_calisthenics.py: _prompt_custom_exercises()` — prompts for one more
+    free-text exercise name until a blank entry ends it, runs unconditionally after
+    the prescribed loop (including when the prescribed list is empty, e.g. a session
+    type with no config match), same "blank sets to skip" shape already used
+    elsewhere in this script.
+  - `frontend/src/components/log/LogCalisthenicsTab.tsx` — matching "Add exercise"
+    button appends a free-text-name row (sets/reps/added-kg + a remove ✕ button) to
+    the same `exercises` array the prescribed rows build, sent to the same
+    `POST /api/log/calisthenics` endpoint unchanged. Blank-named rows are dropped
+    silently on submit, mirroring the prescribed rows' "sets > 0" skip rule.
+  - 6 new tests (`tests/scripts/test_log_calisthenics.py`), including a holiday-
+    substitution case with an *empty* prescribed list (confirms the custom-exercise
+    prompt isn't accidentally gated on a prescribed session type existing). 416 tests
+    passing, ruff clean. Frontend typecheck/build/lint clean; verified visually via a
+    Chrome-headless screenshot (temporarily seeded preview state to render populated
+    rows, reverted immediately after — never left in the committed code).
+- **Not changed, and correctly so**: the fixed weekly architecture itself
+  (`comp_prep.weekly_template`) and the coaching layer's guidance vocabulary — a
+  one-off travel week is a logging-and-honest-reporting problem, not a reason to make
+  the programmed plan itself more "flexible." The system now has somewhere real to
+  put what actually happened; it still never pretends the plan happened when it
+  didn't.
+
 ## Definition of done for v1
 
 One command each morning: syncs Garmin + Strava, recomputes everything, prints a
