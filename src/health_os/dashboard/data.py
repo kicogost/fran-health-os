@@ -41,20 +41,6 @@ def load_athlete_config() -> dict[str, Any]:
         return yaml.safe_load(f)
 
 
-def readiness_weights(config: dict[str, Any]) -> dict[str, float]:
-    """Adapts `config/athlete.yaml: readiness_score`'s `weight_<name>` keys to
-    the `{"hrv": ..., "sleep": ...}` shape `compute_readiness_score()` wants.
-    """
-    section = config["readiness_score"]
-    return {
-        "hrv": section["weight_hrv"],
-        "sleep": section["weight_sleep"],
-        "rhr": section["weight_rhr"],
-        "tsb": section["weight_tsb"],
-        "subjective": section["weight_subjective"],
-    }
-
-
 @st.cache_data(ttl=CACHE_TTL_S)
 def daily_metrics_df() -> pd.DataFrame:
     conn = db.init_db()

@@ -132,7 +132,13 @@ def compute_rhr_baseline(
     >1 SD elevation above their own trailing baseline — a sustained rise, not
     one noisy high reading, per kickoff doc section 6. Each of the 3 days uses
     its own trailing window (the window slides day to day), not a single
-    shared one.
+    shared one. `None` (never a silent `False`, design principle 6) whenever
+    any of those 3 required sub-baselines can't be computed yet — the
+    earliest of the 3 lookbacks needs `n >= min_days + 2` total observations,
+    two more than `min_days` itself, since it needs its own trailing window
+    of `min_days` PLUS 2 more days for the later two of the 3 to slide over.
+    Below that, "not sustained-elevated" and "can't tell yet" would otherwise
+    be silently indistinguishable.
     """
     n = len(observations)
     if n < min_days:
@@ -141,7 +147,7 @@ def compute_rhr_baseline(
             "status": "insufficient_data",
             "n_days": n,
             "confidence": "insufficient_data",
-            "sustained_rise_flag": False,
+            "sustained_rise_flag": None,
         }
 
     values = [v for _, v in observations]
@@ -154,7 +160,14 @@ def compute_rhr_baseline(
     last_3 = [
         _rolling_deviation_sd(values, i, window_days, min_days) for i in range(max(0, n - 3), n)
     ]
-    sustained_rise_flag = len(last_3) == 3 and all(d is not None and d > 1 for d in last_3)
+    sustained_rise_flag: bool | None
+    if len(last_3) < 3 or any(d is None for d in last_3):
+        # Not yet computable (n < min_days + 2) -- "unknown", never a silent
+        # False that would look identical to a genuinely-checked "not
+        # elevated" result.
+        sustained_rise_flag = None
+    else:
+        sustained_rise_flag = all(d > 1 for d in last_3)
 
     return {
         "value": values[-1],

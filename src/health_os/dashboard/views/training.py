@@ -102,11 +102,15 @@ else:
     with st.container(border=True):
         ui.eyebrow("Load by day and sport")
         if not activities.empty:
+            # NULL `sport` must not silently vanish from the chart (design
+            # principle 6) -- pandas' groupby default (`dropna=True`) would
+            # otherwise drop those rows entirely before they ever reach the
+            # "unknown" fallback below, undercounting the stacked totals
+            # with no visible sign anything was excluded.
+            with_load = activities.dropna(subset=["training_load"]).copy()
+            with_load["sport"] = with_load["sport"].fillna("unknown")
             by_sport = (
-                activities.dropna(subset=["training_load"])
-                .groupby(["local_date", "sport"])["training_load"]
-                .sum()
-                .reset_index()
+                with_load.groupby(["local_date", "sport"])["training_load"].sum().reset_index()
             )
             if not by_sport.empty:
                 fig2 = ui.base_figure()

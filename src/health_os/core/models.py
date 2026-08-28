@@ -425,6 +425,9 @@ def merge_subjective_log_entry(
     return SubjectiveLogEntry(**merged_fields)
 
 
+_VALUE_CM_RANGE = (40.0, 200.0)  # sane bounds for any tape measurement, not waist-specific
+
+
 @dataclass(slots=True)
 class BodyMeasurement:
     """One row of `body_measurements` — grain: (date, measurement_type)."""
@@ -433,6 +436,11 @@ class BodyMeasurement:
     value_cm: float
     measurement_type: str = "waist"
     notes: str | None = None
+
+    def __post_init__(self) -> None:
+        low, high = _VALUE_CM_RANGE
+        if not low <= self.value_cm <= high:
+            raise ValueError(f"value_cm must be {low}-{high}, got {self.value_cm!r}")
 
     def to_row(self, *, include_none: bool = False) -> dict[str, Any]:
         return _row_dict(self, include_none=include_none)

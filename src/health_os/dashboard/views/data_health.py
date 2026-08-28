@@ -6,7 +6,8 @@ gets noticed rather than silently going stale.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -22,7 +23,10 @@ ingest_runs = data.ingest_runs_df()
 
 with st.container(border=True):
     ui.eyebrow("Freshness")
-    today = date.today().isoformat()
+    # Design principle 7: timezone-aware everywhere, render on Europe/Madrid
+    # local time -- a naive date.today() takes the SERVER's local date,
+    # which is wrong the instant this doesn't run on a Madrid-local clock.
+    today = datetime.now(ZoneInfo("Europe/Madrid")).date().isoformat()
     FRESHNESS_COLUMNS = {
         "weight_kg": "Weight",
         "hrv_overnight_ms": "HRV",

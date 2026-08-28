@@ -348,6 +348,20 @@ class TestBodyMeasurement:
         assert reloaded.value_cm == 85.5
         assert reloaded.notes == "post-camp Block 1"
 
+    def test_rejects_out_of_range_value_cm_too_low(self) -> None:
+        with pytest.raises(ValueError):
+            BodyMeasurement(date="2026-08-30", value_cm=39.9)
+
+    def test_rejects_out_of_range_value_cm_too_high(self) -> None:
+        with pytest.raises(ValueError):
+            BodyMeasurement(date="2026-08-30", value_cm=200.1)
+
+    def test_accepts_value_cm_at_range_boundaries(self) -> None:
+        low = BodyMeasurement(date="2026-08-30", value_cm=40.0)
+        high = BodyMeasurement(date="2026-08-30", value_cm=200.0)
+        assert low.value_cm == 40.0
+        assert high.value_cm == 200.0
+
 
 class TestDerivedMetric:
     def test_inputs_round_trip_as_json(self, conn: sqlite3.Connection) -> None:

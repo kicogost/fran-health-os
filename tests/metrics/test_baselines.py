@@ -92,6 +92,7 @@ class TestComputeRhrBaseline:
     def test_insufficient_data_below_21_days(self) -> None:
         result = compute_rhr_baseline(_dated([50.0] * 20))
         assert result["confidence"] == "insufficient_data"
+        assert result["sustained_rise_flag"] is None
 
     def test_exact_closed_form_high(self) -> None:
         values = _identical_plus_outlier(60, common=50.0, outlier=60.0)
@@ -114,6 +115,32 @@ class TestComputeRhrBaseline:
         values = [50.0] * 60 + [70.0, 50.0, 70.0]
         result = compute_rhr_baseline(_dated(values))
         assert result["sustained_rise_flag"] is False
+
+    def test_sustained_rise_flag_none_at_n_21_not_silently_false(self) -> None:
+        # Real bug found 2026-08-28: confidence reports "full" from n=21
+        # (min_days) onward, but the earliest of the 3 sub-baselines needs
+        # its own min_days-sized trailing window, so it isn't actually
+        # computable until n >= min_days + 2 = 23. At n=21 the flag must be
+        # None ("can't tell yet"), never a silent False that looks identical
+        # to a genuinely-computed "not elevated" result.
+        result = compute_rhr_baseline(_dated([50.0] * 21))
+        assert result["confidence"] == "full"
+        assert result["sustained_rise_flag"] is None
+
+    def test_sustained_rise_flag_none_at_n_22_not_silently_false(self) -> None:
+        result = compute_rhr_baseline(_dated([50.0] * 22))
+        assert result["confidence"] == "full"
+        assert result["sustained_rise_flag"] is None
+
+    def test_sustained_rise_flag_computable_at_n_23_boundary(self) -> None:
+        # n = min_days + 2 = 23 is exactly where all 3 sub-baselines first
+        # become computable -- same 3-consecutive-elevated-day shape as
+        # test_sustained_rise_flag_true_for_3_consecutive_high_days, just
+        # shrunk to the smallest n where the flag can be a real bool at all.
+        values = [50.0] * 20 + [70.0, 70.0, 70.0]
+        result = compute_rhr_baseline(_dated(values))
+        assert result["confidence"] == "full"
+        assert result["sustained_rise_flag"] is True
 
 
 class TestComputeSleepDebt:

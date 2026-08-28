@@ -1,0 +1,20 @@
+#!/bin/bash
+# Health OS pre-commit hook (design principle 8, CLAUDE.md: "Secrets in
+# .env only, never committed... A pre-commit hook should block
+# credential-shaped strings in commits").
+#
+# `.git/hooks/` can't be version-controlled directly, so this lives here
+# instead and has to be pointed at explicitly, ONE TIME, per clone:
+#
+#   git config core.hooksPath githooks
+#
+# After that, every `git commit` runs this automatically. To bypass in a
+# genuine emergency (use sparingly): `git commit --no-verify`.
+
+set -uo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT" || exit 1
+
+uv run python scripts/check_secrets.py
+exit $?
