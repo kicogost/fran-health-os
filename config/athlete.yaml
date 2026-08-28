@@ -251,9 +251,21 @@ training_load:
   # automatically by core.models.BjjSession) x this factor should land on the same
   # axis as Garmin's own training_load, so CTL/ATL/TSB and monotony (metrics/load.py;
   # ADR 0003 dropped ACWR in favor of CTL/ATL/TSB) can sum across BJJ and everything
-  # else meaningfully (kickoff doc section 2.4). Placeholder until Garmin data exists
-  # to calibrate against — do not trust this value for load math yet. Recompute in
-  # Phase 3/4 once bjj_sessions and Garmin activities overlap on enough days to fit
-  # a real factor.
+  # else meaningfully (kickoff doc section 2.4). Still 1.0/uncalibrated even after
+  # the Garmin backfill (2026-08-28) — Garmin's bulk export has no training_load
+  # scalar at all (checked), so the original calibration plan needs rethinking,
+  # probably against aerobic_te/anaerobic_te instead. Not yet decided.
   bjj_rpe_calibration_factor: 1.0
+
+readiness_score:
+  # Weights for metrics.readiness.compute_readiness_score(), kickoff doc section 6.
+  # Sum to 1.0. When a component has no data for a given day (e.g. no wellness log,
+  # or insufficient HRV history), it's dropped entirely and the remaining weights
+  # are renormalized — never invented as a neutral score. See
+  # metrics/readiness.py's docstring for exactly how.
+  weight_hrv: 0.35
+  weight_sleep: 0.25
+  weight_rhr: 0.15
+  weight_tsb: 0.15
+  weight_subjective: 0.10
   bjj_rpe_calibration_status: "uncalibrated — no Garmin training_load data yet"

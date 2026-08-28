@@ -9,7 +9,15 @@ from health_os.metrics.load import (
     build_daily_load_series,
     compute_ctl_atl,
     compute_monotony_strain,
+    compute_tsb_zscore,
 )
+
+
+def _dated(values: list[float]) -> list[tuple[str, float]]:
+    from datetime import date, timedelta
+
+    start = date(2026, 1, 1)
+    return [((start + timedelta(days=i)).isoformat(), v) for i, v in enumerate(values)]
 
 
 class TestBuildDailyLoadSeries:
@@ -136,3 +144,40 @@ class TestComputeCtlAtl:
         for _, ctl, atl, tsb in result:
             assert ctl == pytest.approx(atl)
             assert tsb == pytest.approx(0.0)
+
+
+class TestComputeTsbZscore:
+    def test_insufficient_data_below_14_days(self) -> None:
+        result = compute_tsb_zscore(_dated([10.0] * 10))
+        assert result["confidence"] == "insufficient_data"
+        assert result["z_score"] is None
+
+    def test_zero_variance_is_undefined(self) -> None:
+        result = compute_tsb_zscore(_dated([10.0] * 14))
+        assert result["confidence"] == "undefined_zero_variance"
+        assert result["z_score"] is None
+
+    def test_exact_closed_form(self) -> None:
+        # 13 days @ 10.0, latest = 30.0. For (n-1) identical values + 1
+        # outlier as the last point: mean/pstdev work out so that
+        # z_score = sign(outlier-common) * sqrt(n-1) exactly, independent of
+        # the outlier's magnitude (derived independently, not from the
+        # implementation -- see the general derivation in test_baselines.py's
+        # _identical_plus_outlier for the equivalent median-based case).
+        values = [10.0] * 13 + [30.0]
+        result = compute_tsb_zscore(_dated(values))
+        assert result["z_score"] == pytest.approx(13**0.5)
+        assert result["confidence"] == "full"
+
+    def test_negative_outlier_gives_negative_zscore(self) -> None:
+        values = [10.0] * 13 + [-10.0]
+        result = compute_tsb_zscore(_dated(values))
+        assert result["z_score"] == pytest.approx(-(13**0.5))
+
+    def test_only_uses_trailing_window(self) -> None:
+        # 20 days of noise, then 14 identical days -> window should only see
+        # the constant tail and report zero variance, not "full" from the
+        # noisy earlier days leaking in.
+        values = [5.0, 50.0, 1.0, 40.0, 8.0, 33.0] + [10.0] * 14
+        result = compute_tsb_zscore(_dated(values), window_days=14)
+        assert result["confidence"] == "undefined_zero_variance"

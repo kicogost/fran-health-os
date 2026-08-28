@@ -165,3 +165,50 @@ def compute_ctl_atl(
         atl = load if atl is None else atl + (load - atl) * atl_alpha
         series.append((day, ctl, atl, ctl - atl))
     return series
+
+
+DEFAULT_TSB_ZSCORE_WINDOW_DAYS = 90
+DEFAULT_TSB_ZSCORE_MIN_DAYS = 14
+
+
+def compute_tsb_zscore(
+    tsb_series: list[tuple[str, float]],
+    *,
+    window_days: int = DEFAULT_TSB_ZSCORE_WINDOW_DAYS,
+    min_days: int = DEFAULT_TSB_ZSCORE_MIN_DAYS,
+) -> dict[str, Any]:
+    """Z-score of the latest TSB value against its own trailing distribution.
+
+    Feeds the readiness score's TSB component (ADR 0003 / CLAUDE.md's readiness
+    section): raw TSB magnitude depends on load units that aren't calibrated
+    or universally comparable (kickoff doc 2.4's BJJ calibration factor is
+    still 1.0), so there's no borrowed absolute "good" or "bad" TSB threshold
+    to score against. Scoring self-relatively — how fresh is today compared to
+    *this athlete's own* recent range — sidesteps that entirely.
+
+    `tsb_series` is (date, tsb) pairs, sorted ascending — pass
+    `[(d, tsb) for d, ctl, atl, tsb in compute_ctl_atl(...)]`.
+    """
+    n = len(tsb_series)
+    if n < min_days:
+        return {"z_score": None, "n_days": n, "confidence": "insufficient_data"}
+
+    window = [tsb for _, tsb in tsb_series[-window_days:]]
+    latest = window[-1]
+    mean = statistics.mean(window)
+    sd = statistics.pstdev(window)
+
+    if sd == 0:
+        return {
+            "z_score": None,
+            "n_days": len(window),
+            "confidence": "undefined_zero_variance",
+        }
+
+    return {
+        "z_score": (latest - mean) / sd,
+        "mean": mean,
+        "sd": sd,
+        "n_days": len(window),
+        "confidence": "full",
+    }
