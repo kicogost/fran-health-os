@@ -1,7 +1,8 @@
 # 5. Migrate the dashboard off Streamlit, after Phase 7
 
 Date: 2026-08-28
-Status: Accepted (migration itself not yet started — scheduled after Phase 7)
+Status: Accepted — migration started 2026-08-28 (Today page, phase 1 of 6; see
+CLAUDE.md's "Frontend migration started" entry for the real, running result)
 
 ## Context
 
@@ -73,11 +74,33 @@ Francisco pointed at actually target) once Phase 7 is done, not before.**
 - `src/health_os/dashboard/` (the current Streamlit app: `theme.py`, `data.py`,
   `views/*.py`) stays as-is and in active use until the migration actually happens —
   not deleted or frozen mid-improvement in the meantime.
-- The migration itself is **not scoped or started** as of this ADR — stack specifics
-  (Vite vs. Next.js, exact component library, how the local API layer is structured)
-  are deliberately left for when that work actually begins, not decided speculatively
-  now.
 - Six-page scope (Today/Trends/Training/Comp Prep/Log/Data Health) and the underlying
   data-access patterns (`dashboard/data.py`'s cached loaders) transfer conceptually to
   the new frontend's API layer even though the presentation code will be rewritten
   from scratch.
+
+## Update, 2026-08-28 — migration started, stack specifics now decided
+
+Francisco gave the go-ahead the same day. Scoped as **Today page first, phased** (his
+explicit choice when asked) rather than all 6 pages before seeing anything running —
+see CLAUDE.md's "Frontend migration started" entry for the full real-data-verified
+result. Stack specifics this ADR deliberately deferred are now settled by actually
+building it:
+
+- **Vite**, not Next.js — this app has no SSR/routing-heavy needs (a single-user local
+  dashboard), and Vite is the simpler, faster-to-iterate choice for a local SPA.
+- **shadcn/ui with the Radix UI base** (not the CLI's newer "Base UI" default) — Radix
+  has the longer, better-documented real-world track record; this project consistently
+  favors that over bleeding-edge (same reasoning as picking `garminconnect[typed]`'s
+  stable Pydantic models over hand-parsing, ADR 0004).
+- **FastAPI**, confirmed — `src/health_os/api/` imports `coach`/`metrics`/`core`
+  directly, zero duplication of business logic into JavaScript.
+- **Same fixed dark theme** as the Streamlit dashboard's own Carbon `g100` tokens
+  (`theme.py`) — no light/dark toggle; this is a personal app with one established,
+  already-approved visual identity, not a product serving arbitrary viewer preference.
+- Real tooling gotcha hit and fixed: `npx shadcn@latest init`/`add` wrote component
+  files to a literal `./@/` directory at the project root instead of resolving the
+  `@/*` → `./src/*` alias into `src/components/ui/` — confirmed by checking the actual
+  file tree, not assumed. Fixed by moving the files to their correct location by hand;
+  the alias itself (in `vite.config.ts` and `tsconfig.app.json`) was already correct
+  and resolves fine now that the files live where it points.

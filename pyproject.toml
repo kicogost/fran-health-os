@@ -31,9 +31,15 @@ dependencies = [
     "numpy>=1.26",
     "pandas>=2.2",
     "scipy>=1.13",
-    # Dashboard
+    # Dashboard (Streamlit — stays in place until the React/Tailwind migration,
+    # ADR 0005, is actually complete; not removed mid-migration)
     "streamlit>=1.36",
     "plotly>=5.22",
+    # Local API layer for the React/Tailwind frontend (ADR 0005) — serves the
+    # existing core/metrics/coach modules as JSON to the new frontend. Runs
+    # only on localhost (design principle 1: local-first, no cloud services).
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
 ]
 
 [project.optional-dependencies]
@@ -41,6 +47,9 @@ dev = [
     "pytest>=8.2",
     "pytest-cov>=5.0",
     "ruff>=0.5",
+    # FastAPI's TestClient (starlette) needs httpx installed to construct —
+    # test-only, never imported by the app itself at runtime.
+    "httpx>=0.27",
 ]
 
 [dependency-groups]
@@ -48,6 +57,7 @@ dev = [
     "pytest>=8.2",
     "pytest-cov>=5.0",
     "ruff>=0.5",
+    "httpx>=0.27",
 ]
 
 [build-system]
