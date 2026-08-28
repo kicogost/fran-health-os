@@ -1060,7 +1060,50 @@ All 6 pages re-verified with `AppTest` against the real database and real
 `config/athlete.yaml` after this change (today, a real Friday, correctly renders
 open-mat-specific guidance); 227 tests passing; ruff clean.
 
-## Working agreement
+## Dashboard visual redesign, round 2 — real screenshots, Carbon tokens (2026-08-28)
+
+Francisco said round 1 still looked "ugly" and pointed at a second repo,
+`alexpate/awesome-design-systems` — genuinely a links list to real published design
+systems (Material, Carbon, Polaris, Cloudscape, Chakra, ...), not an installer, so no
+supply-chain concern like the earlier `awesome-claude-design` repo's npx tool. **IBM
+Carbon** was the pick — built specifically for dense/dark dashboards, real published
+`g100` dark-theme tokens rather than eyeballed hex values:
+`#161616` background / `#262626` layer / `#393939` border / `#f4f4f4` text-primary /
+`#8d8d8d` text-helper / support colors `#42be65` green, `#f1c21b` amber (a real yellow,
+brighter than the previous guessed amber), `#fa4d56` red, `#78a9ff` blue. Swapped into
+`theme.py` wholesale.
+
+**Bigger fix: got an actual way to see the rendered page.** Up to this point every
+visual change was made blind — no browser/screenshot tool in this environment, only
+Francisco's descriptions and screenshots to react to, which wasn't converging.
+Discovered Chrome (already installed) has a built-in headless screenshot flag —
+`google-chrome --headless --screenshot=out.png --window-size=W,H --virtual-time-budget=N
+URL` — no new dependency, no third-party package execution, just invoking the
+already-installed, already-trusted browser binary. **Real gotcha hit and worked
+around**: right after a Streamlit server restart, a screenshot taken too soon
+(`--virtual-time-budget=8000`, ~5-10s after restart) reliably captured Streamlit's
+loading-skeleton placeholder, not the real content — confirmed by getting the *exact
+same byte count* twice in a row, meaning the render was deterministically cut off at
+the same point rather than varying with real content. Fixed by waiting longer in real
+wall-clock time after a restart (~15s) before screenshotting, not by trusting
+`--virtual-time-budget` to compensate — that flag governs virtual JS timers, not the
+real WebSocket round-trip Streamlit's actual page content streams over.
+
+Real screenshot of the Today page surfaced three concrete, fixable problems no amount
+of further blind guessing would have found reliably:
+1. **Card padding was far too tight** (`6px 10px`) — text sat right at the card edges.
+   Fixed to `20px 24px` (Carbon's own 8px-based spacing scale: spacing-05/06).
+2. **Font inconsistency** — the Inter webfont was applied to HTML text but never to
+   Plotly charts (`base_figure()`'s `font=dict(...)` had no `family`), so charts and
+   text rendered in visibly different typefaces on the same page. Fixed.
+3. **Sidebar didn't match the main content** — Streamlit's own unstyled default gray
+   sidebar background sat right next to the new near-black main area, a visible seam.
+   Fixed by explicitly styling `section[data-testid="stSidebar"]`.
+
+Re-screenshotted after the fix (real 1440×900 viewport, not the artificially tall
+window the first screenshot used) — confirms the fix: proper card spacing, sidebar
+matches, Friday's open-mat-specific guidance renders correctly and legibly. All 6
+pages re-run through `AppTest` + the full suite (227 passing) after the change.
 
 - Python 3.12+, `uv` for deps, `ruff` for lint/format, `pytest` for tests, type hints on
   every public function.

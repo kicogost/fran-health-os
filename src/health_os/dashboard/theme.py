@@ -14,31 +14,38 @@ from math import pi
 import plotly.graph_objects as go
 import streamlit as st
 
-BG = "#000000"
-PANEL = "#151517"
-PANEL_BORDER = "#232326"
-TRACK = "#2a2a2d"  # the "empty" part of a ring gauge
-GRID = "#232326"
-TEXT = "#f2f2f3"
-MUTED = "#8a8a8e"
+# IBM Carbon's g100 dark theme tokens (carbondesignsystem.com) — a real,
+# published, accessibility-tested dark palette built specifically for dense
+# dashboards, rather than colors eyeballed from screenshots.
+BG = "#161616"  # Carbon $background
+PANEL = "#262626"  # Carbon $layer-01
+PANEL_BORDER = "#393939"  # Carbon $border-subtle / $layer-02
+TRACK = "#393939"  # the "empty" part of a ring gauge — same as border, one depth step up from PANEL
+GRID = "#393939"
+TEXT = "#f4f4f4"  # Carbon $text-primary
+MUTED = "#8d8d8d"  # Carbon $text-helper
 
 # One accent colour per recurring series, kept consistent across pages so
 # "HRV" always means the same colour whether you're on Today or Trends.
+# Green/amber/red/blue are Carbon's own support/interactive colors.
 ACCENT = {
-    "weight": "#4a9eff",
-    "hrv": "#2ecc8f",
-    "rhr": "#f5544d",
-    "sleep": "#e0954b",
-    "tsb": "#4a9eff",
-    "ctl": "#4a9eff",
-    "atl": "#f5544d",
-    "load": "#8a8a8e",
+    "weight": "#78a9ff",
+    "hrv": "#42be65",
+    "rhr": "#fa4d56",
+    "sleep": "#f1c21b",
+    "tsb": "#78a9ff",
+    "ctl": "#78a9ff",
+    "atl": "#fa4d56",
+    "load": "#8d8d8d",
 }
 
-GREEN = "#2ecc8f"
-AMBER = "#e0954b"
-RED = "#f5544d"
-BLUE = "#4a9eff"
+GREEN = "#42be65"
+AMBER = "#f1c21b"
+RED = "#fa4d56"
+BLUE = "#78a9ff"
+
+
+FONT_STACK = "'Inter', -apple-system, system-ui, sans-serif"
 
 
 def configure_page(title: str) -> None:
@@ -49,24 +56,35 @@ def configure_page(title: str) -> None:
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
         html, body, .stApp {{ background-color: {BG}; }}
-        .stApp, .stApp * {{
-            font-family: 'Inter', -apple-system, system-ui, sans-serif !important;
-        }}
+        .stApp, .stApp * {{ font-family: {FONT_STACK} !important; }}
         #MainMenu, footer, header {{ visibility: hidden; }}
-        .block-container {{ padding-top: 2.5rem; max-width: 1200px; }}
+        .block-container {{ padding-top: 2.5rem; padding-bottom: 4rem; max-width: 1200px; }}
+
+        /* Sidebar: match the main content's depth instead of Streamlit's
+        unstyled default gray, which reads as a visible seam between the two. */
+        section[data-testid="stSidebar"] {{
+            background-color: {BG};
+            border-right: 1px solid {PANEL_BORDER};
+        }}
+        section[data-testid="stSidebar"] * {{ font-family: {FONT_STACK} !important; }}
 
         /* st.container(border=True) -> a card. Subtle border, soft shadow for
         depth instead of a bright outline (Linear/Vercel-style minimal dark
-        UI) -- a uniform bottom margin here means pages don't need manual
-        st.write("") spacers between cards. */
+        UI). Padding/margin follow Carbon's 8px-based spacing scale (16px =
+        spacing-05, 24px = spacing-06) rather than arbitrary numbers -- a
+        uniform bottom margin means pages don't need manual st.write("")
+        spacers between cards. */
         div[data-testid="stVerticalBlockBorderWrapper"] {{
             background-color: {PANEL};
             border: 1px solid {PANEL_BORDER} !important;
-            border-radius: 14px !important;
+            border-radius: 12px !important;
             box-shadow: 0 1px 3px rgba(0,0,0,0.4);
-            padding: 6px 10px;
-            margin-bottom: 20px;
+            padding: 20px 24px;
+            margin-bottom: 24px;
         }}
+        /* the wrapper above adds its own padding; the inner block Streamlit
+        nests inside it would otherwise add a second layer of default gap */
+        div[data-testid="stVerticalBlockBorderWrapper"] > div {{ gap: 0.6rem; }}
 
         [data-testid="stMetricValue"] {{
             font-size: 2rem;
@@ -90,7 +108,7 @@ def configure_page(title: str) -> None:
             letter-spacing: 0.07em;
             font-size: 0.68rem;
             font-weight: 600;
-            margin-bottom: 8px;
+            margin-bottom: 12px;
         }}
         /* tabs, radio, and form widgets: quiet the default Streamlit chrome */
         button[data-baseweb="tab"] {{ font-weight: 600; }}
@@ -190,7 +208,7 @@ def base_figure(*, height: int = 360) -> go.Figure:
         margin=dict(l=10, r=10, t=30, b=10),
         paper_bgcolor=PANEL,
         plot_bgcolor=PANEL,
-        font=dict(color=TEXT),
+        font=dict(color=TEXT, family="Inter, -apple-system, sans-serif"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         xaxis=dict(gridcolor=GRID, zeroline=False),
         yaxis=dict(gridcolor=GRID, zeroline=False),
