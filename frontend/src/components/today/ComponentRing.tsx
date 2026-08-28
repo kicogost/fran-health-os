@@ -1,4 +1,5 @@
 import { BAND_COLORS, scoreToBand } from "@/lib/band"
+import { useCountUp } from "@/hooks/useCountUp"
 
 const COMPONENT_LABELS: Record<string, string> = {
   hrv: "HRV",
@@ -17,13 +18,14 @@ interface ComponentRingProps {
 /** A small ring for one readiness sub-component (HRV/RHR/sleep/TSB/
  * subjective), colored by the SAME 75/55 band thresholds as the main ring
  * (lib/band.ts) so a component ring and the overall ring never disagree on
- * what "amber" looks like.
+ * what "amber" looks like. Counts up on mount, same as ReadinessRing.
  */
 export function ComponentRing({ componentKey, score, size = 64 }: ComponentRingProps) {
+  const animated = useCountUp(score, 180) ?? 0
   const strokeWidth = size * 0.12
   const radius = (size - strokeWidth) / 2
   const circumference = 2 * Math.PI * radius
-  const clamped = Math.max(0, Math.min(100, score))
+  const clamped = Math.max(0, Math.min(100, animated))
   const dashoffset = circumference * (1 - clamped / 100)
   const color = BAND_COLORS[scoreToBand(score)]
 
@@ -52,7 +54,7 @@ export function ComponentRing({ componentKey, score, size = 64 }: ComponentRingP
           />
         </svg>
         <div className="absolute inset-0 flex items-center justify-center">
-          <span className="text-sm font-semibold tabular-nums">{Math.round(score)}</span>
+          <span className="text-sm font-semibold tabular-nums">{Math.round(animated)}</span>
         </div>
       </div>
       <span className="text-[0.7rem] text-muted-foreground">

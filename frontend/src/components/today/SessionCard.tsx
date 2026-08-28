@@ -1,3 +1,5 @@
+import { TriangleAlert } from "lucide-react"
+import { CARD_CLASS } from "@/lib/styles"
 import type { Session, StructuralFlags } from "@/types/today"
 
 const WARNING_MESSAGES: Record<keyof StructuralFlags, string> = {
@@ -24,7 +26,7 @@ export function SessionCard({ weekdayName, sessions, structuralFlags }: SessionC
   )
 
   return (
-    <div className="rounded-xl border border-border bg-card p-6">
+    <div className={`${CARD_CLASS} p-5`}>
       <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
         Today&apos;s guidance -- {weekdayName.charAt(0).toUpperCase() + weekdayName.slice(1)}
       </p>
@@ -56,7 +58,13 @@ export function SessionCard({ weekdayName, sessions, structuralFlags }: SessionC
               key={key}
               className="flex items-start gap-2 rounded-lg border border-[var(--band-amber)]/30 bg-[var(--band-amber)]/10 px-3 py-2 text-sm text-foreground"
             >
-              <span aria-hidden>⚠</span>
+              <span className="relative flex h-4 w-4 shrink-0 mt-0.5" aria-hidden>
+                <span className="absolute inline-flex h-full w-full rounded-full bg-[var(--band-amber)]/50 animate-ping motion-reduce:hidden" />
+                <TriangleAlert
+                  className="relative h-4 w-4 text-[var(--band-amber)]"
+                  strokeWidth={2.25}
+                />
+              </span>
               <span>
                 <span className="font-medium">Structural:</span> {WARNING_MESSAGES[key]}
               </span>

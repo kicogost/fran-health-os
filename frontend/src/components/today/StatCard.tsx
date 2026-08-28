@@ -1,3 +1,5 @@
+import { CARD_CLASS } from "@/lib/styles"
+
 interface StatCardProps {
   label: string
   value: string
@@ -10,7 +12,7 @@ interface StatCardProps {
  */
 export function StatCard({ label, value, caption, children }: StatCardProps) {
   return (
-    <div className="rounded-xl border border-border bg-card p-5 flex-1 min-w-0">
+    <div className={`${CARD_CLASS} p-4 min-w-0`}>
       <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
         {label}
       </p>

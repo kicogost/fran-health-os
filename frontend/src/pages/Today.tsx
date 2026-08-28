@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react"
+import { TriangleAlert } from "lucide-react"
 import { ApiError, fetchToday } from "@/lib/api"
+import { CARD_CLASS } from "@/lib/styles"
 import type { TodayPayload } from "@/types/today"
 import { ReadinessRing } from "@/components/today/ReadinessRing"
 import { ComponentRing } from "@/components/today/ComponentRing"
@@ -10,6 +12,13 @@ function formatMinutes(min: number): string {
   const hours = Math.floor(min / 60)
   const mins = Math.round(min % 60)
   return `${hours}h ${mins}m`
+}
+
+function formatHeaderDate(isoDate: string, weekdayName: string): string {
+  const [, month, day] = isoDate.split("-").map(Number)
+  const monthName = new Date(2000, month - 1, 1).toLocaleString("en-US", { month: "short" })
+  const weekday = weekdayName.charAt(0).toUpperCase() + weekdayName.slice(1)
+  return `${weekday}, ${monthName} ${day}`
 }
 
 export function TodayPage() {
@@ -58,11 +67,16 @@ export function TodayPage() {
   const { readiness, sleep, weight, comp_countdown: compCountdown } = data
 
   return (
-    <div className="max-w-4xl mx-auto p-6 space-y-4">
-      <h1 className="text-2xl font-semibold text-foreground mb-2">Today</h1>
+    <div className="max-w-4xl mx-auto p-6 space-y-3">
+      <div className="flex items-baseline justify-between mb-1">
+        <h1 className="text-2xl font-semibold text-foreground tracking-tight">Today</h1>
+        <p className="text-sm text-muted-foreground tabular-nums">
+          {formatHeaderDate(data.date, data.weekday_name)}
+        </p>
+      </div>
 
       {/* Readiness: central ring + component breakdown */}
-      <div className="rounded-xl border border-border bg-card p-6">
+      <div className={`${CARD_CLASS} p-5`}>
         <div className="flex flex-col md:flex-row items-center gap-8">
           <div className="flex flex-col items-center gap-2 shrink-0">
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -70,8 +84,8 @@ export function TodayPage() {
             </p>
             <ReadinessRing score={readiness.score} band={readiness.band} />
             <p className="text-xs text-muted-foreground">
-              as of {data.date} &middot; coverage {Math.round(readiness.coverage * 100)}% &middot;
-              confidence: {readiness.confidence}
+              coverage {Math.round(readiness.coverage * 100)}% &middot; confidence:{" "}
+              {readiness.confidence}
             </p>
           </div>
           <div className="flex-1 w-full">
@@ -83,7 +97,7 @@ export function TodayPage() {
                 No components have enough data yet for a readiness score.
               </p>
             ) : (
-              <div className="flex flex-wrap gap-6 justify-center md:justify-start">
+              <div className="grid grid-cols-3 sm:grid-cols-5 gap-4">
                 {Object.entries(readiness.components).map(([key, comp]) => (
                   <ComponentRing key={key} componentKey={key} score={comp.score} />
                 ))}
@@ -99,7 +113,7 @@ export function TodayPage() {
         structuralFlags={data.structural_flags}
       />
 
-      <div className="flex flex-col sm:flex-row gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <StatCard
           label="Sleep (last night)"
           value={sleep ? formatMinutes(sleep.total_min) : "--"}
@@ -136,9 +150,15 @@ export function TodayPage() {
         >
           {compCountdown?.required_kg_per_week != null && (
             <p className="text-sm text-foreground mt-2">
-              Required: <span className="font-medium">{compCountdown.required_kg_per_week.toFixed(2)} kg/wk</span>
+              Required:{" "}
+              <span className="font-medium">
+                {compCountdown.required_kg_per_week.toFixed(2)} kg/wk
+              </span>
               {compCountdown.red_flag && (
-                <span className="text-[var(--band-amber)]"> &nbsp;⚠️ over 0.7 red line</span>
+                <span className="inline-flex items-center gap-1 text-[var(--band-amber)] ml-1.5">
+                  <TriangleAlert className="h-3.5 w-3.5" strokeWidth={2.25} />
+                  over 0.7 red line
+                </span>
               )}
             </p>
           )}
@@ -146,7 +166,7 @@ export function TodayPage() {
       </div>
 
       {(data.nutrition_focus || data.trend_observation) && (
-        <div className="rounded-xl border border-border bg-card p-5">
+        <div className={`${CARD_CLASS} p-4`}>
           <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
             Nutrition &amp; trend
           </p>

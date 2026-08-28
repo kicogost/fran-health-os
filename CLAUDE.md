@@ -1744,6 +1744,78 @@ vs. always running two local dev processes) is also undecided — fine for now s
 before calling the migration "done." The Streamlit dashboard keeps running unchanged in
 the meantime — nothing is deleted or frozen mid-migration.
 
+## Today page design pass — real sourced data, not guessed (2026-08-28)
+
+Francisco's reaction to the first pass: "much better, but still not sleek and
+beautiful." Pointed at `nextlevelbuilder/ui-ux-pro-max-skill` (122k+ real GitHub
+stars, verified via `gh api` before anything else — same discipline every external
+repo gets in this project) and asked me to read/use it.
+
+**What it actually is, checked directly rather than assumed from its README's
+marketing tone**: a real, structured design-intelligence dataset (CSVs: 79 UI styles,
+192 color palettes, 74 typography pairings, per-stack guidelines including a
+`stacks/shadcn.csv` and `stacks/react.csv`, motion/animation timing tables, a
+192-row industry-specific reasoning engine) — not an executable tool by itself. Its
+own README is explicit that AI agents should never install anything on the user's
+machine unilaterally ("these install steps are for you, the human user... AI agents
+using this skill should never install software on your machine; they are instructed
+to ask you instead") and that its search script "installs nothing and makes no
+network calls." Given that, downloaded the raw data files directly via `gh api`
+(`ui-reasoning.csv`, `styles.csv`, `colors.csv`, `typography.csv`, `motion.csv`,
+`stacks/shadcn.csv`) and read the actual guidance rather than running its CLI/plugin
+installer — real value, zero unreviewed code executed.
+
+**What the data actually said, applied concretely**:
+- The `ui-reasoning.csv` row closest to a personal quantified-self readiness
+  dashboard is **"Financial Dashboard"** (not "Healthcare App," which is patient-
+  facing/clinic software, a different product shape): pattern "Data-Dense Dashboard,"
+  style "Dark Mode (OLED) + Data-Dense Dashboard," colors "Dark bg + Red/Green alerts
+  + Trust blue," key effects "Real-time number animations + Alert pulse," must-have
+  constraints "real-time-updates, high-contrast." This matches what this project
+  already had (Carbon dark tokens, a red/amber/green band system) almost exactly —
+  the gap wasn't the color/theme decision, it was that the first React pass hadn't
+  applied the DENSITY and MOTION half of that same reasoning row yet.
+- `styles.csv`'s "Data-Dense Dashboard" row: minimal padding (8-12px), efficient grid,
+  dense-but-readable typography, compact card design — applied by tightening card
+  padding (`p-6`→`p-5`/`p-4`) and switching the stat-card row and component-ring row
+  from ad hoc flex-wrap to explicit CSS grid.
+- `typography.csv`'s "Minimal Swiss" pairing (Inter/Inter) is explicitly recommended
+  for "Dashboards, admin panels, documentation, enterprise apps, design systems" —
+  confirms the existing Inter choice (carried over from the Streamlit theme) rather
+  than requiring a font swap.
+- `motion.csv`'s "Standard" card-hover pattern (lift + shadow, 200-300ms) and the
+  Financial Dashboard row's "Real-time number animations" effect — implemented with
+  plain Tailwind transitions (`lib/styles.ts: CARD_CLASS`, a shared hover-lift/
+  elevation treatment) and a small `hooks/useCountUp.ts`, deliberately NOT adding
+  GSAP as a new dependency for an effect this simple (the dataset's own example
+  snippets use GSAP, but plain CSS transitions achieve the same lift+shadow+count-up
+  without a new package). `useCountUp` respects `prefers-reduced-motion` throughout,
+  matching the dataset's own stated convention on every motion pattern it lists.
+- **A real anti-pattern caught and fixed**: the README's own pre-delivery checklist
+  says "No emojis as icons (use SVG: Heroicons/Lucide)" — the first pass had used a
+  raw `⚠️` emoji character for structural warnings. Replaced with a proper
+  `lucide-react` `TriangleAlert` icon (already installed via shadcn's own icon-library
+  setup, zero new dependency) plus a subtle `animate-ping` ring for the "alert pulse"
+  effect the Financial Dashboard row calls for.
+
+**Real tooling gotcha hit during verification, not just assumed away**: headless
+Chrome's `--screenshot` flag captures as soon as the page reaches network/DOM
+quiescence, which does NOT wait for `requestAnimationFrame`-driven animations to
+finish — three consecutive screenshots caught the count-up mid-flight (12, then 20,
+then 41 out of a final 58) regardless of `--virtual-time-budget` size, confirming
+that flag doesn't accelerate real rAF timing the way it does JS timers. Resolved two
+ways, not one hack: shortened the count-up duration to something snappier (200ms/
+180ms — also a genuine improvement for a "real-time" dashboard feel, not just a
+workaround), and separately verified the animation's *logic* is correct using
+Chrome's real `--force-prefers-reduced-motion` flag, which confirmed the final
+numbers land exactly on the true values (58/44/63/100/14, matching the API directly)
+with zero animation — proving both the reduced-motion fallback and the settled end
+state are correct, independent of the screenshot-timing artifact.
+
+Not a redesign of the whole visual system (colors/theme/font were already right, per
+the data itself) — a tightening pass: density, elevation, real icons, motion. Same
+Today page, same data, verified against the real running app again after the change.
+
 - Python 3.12+, `uv` for deps, `ruff` for lint/format, `pytest` for tests, type hints on
   every public function.
 - **Ask before adding any dependency** not already named in this doc or `pyproject.toml`, and say what it buys.
