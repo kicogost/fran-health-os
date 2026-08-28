@@ -657,8 +657,10 @@ continuing; do not run ahead**:
 2. ✅ Historical backfill — Strava, Apple Health, and Garmin all backfilled.
 3. ✅ Deduplication and canonical merge across sources (`core/dedupe.py`, wired into
    `scripts/backfill.py`; 5 real duplicate groups found and merged).
-4. 🟡 Derived metrics (section "Derived metrics" below) — load/baselines/readiness all
-   built and tested (see sections above), but none write to `derived_daily` yet.
+4. ✅ Derived metrics (section "Derived metrics" below) — load/baselines/readiness all
+   built and tested (see sections above), and now persisted to `derived_daily` via
+   `scripts/compute_derived.py` (built 2026-08-28, see "Derived-daily persistence
+   built" below), wired into the daily `morning_run.sh` pipeline.
 5. 🟡 Dashboard (Streamlit) — all 6 pages built and smoke-tested via `AppTest` against
    real data (see current-status section above). Functionally complete but visually
    capped by the framework itself, confirmed via real screenshots across 3 iteration
@@ -837,10 +839,11 @@ data/
 src/health_os/
   ingest/               strava_bulk.py, apple_health.py (historical XML), garmin_bulk.py (historical), garmin.py (Phase 6 live sync, ADR 0004), health_auto_export.py (Phase 6 live weight sync — different JSON format from apple_health.py, not the same pipeline), common.py (shared helpers) — bjj_manual.py not needed (log_bjj.py writes directly)
   core/                 db.py, timezones.py, dedupe.py (activities cross-source dedup, live), schema.sql (snapshot, v4), migrations/000{1,2,3,4}_*.sql (source of truth), models.py
-  metrics/              body_comp.py (weight trend + comp countdown), load.py (monotony/strain, CTL/ATL/TSB — no ACWR, ADR 0003), baselines.py (HRV/RHR baselines, sleep debt), readiness.py (0-100 composite), bjj_laps.py (HR-based sparring/rest lap classification) — none of these write to derived_daily yet
+  metrics/              body_comp.py (weight trend + comp countdown), load.py (monotony/strain, CTL/ATL/TSB — no ACWR, ADR 0003), baselines.py (HRV/RHR baselines, sleep debt), readiness.py (0-100 composite), bjj_laps.py (HR-based sparring/rest lap classification), derived_daily.py (Phase 4 persistence — writes all of the above into `derived_daily`, with an honest "stale" confidence for CTL/ATL/TSB/weight when the underlying series doesn't reach today)
   coach/                rules.py, briefing.py, weekly_retro.py
   dashboard/             app.py (Streamlit entrypoint, st.navigation), theme.py (dark theme + chart helpers), data.py (cached DB/config access), views/{today,trends,training,comp_prep,log,data_health}.py
-scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_calisthenics.py (manual calisthenics logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview), sync.py (Phase 6 daily live-sync entrypoint — Garmin + Health Auto Export, incl. per-lap detail for sub_sport=="bjj" activities), briefing.py (Phase 7 CLI), weekly_retro.py (Phase 7 CLI), morning_run.sh (Phase 8 — chains sync+briefing+retro, what launchd actually runs)
+scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_calisthenics.py (manual calisthenics logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview), sync.py (Phase 6 daily live-sync entrypoint — Garmin + Health Auto Export, incl. per-lap detail for sub_sport=="bjj" activities), compute_derived.py (Phase 4 derived-metric persistence, trailing-3-day window like sync.py), briefing.py (Phase 7 CLI), weekly_retro.py (Phase 7 CLI), check_secrets.py (pre-commit secret-shaped-string guard, design principle 8), morning_run.sh (Phase 8 — chains sync+compute_derived+briefing+retro, what launchd actually runs)
+githooks/               pre-commit (calls check_secrets.py; activated once per clone via `git config core.hooksPath githooks`, since `.git/hooks/` itself can't be version-controlled)
 launchd/                com.healthos.morning.plist (Phase 8 — installed as a real LaunchAgent, 10:00 Europe/Madrid daily, moved from an initial 07:00 default per Francisco's request)
 tests/                  core/, ingest/, metrics/, coach/, scripts/, fixtures/ (synthetic — never real personal data, fixtures are committed to git)
 docs/decisions/          ADRs, one per non-obvious choice
@@ -1239,61 +1242,161 @@ clean. Re-ran `scripts/sync.py` for real against Francisco's actual account
 after all fixes: clean run, no errors, no crash, `sources` provenance now
 correctly accumulating on real data.
 
-**Deliberately NOT fixed this pass** — real findings, lower urgency or higher
-risk-to-fix-hastily, flagged rather than silently dropped:
-- `core/db.py: apply_migrations()` is not actually atomic per-migration
-  despite its own docstring's claim — `conn.executescript()` doesn't run a
-  multi-statement migration file as one rollback-able transaction under
-  Python's sqlite3 module, confirmed by reproduction. A migration author's
-  ordinary typo in a later statement of a 2+-statement file would permanently
-  wedge the DB (the earlier statements persist, the failure is never
-  recorded in `schema_migrations`, so every future run retries and fails
-  identically). No migration has hit this yet. Needs a careful redesign (real
-  per-statement transaction control, not a quick patch) rather than a rushed
-  fix under review-pass time pressure — next session's first task if another
-  migration is coming.
-- `coach/briefing.py: compute_daily_plan()` can leak future data into its
-  structural flags (`hrv_sustained_low`, `tsb_persistently_negative`,
-  `monotony_strain`) when called with a historical `--date` for backtesting —
-  those three series are fetched unbounded by `today`, unlike the readiness
-  score itself (which correctly truncates via `_readiness_result_as_of()`).
-  Only matters for `scripts/briefing.py --date <past date>`, not today's real
-  daily briefing (where `today` == the latest data anyway). Flagged, not
-  fixed — needs the same truncation-per-date treatment already applied to
-  the score path.
-- `metrics/baselines.py: compute_rhr_baseline()`'s `sustained_rise_flag`
-  silently needs `n>=23` days of history, not the `n>=21` the function's own
-  `confidence="full"` threshold advertises — a real 3-day sustained
-  elevation is invisible to this flag for exactly 2 days after RHR history
-  crosses 21 days. Narrow edge case, not fixed this pass.
-- No pre-commit hook blocking credential-shaped strings exists anywhere
-  (design principle 8 says one "should" exist) — confirmed never built, not
-  aspirational-but-forgotten. Worth a small bespoke grep-based hook (no new
-  dependency needed) as a follow-up.
-- `derived_daily.computed_at` would never update on recompute
-  (`touch_column=None` for that table) — latent, since nothing writes to
-  `derived_daily` yet (same gap Phase 4 already has).
-- `tests/core/test_schema_sync.py` only compares columns — it cannot catch
-  index, multi-column UNIQUE, or FOREIGN KEY drift between `schema.sql` and
-  the real migrations at all (narrower than its own docstring admits). No
-  live drift found, but the guard is weaker than it looks.
+**Update, 2026-08-28, second fix wave — nearly everything above is now
+fixed.** Francisco asked directly to close out this list rather than let it
+sit as known-but-deferred, plus build `derived_daily` persistence (see
+"Derived-daily persistence built" below) — done together in one pass, using
+a fixer subagent for the independent nitpick batch in parallel with the
+riskier, more central fixes (migration atomicity, the briefing.py leak)
+done directly, on a strict non-overlapping file partition so both could run
+concurrently without conflicting. All verified: 368 tests passing (up from
+335), ruff clean, and several fixes independently confirmed against real
+exploitable/reproducible behavior rather than just code-reading (see each
+bullet).
+
+- ✅ **`apply_migrations()` atomicity** — fixed by prepending a literal
+  `BEGIN;` to the migration script text and managing commit/rollback
+  explicitly in Python (`executescript()`'s own docs: "disregards
+  isolation_level; any transaction control must be added to sql_script" —
+  SQLite DDL genuinely IS transactional when explicitly wrapped). Verified
+  by direct reproduction before AND after: a 3-statement script with the
+  last statement failing left zero tables persisted after rollback, and a
+  corrected retry then applied cleanly with no leftover corruption.
+- ✅ **`briefing.py` future-data leak** — `daily_rows`/`daily_load_series`/
+  `tsb_series` now bounded to `<= today` immediately after fetch. This
+  module had ZERO test coverage before this fix — `tests/coach/
+  test_briefing.py` is new, and 2 of its 3 new leak tests were confirmed to
+  fail against the pre-fix code (git-stash-verified) before confirming they
+  pass against the fix.
+- ✅ **`sustained_rise_flag` off-by-2** — now `None` (not a silent `False`)
+  whenever any of the 3 required sub-baselines can't be computed yet
+  (`n < min_days + 2`), matching design principle 6. Verified against the
+  exact boundary (n=21, n=22 → `None`; n=23 → correctly computed).
+- ✅ **Pre-commit secret hook built and genuinely activated** —
+  `scripts/check_secrets.py` (stdlib-only, checks staged ADDED lines against
+  5 high-confidence credential-shaped patterns) + `githooks/pre-commit`,
+  activated via `git config core.hooksPath githooks` (already run on this
+  real repo, not just documented). Verified twice independently (once by
+  the fixer agent, once by me): staged a file containing
+  `GARMIN_PASSWORD=hunter2`, confirmed `git commit` was actually blocked
+  (exit 1), confirmed a clean file commits fine.
+- ✅ **`derived_daily.computed_at` never updating** — resolved as part of
+  building the persistence layer properly rather than reproducing the known
+  gap: `store_derived_metrics()` passes `touch_column="computed_at"` to
+  `db.upsert()`, and a dedicated regression test confirms it bumps on
+  every recompute.
+- ✅ **`osascript` injection hardening** — `NOTE_TEXT` now escaped
+  (backslash and double-quote) before interpolating into the AppleScript
+  string literal in `morning_run.sh`. The fixer agent's verification here
+  went further than requested and is worth recording: it confirmed the
+  PRE-fix code was genuinely exploitable (a crafted payload executed a real
+  `do shell script` command through the old unescaped interpolation), then
+  confirmed the fix neutralizes that exact payload, then confirmed a nasty
+  string with `"`, `\`, and `` ` `` together round-trips correctly through
+  the real `osascript` binary.
+- ✅ **All 5 remaining nitpicks fixed**: dead `dashboard/data.py:
+  readiness_weights()` deleted (zero callers, confirmed via grep);
+  `dashboard/views/data_health.py`'s naive `date.today()` replaced with the
+  project's explicit Europe/Madrid pattern; `BodyMeasurement` gained
+  `__post_init__` range validation (40-200cm, matching the dashboard's own
+  widget bounds); `training.py`'s load-by-sport chart now fills `NULL`
+  sport with `"unknown"` before grouping instead of pandas silently
+  dropping those rows (`groupby(dropna=True)` default — confirmed via a
+  standalone repro that the old code silently dropped 30 of 120 real load
+  units); `finish_ingest_run()` now raises on an unknown `run_id` instead
+  of silently no-op'ing.
+
+**Still open, genuinely lower priority** (test-gaps, not bugs, no live
+drift found):
+- `tests/core/test_schema_sync.py` only compares columns — it still cannot
+  catch index, multi-column UNIQUE, or FOREIGN KEY drift between
+  `schema.sql` and the real migrations. Narrower than its own docstring
+  admits, but no live drift exists today.
 - Several CHECK constraints (`subjective_log`'s four 1-10 ranges,
-  `calisthenics_sessions`, `bjj_sessions.session_feeling`) are only tested at
-  the Python `__post_init__` level, never against the real DB constraint —
-  a typo'd CHECK expression would pass every test today.
-- `osascript` in `scripts/morning_run.sh` has no escaping of the interpolated
-  notification text — not exploitable today (the only value that reaches it
-  is one of 4 fixed readiness-band strings, traced end to end), but latent if
-  that line's source ever changes to include free text.
-- Minor nitpicks not worth individual fixes this pass: dead code
-  (`dashboard/data.py: readiness_weights()`, unused after `today.py` was
-  rewired to call `briefing.py` directly), `dashboard/views/data_health.py`
-  using naive `date.today()` instead of the project's explicit
-  Europe/Madrid pattern, `BodyMeasurement` missing the range validation its
-  sibling dataclasses all have, `training.py`'s "load by day/sport" chart
-  silently dropping activities with a real load but `NULL` sport
-  (pandas' `groupby(dropna=True)` default), `finish_ingest_run()` silently
-  no-op'ing on an unrecognized `run_id`.
+  `calisthenics_sessions`, `bjj_sessions.session_feeling`) are still only
+  tested at the Python `__post_init__` level, never against the real DB
+  constraint directly.
+
+## Derived-daily persistence built (2026-08-28)
+
+Francisco asked directly: "let's also build the derived daily (we need it
+right?)" — yes. Every Phase 4 metric (HRV/RHR baselines, sleep debt, CTL/
+ATL/TSB, monotony/strain, weight trend, comp countdown, readiness score) had
+been computable since earlier the same day, but nothing had ever written a
+row to `derived_daily` — every number was recomputed live, on demand, with
+no historical record. Closed with `metrics/derived_daily.py` (new) +
+`scripts/compute_derived.py` (new CLI, same trailing-3-day-window shape as
+`scripts/sync.py`, same self-healing reasoning: a delayed Garmin correction
+can change an already-synced day's inputs after the fact).
+
+**Built with the future-leakage lesson already applied, not retrofitted**:
+every observation series this module fetches is bounded to `<= as_of_date`
+in the SQL itself (`WHERE date <= ?`), the same discipline `coach/
+briefing.py` gained earlier the same day after a real bug there. Verified
+directly with the same kind of test (`tests/metrics/test_derived_daily.py::
+TestDateBounding`) — future rows planted in the DB must not affect an
+earlier `as_of_date`'s computation.
+
+**A new, deliberate design decision on CTL/ATL/TSB honesty**:
+`build_daily_load_series()` only walks from the first to the LAST OBSERVED
+date in its inputs — it does not extend to `as_of_date` with invented
+zero-load days if training/BJJ logging has gone stale (already documented
+as a real, ~2.5-month-stale condition in this account, see the training-load
+build-out section above). Padding forward with zeros would silently treat
+"untracked training" as "confirmed rest," exactly the kind of false
+precision design principle 6 warns against. Instead, when a series' last
+real date is ≥3 days before `as_of_date`, the affected rows (`ctl`, `atl`,
+`tsb`, `monotony`, `strain`, `tsb_zscore`, `weight_ewma`,
+`weight_trend_slope`) carry `confidence="stale"` (a new, explicit value)
+plus `inputs_json: {"last_real_data_date": ..., "days_stale": ...}` — the
+last real value is still stored (never `None` for actually-known
+history), but a reader can never mistake it for current.
+
+**13 metrics per date, every one always written** — even with zero data,
+every metric name gets an `insufficient_data` row rather than a gap, so a
+missing row in `derived_daily` for a real date always means "the pipeline
+didn't run," never "there was nothing to compute" (design principle 6).
+`readiness_score`'s `inputs_json` carries the full component breakdown
+(raw/score/weight_used per component, coverage, weights actually used) —
+the same traceability the live `compute_readiness_score()` call always
+returned, now durably stored, not just printed once and discarded.
+
+**Real bug caught while building this, not left for later**: `store_derived_metrics()`
+initially passed `touch_column=None` to `db.upsert()`, reproducing the exact
+"`derived_daily.computed_at` never updates on recompute" gap flagged (and
+deliberately deferred) in the review pass above — caught immediately by
+testing before it ever reached the real DB, since I was building this fresh
+with that exact known gap in mind. Fixed by passing
+`touch_column="computed_at"` instead of `None` — `db.upsert()`'s existing
+touch-column mechanism was already exactly the right tool, it just needed
+pointing at the right column name for this table. A dedicated regression
+test (`test_computed_at_bumps_on_recompute`) locks this in.
+
+**Real output against the actual database (2026-08-28)**: ran
+`scripts/compute_derived.py --days 5` for real. Confirms the staleness
+design works exactly as intended: `ctl`/`atl`/`tsb`/`monotony`/`strain` all
+came back `confidence="stale"` with `days_stale: 76` and
+`last_real_data_date: "2026-06-13"` — matching the training-load
+build-out section's own hand-documented staleness finding number-for-number,
+an independent real-data confirmation the honesty design is doing its job
+rather than silently inventing a fresher-looking number. `readiness_score`
+for 2026-08-28 came back 57.5, `confidence="partial"` (coverage 0.9, missing
+only the subjective/Hooper component — consistent with earlier findings that
+Francisco hadn't logged wellness data that day).
+
+11 new tests, ruff clean. Wired into `scripts/morning_run.sh` as a real step
+between `sync.py` and `briefing.py` — verified by actually running the whole
+script end to end (`bash scripts/morning_run.sh`), not just each piece in
+isolation: sync → compute derived metrics (39 rows across the trailing
+3-day window) → briefing, all chaining correctly against the real database,
+confirmed in `data/logs/morning_run.log`.
+
+**Not yet done**: no dashboard surface reads from `derived_daily` yet — the
+Trends/Today pages still call the live metric functions directly (that's
+fine and correct for "today," but a "readiness score over the last 90 days"
+chart would need to read the new historical rows instead of recomputing 90
+times on every page load). Worth a Trends-page addition once the frontend
+migration (ADR 0005) lands, or sooner if useful before then.
 
 ## Calisthenics tracking closed, a real gap (2026-08-28)
 

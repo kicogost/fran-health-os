@@ -31,6 +31,14 @@ WEEKDAY="$(TZ=Europe/Madrid date +%A)"
   /opt/homebrew/bin/uv run python scripts/sync.py
   SYNC_EXIT=$?
 
+  echo "--- compute derived metrics ---"
+  # Recompute HRV/RHR baselines, CTL/ATL/TSB, readiness score, etc. right
+  # after fresh data lands, so today's briefing/dashboard can eventually read
+  # a durable derived_daily row instead of only ever recomputing live. Same
+  # non-fatal treatment as sync above -- a failure here shouldn't block the
+  # briefing from still running against whatever derived_daily already has.
+  /opt/homebrew/bin/uv run python scripts/compute_derived.py
+
   echo "--- briefing ---"
   BRIEFING_OUTPUT="$(/opt/homebrew/bin/uv run python scripts/briefing.py)"
   echo "$BRIEFING_OUTPUT"
@@ -51,7 +59,16 @@ if [ "$SYNC_EXIT" -ne 0 ]; then
 else
   NOTE_TEXT="$READINESS_LINE"
 fi
-osascript -e "display notification \"$NOTE_TEXT\" with title \"Health OS — $TODAY_LOCAL\"" \
+# Escape backslashes and double-quotes before interpolating into the
+# double-quoted AppleScript string literal below -- unescaped, either
+# character in NOTE_TEXT could terminate the AppleScript string literal
+# early and get whatever follows interpreted as AppleScript code instead of
+# message text (a latent injection vector, not exploitable today since
+# NOTE_TEXT is currently always one of a few fixed strings, but real
+# free-text niggles notes could reach it later). Backslash must be escaped
+# first so its own escaping backslash isn't then re-escaped.
+NOTE_TEXT_ESCAPED="$(printf '%s' "$NOTE_TEXT" | sed 's/[\\"]/\\&/g')"
+osascript -e "display notification \"$NOTE_TEXT_ESCAPED\" with title \"Health OS — $TODAY_LOCAL\"" \
   >> "$LOG_FILE" 2>&1
 
 exit 0
