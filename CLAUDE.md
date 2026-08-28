@@ -13,9 +13,12 @@ as the project evolves.
 
 ## Current status
 
-**Phase 0, Phase 1, and two-thirds of Phase 2 complete as of 2026-08-27.** Strava and
-Apple Health are backfilled into the real `data/health.db`; Garmin is still blocked —
-Francisco requested it but it hadn't arrived (takes the platform days to generate).
+**Phase 0, Phase 1, and Phase 2 all complete as of 2026-08-28.** Strava, Apple Health,
+and now Garmin are all backfilled into the real `data/health.db` (565 activities, 431
+days of `daily_metrics`) — Garmin's export arrived and was ingested the same day. This
+is the milestone the whole project was blocked on: **real HRV data now exists**, current
+through yesterday, which is what the readiness score (Phase 4) and the "how hard can I
+push today" question have been waiting on since Phase 0.
 
 **Phase 2 summary — Strava.** `ingest/strava_bulk.py` parses `activities.csv` from a
 Strava data-export archive (per kickoff doc section 2.3, the per-activity `.fit.gz`/
@@ -45,11 +48,12 @@ docstring for the full reasoning:
    silently wrong. When a date has multiple readings, the latest wins — never averaged
    (design principle 6).
 
-Steps/sleep/HR are deliberately **not** ingested from Apple Health yet — the kickoff
-doc's own guidance is that Apple Health only adds value for watch-not-worn movement
-data and non-Garmin apps, which needs Garmin's own daily data to reconcile against
-(Phase 3's job, and Garmin isn't loaded yet). Building that now would just need
-reworking once Garmin lands.
+Steps/sleep/HR are deliberately **still not** ingested from Apple Health — now that
+Garmin is loaded (below), it's the direct, richer source for all of these per the
+kickoff doc's own precedence (design principle 5), so there's nothing to gain from
+also pulling Apple Health's inferior duplicate copies. Apple Health's remaining
+narrow role (watch-not-worn step gaps) is a real Phase 3 reconciliation task, not
+done yet, but no longer blocked on "Garmin isn't loaded" — it's just not built.
 
 Real findings from Francisco's actual 621MB export, not assumed:
 - Multiple non-Francisco/duplicate sources are mixed into one export: Garmin syncs in
@@ -73,9 +77,65 @@ Real findings from Francisco's actual 621MB export, not assumed:
   2026-08-21** — cross-validated against the figure Francisco gave directly in the
   comp-prep plan. Real end-to-end correctness signal, not just internal consistency.
 
-Both backfills are idempotent (verified: re-running produced identical row counts) and
-logged to `ingest_runs`. Entry point: `uv run python scripts/backfill.py [--source
-strava|apple_health|garmin|all]`.
+**Phase 2 summary — Garmin (2026-08-28, the export arrived).** `ingest/garmin_bulk.py`
+parses the GDPR-style "Export Your Data" archive — not a small health-specific export
+like the other two, but a dump of literally every Garmin product line the account has
+ever touched (aviation, golf, InReach, Navionics, Tacx...); health/fitness is one
+folder among many, nested under a UUID-named directory that's different on every fresh
+export (files are located via `rglob()`, not a fixed path, to handle that). Two things
+extracted:
+1. **Activities** (`DI-Connect-Fitness/*summarizedActivities.json`) → `activities`.
+2. **Daily wellness**, merged from three separate JSON sources per calendar date:
+   `DI-Connect-Aggregator/UDSFile_*.json` (steps, calories, resting HR, body battery,
+   stress, respiration), `DI-Connect-Wellness/*_sleepData.json` (sleep stages + score
+   — `calendarDate` here is *already* the wake-date, verified against real data, so
+   Garmin does the design-principle-7 attribution for us), and
+   `DI-Connect-Wellness/*_healthStatusData.json` — internally called "LHA" — which is
+   **where HRV actually lives**, alongside Garmin's own baseline/status classification.
+
+Real-export gotchas verified against Francisco's actual export, not assumed (full
+detail in the module docstring):
+- `distance`/`elevationGain`/`elevationLoss` on activities are in **centimeters**, not
+  meters. Verified two ways: dividing by 100 turned three real runs into exactly
+  5.02km/5.01km/3.01km (obviously-intentional round training distances); a real ride's
+  elevation gain divided by 100 gave 630m, matching *exactly* what Strava recorded for
+  what's almost certainly the same real ride. Dividing by 1000 instead (the first,
+  wrong guess) gave an implausible 63m for hilly Mallorca terrain — worth remembering
+  as a lesson: the first plausible-looking unit conversion isn't always right, cross-
+  check against an independent number when one exists.
+- No single Garmin "training load" scalar exists in this export — Garmin represents
+  training stress via `aerobicTrainingEffect`/`anaerobicTrainingEffect` (0-5 each),
+  which map directly to `activities.aerobic_te`/`anaerobic_te`. `training_load` stays
+  NULL for Garmin rows.
+- `training_readiness` (Garmin's own composite) is **not present anywhere in this bulk
+  export** — confirmed by search, not assumed absent. Only available live via the
+  unofficial API (Phase 6). Stays NULL until then.
+- HR zones come as 7 Garmin buckets (`hrTimeInZone_0`..`_6`) against our 5-zone schema
+  — folded conservatively (zone 0 into zone 1, zone 6 into zone 5) rather than dropped.
+- Result: 139 activities, 384 of 431 `daily_metrics` days now have real Garmin data —
+  **142 days of real HRV, 160 days of resting HR, 138 days of sleep stages**, current
+  through 2026-08-27 (yesterday). Not stale like the Strava training-load gap noted
+  above — this is live, current data.
+
+**Dedup note, checked not assumed**: adding Garmin's 139 historical activities (back to
+2018) did *not* trigger any new merges beyond the 5 already found between Strava/Apple
+Health — checked this wasn't a silent matching failure by inspecting actual time gaps:
+167 activities share a local date with a Garmin activity, and the closest candidate had
+a 31-second start-time match but an 8-minute duration mismatch (two devices' auto-
+detection algorithms drawing different boundaries around what might be the same walk).
+The conservative 120s/60s matching correctly declines to merge that — better to under-
+merge than incorrectly conflate two auto-detected walks that might be genuinely
+different. Known limitation, mostly affecting passive walking (not a training modality
+this project's readiness/load work actually cares about) — not "fixed" by loosening
+thresholds, since that risks the opposite, worse failure mode.
+
+All three backfills are idempotent (verified: re-running produced identical row
+counts, including after adding Garmin) and logged to `ingest_runs`. Entry point:
+`uv run python scripts/backfill.py [--source strava|apple_health|garmin|all]`.
+
+**Next up**: with real HRV/RHR/sleep finally live, the HRV baseline, RHR baseline,
+sleep debt, and readiness score (Phase 4, previously all blocked) can actually be
+built now — not done yet as of this entry, flagged for the next session.
 
 **Next session: check whether Garmin's export has arrived** under
 `data/raw/garmin/bulk_export/`. `scripts/backfill.py --source garmin` already detects
@@ -218,11 +278,15 @@ has zero `training_load` coverage in the Strava export. Combined with no BJJ
 sessions logged yet (table's still empty — that's on Francisco to start using
 `log_bjj.py`), the daily load series currently ends 2026-06-13, ~2.5 months
 stale. The machinery is correct and tested; **the current live inputs just
-don't cover recent training yet.** This will fix itself as BJJ/wellness logging
-accumulates and once Garmin lands — until then, don't read today's CTL/ATL/TSB
-as if they describe today. The Hooper wellness index doesn't have this problem
-(it's whatever Francisco logs that day), which is part of why it's the
-highest-value piece of this build-out.
+don't cover recent training yet.** **Update, 2026-08-28: Garmin landing did
+NOT fix this** — checked, Garmin's bulk export has no `training_load` scalar
+either (see `metrics/load.py`'s docstring and the Garmin summary above). This
+will fix itself once BJJ/wellness logging accumulates and once a calibration
+target (probably `aerobic_te`/`anaerobic_te`, not `training_load`) gets
+decided — until then, don't read today's CTL/ATL/TSB as if they describe
+today. The Hooper wellness index doesn't have this problem (it's whatever
+Francisco logs that day), which is part of why it's the highest-value piece of
+this build-out.
 
 **Phase 1 summary** (2026-08-27): `core/migrations/0001_initial_schema.sql` is the
 source of truth for the schema (all 7 tables from the target schema below, applied via
@@ -306,7 +370,7 @@ continuing; do not run ahead**:
 
 0. ✅ Repo scaffold, `pyproject.toml`, `.env.example`, `config/athlete.yaml`, this file, ADR 0001.
 1. ✅ Schema + DB layer (`core/db.py`, `core/schema.sql`, upsert helpers, `ingest_runs` audit table).
-2. 🟡 Historical backfill — Strava ✅, Apple Health ✅, Garmin ⬜ (export not yet received).
+2. ✅ Historical backfill — Strava, Apple Health, and Garmin all backfilled.
 3. ⬜ Deduplication and canonical merge across sources.
 4. ⬜ Derived metrics (section "Derived metrics" below), with unit tests.
 5. ⬜ Dashboard (Streamlit), read-only first, then logging forms.
@@ -455,9 +519,9 @@ data/
   raw/                 immutable per-source downloads (gitignored)
   health.db             the one canonical store (gitignored)
 src/health_os/
-  ingest/               strava_bulk.py, apple_health.py, common.py (shared helpers) — garmin.py/garmin_bulk.py not yet written
+  ingest/               strava_bulk.py, apple_health.py, garmin_bulk.py, common.py (shared helpers) — bjj_manual.py not needed (log_bjj.py writes directly)
   core/                 db.py, timezones.py, dedupe.py (activities cross-source dedup, live), schema.sql (snapshot, v2), migrations/000{1,2}_*.sql (source of truth), models.py
-  metrics/              body_comp.py (weight trend + comp countdown), load.py (monotony/strain, CTL/ATL/TSB — no ACWR, ADR 0003) — baselines.py, readiness.py not yet written (wait on Garmin/HRV)
+  metrics/              body_comp.py (weight trend + comp countdown), load.py (monotony/strain, CTL/ATL/TSB — no ACWR, ADR 0003) — baselines.py, readiness.py not yet written (data now available, not yet built)
   coach/                rules.py, briefing.py, weekly_retro.py
   dashboard/             app.py (Streamlit)
 scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview) — sync.py not yet written

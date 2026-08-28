@@ -1,11 +1,14 @@
 """Cross-source deduplication for `activities` (design principle 5, Phase 3).
 
-Full precedence is Garmin > Strava > Apple Health, but this is written to work
-correctly with however many of those three sources are actually loaded — right
-now that's just Strava and Apple Health (Garmin's backfill hasn't landed yet).
-Adding Garmin later needs no changes here, just re-running `dedupe_activities()`
-after its ingestion: any Garmin row that matches an existing Strava/Apple-Health
-winner will out-rank it on the same precedence list and take over.
+Full precedence is Garmin > Strava > Apple Health. All three sources are loaded
+as of 2026-08-28 — Garmin's arrival needed zero changes here, exactly as
+designed: any Garmin row matching an existing Strava/Apple-Health winner just
+out-ranks it on the same precedence list and takes over on the next
+`dedupe_activities()` run. In practice, adding Garmin's 139 historical
+activities didn't trigger any *new* merges beyond the 5 already found between
+Strava/Apple Health — checked, not assumed; see CLAUDE.md's Garmin backfill
+summary for why (mostly auto-detected walking activities whose start/duration
+don't line up closely enough to clear the matching bar below).
 
 Matching (design principle 5): start time within 120s, duration within 60s, and
 "same sport family" — a small compatibility table below, since Strava's and Apple

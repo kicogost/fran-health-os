@@ -40,15 +40,20 @@ def build_daily_load_series(
 ) -> list[tuple[str, float]]:
     """Combine `activities.training_load` (any source) with BJJ manual-log
     `computed_load` (scaled by `config/athlete.yaml:
-    training_load.bjj_rpe_calibration_factor` — 1.0/uncalibrated until Garmin
-    data exists to fit it properly, kickoff doc section 2.4) into one total per
-    calendar day, then walks every day from the first observed date to the last
-    — filling rest days with 0.0, not skipping them, since that's a real zero.
+    training_load.bjj_rpe_calibration_factor` — still 1.0/uncalibrated, kickoff
+    doc section 2.4) into one total per calendar day, then walks every day from
+    the first observed date to the last — filling rest days with 0.0, not
+    skipping them, since that's a real zero.
 
-    Known limitation: activities with no `training_load` (most non-Strava rows
-    right now — Apple Health's parser doesn't populate it, Garmin isn't loaded
-    yet) contribute nothing here, so days dominated by those sessions will
-    understate true load until richer sources land.
+    Known limitation, confirmed still open even after Garmin's backfill
+    (2026-08-28): Garmin's bulk export has no `training_load` scalar at all
+    (checked — see `ingest/garmin_bulk.py`'s module docstring), so the kickoff
+    doc's original calibration plan ("calibrate against Garmin's training load
+    values") has nothing to calibrate against yet. `aerobic_te`/`anaerobic_te`
+    (which Garmin does provide) may be the better calibration target instead —
+    not decided, flagged for whoever builds the calibration step. Meanwhile
+    only Strava rows populate `training_load` (9 of 251, all runs, stale since
+    June — see CLAUDE.md), so most activities still contribute nothing here.
     """
     if not activity_loads and not bjj_loads:
         return []
