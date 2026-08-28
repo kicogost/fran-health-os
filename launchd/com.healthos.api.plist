@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Built 2026-08-28: Francisco found "open a terminal and run a command every
+  time" too much friction for something meant to be opened daily (logging a
+  BJJ session, checking readiness). This keeps scripts/run_api.py running
+  permanently in the background instead -- http://localhost:8000 is just
+  always there, no command to remember or terminal window to keep open.
+
+  Same per-user LaunchAgent pattern as com.healthos.morning.plist (not a
+  LaunchDaemon: no root needed, only needs to run while Francisco is logged
+  in -- a dashboard nobody can see while logged out isn't useful anyway).
+  Binds to 127.0.0.1 only regardless (design principle 1), same as always.
+
+  RunAtLoad + KeepAlive (unlike the morning job, which is RunAtLoad=false on
+  a calendar schedule): this is a long-running service, not a once-a-day
+  task -- it should start the moment the agent loads (login, or right after
+  `launchctl load`) and restart itself if it ever crashes.
+
+  Runs with --no-reload (scripts/run_api.py) -- uvicorn's file-watcher exists
+  for active development, not a service that's meant to just sit there.
+
+  Serves whatever was last built to frontend/dist/ -- after any frontend
+  code change, `cd frontend && npm run build` then
+  `launchctl kickstart -k gui/$(id -u)/com.healthos.api` (or just let it
+  keep serving the old build until the next login/restart) to pick it up.
+
+  Setup:
+      cp launchd/com.healthos.api.plist ~/Library/LaunchAgents/
+      launchctl load ~/Library/LaunchAgents/com.healthos.api.plist
+
+  Verify it's loaded and check on it:
+      launchctl list | grep healthos.api
+      curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8000/api/today
+
+  Restart it (e.g. after `npm run build`):
+      launchctl kickstart -k gui/$(id -u)/com.healthos.api
+
+  Remove it (e.g. to free port 8000 for `npm run dev` + this script by hand):
+      launchctl unload ~/Library/LaunchAgents/com.healthos.api.plist
+      rm ~/Library/LaunchAgents/com.healthos.api.plist
+
+  Output: data/logs/api_server_stdout.log / api_server_stderr.log.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.healthos.api</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/uv</string>
+        <string>run</string>
+        <string>python</string>
+        <string>scripts/run_api.py</string>
+        <string>--no-reload</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/franciscogostscagliarini/fitness man</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/franciscogostscagliarini/fitness man/data/logs/api_server_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/franciscogostscagliarini/fitness man/data/logs/api_server_stderr.log</string>
+</dict>
+</plist>

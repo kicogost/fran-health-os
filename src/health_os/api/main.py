@@ -12,6 +12,7 @@ from typing import Any
 import yaml
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from health_os.api import log as log_api
 from health_os.api.comp_prep import build_comp_prep_payload
@@ -22,15 +23,16 @@ from health_os.api.trends import ALLOWED_WINDOW_DAYS, build_trends_payload
 from health_os.core import db
 
 CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "athlete.yaml"
+FRONTEND_DIST_DIR = Path(__file__).resolve().parents[3] / "frontend" / "dist"
 
 app = FastAPI(title="Health OS API")
 
 # The Vite dev server (localhost:5173) and this API (localhost:8000) run as
-# two separate local processes during development -- both bound to
-# localhost only, never exposed beyond this machine. In production (the
-# built React bundle served as static files, see docs/decisions/0005), this
-# CORS layer becomes unnecessary but stays harmless (same-origin requests
-# don't consult it).
+# two separate local processes during active frontend development -- both
+# bound to localhost only, never exposed beyond this machine. For daily use
+# once the frontend isn't being actively edited, `serve_frontend()` below
+# serves the built bundle from this same process instead, so CORS becomes
+# unnecessary but stays harmless (same-origin requests don't consult it).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -192,3 +194,43 @@ def post_log_calisthenics(req: log_api.CalisthenicsRequest) -> dict[str, Any]:
         return session.to_row(include_none=True)
     finally:
         conn.close()
+
+
+def _safe_dist_file(full_path: str) -> Path | None:
+    """Resolves `full_path` against FRONTEND_DIST_DIR, refusing to serve
+    anything that escapes it (e.g. a `../../` traversal attempt) -- returns
+    the real file if it exists inside dist, None otherwise (including
+    "resolves outside dist entirely").
+    """
+    dist_root = FRONTEND_DIST_DIR.resolve()
+    candidate = (dist_root / full_path).resolve()
+    if candidate != dist_root and dist_root not in candidate.parents:
+        return None
+    return candidate if candidate.is_file() else None
+
+
+# Registered LAST, deliberately -- every /api/* route above is an exact path
+# match registered earlier, so it always wins; this generic path parameter
+# only ever catches what nothing else claimed. Resolves the "not yet done"
+# production-serving decision flagged in docs/decisions/0005: once
+# `npm run build` has produced frontend/dist, `uv run python
+# scripts/run_api.py` alone serves the whole app on :8000 -- no separate
+# `npm run dev` process needed for day-to-day use (still useful during
+# active frontend editing, for hot reload). Falls back to index.html for
+# any path that isn't a real built file (e.g. /log, /trends/90) so React
+# Router's client-side routes work on a hard refresh or a direct link, not
+# only when reached via in-app navigation.
+@app.get("/{full_path:path}")
+def serve_frontend(full_path: str) -> FileResponse:
+    index_file = FRONTEND_DIST_DIR / "index.html"
+    if not index_file.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Frontend not built. Run `npm run build` in frontend/ once "
+                "(or after any frontend change), or use `cd frontend && "
+                "npm run dev` for active local development."
+            ),
+        )
+    file_path = _safe_dist_file(full_path) if full_path else None
+    return FileResponse(file_path or index_file)
