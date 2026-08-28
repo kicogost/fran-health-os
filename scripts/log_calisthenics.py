@@ -139,6 +139,7 @@ def resolve_session(args: argparse.Namespace) -> CalisthenicsSession:
                         "notes": ex_notes,
                     }
                 )
+        exercises.extend(_prompt_custom_exercises())
         session_rpe = _prompt_int_optional("Session RPE", lo=1, hi=10)
         notes = _prompt("Session notes", required=False) or None
     else:
@@ -155,6 +156,41 @@ def resolve_session(args: argparse.Namespace) -> CalisthenicsSession:
         exercises=exercises or None,
         notes=notes,
     )
+
+
+def _prompt_custom_exercises() -> list[dict]:
+    """Beyond the prescribed list -- real gap found 2026-08-28 (Francisco's
+    holiday-week substitution, e.g. push-ups/abs instead of the comp-prep
+    exercises): `CalisthenicsSession.exercises` was always fully flexible at
+    the model layer (no exercise-name validation in `__post_init__`), but
+    this interactive loop only ever walked the prescribed list, so there was
+    no way to actually log a substituted exercise with real sets/reps
+    outside the free-text `notes` field. Keeps prompting for one more name
+    until a blank entry ends it -- zero or many custom exercises, same as
+    the prescribed loop's "blank sets to skip" pattern.
+    """
+    exercises: list[dict] = []
+    print("Add any other exercise not in the list above (blank name to finish):")
+    while True:
+        name = _prompt("  Exercise name", required=False)
+        if not name:
+            return exercises
+        sets = _prompt_int_optional(f"    {name} — sets", lo=1, hi=20)
+        if sets is None:
+            print("  skipped (no sets entered).")
+            continue
+        reps = _prompt_int_optional("    reps", lo=1, hi=100)
+        added_weight_kg = _prompt_float_optional("    added weight (kg)")
+        ex_notes = _prompt("    notes", required=False) or None
+        exercises.append(
+            {
+                "exercise": name,
+                "sets": sets,
+                "reps": reps,
+                "added_weight_kg": added_weight_kg,
+                "notes": ex_notes,
+            }
+        )
 
 
 def _prompt_choice_calisthenics() -> str:

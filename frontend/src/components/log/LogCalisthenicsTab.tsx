@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { Plus, X } from "lucide-react"
 import {
   fetchExistingCalisthenics,
   fetchPrescribedExercises,
@@ -28,11 +29,27 @@ interface ExerciseInput {
   addedWeight: number
 }
 
+// Beyond the prescribed list -- real gap found 2026-08-28 (Francisco's
+// holiday-week substitution, e.g. push-ups/abs instead of the comp-prep
+// exercises): CalisthenicsSession.exercises was always fully flexible at
+// the model layer, but this form only ever rendered the prescribed rows,
+// so a substituted exercise had no way in besides the free-text notes
+// field. `id` is a client-only key (crypto.randomUUID -- stable across
+// re-renders regardless of name edits, unlike using the name itself).
+interface CustomExerciseInput extends ExerciseInput {
+  id: string
+}
+
+function newCustomExercise(): CustomExerciseInput {
+  return { id: crypto.randomUUID(), name: "", sets: 0, reps: 0, addedWeight: 0 }
+}
+
 export function LogCalisthenicsTab() {
   const [date, setDate] = useState(todayLocal())
   const [sessionType, setSessionType] = useState("strength_a")
   const [prescribed, setPrescribed] = useState<string[]>([])
   const [exerciseInputs, setExerciseInputs] = useState<ExerciseInput[]>([])
+  const [customExercises, setCustomExercises] = useState<CustomExerciseInput[]>([])
   const [rpe, setRpe] = useState(6)
   const [notes, setNotes] = useState("")
   const [existing, setExisting] = useState<{ session_rpe: number | null } | null>(null)
@@ -51,6 +68,7 @@ export function LogCalisthenicsTab() {
           addedWeight: 0,
         })),
       )
+      setCustomExercises([])
     })
     fetchExistingCalisthenics(date, sessionType).then((r) => {
       if (!cancelled) setExisting(r)
@@ -66,17 +84,50 @@ export function LogCalisthenicsTab() {
     )
   }
 
+  function updateCustomExercise(
+    id: string,
+    field: keyof ExerciseInput,
+    value: string | number,
+  ) {
+    setCustomExercises((prev) =>
+      prev.map((ex) => (ex.id === id ? { ...ex, [field]: value } : ex)),
+    )
+  }
+
+  function addCustomExercise() {
+    setCustomExercises((prev) => [...prev, newCustomExercise()])
+  }
+
+  function removeCustomExercise(id: string) {
+    setCustomExercises((prev) => prev.filter((ex) => ex.id !== id))
+  }
+
   async function handleSubmit() {
     setStatus(null)
-    const exercises = exerciseInputs
-      .filter((ex) => ex.sets > 0)
-      .map((ex) => ({
-        exercise: ex.name,
-        sets: ex.sets,
-        reps: ex.reps || null,
-        added_weight_kg: ex.addedWeight || null,
-        notes: null,
-      }))
+    const exercises = [
+      ...exerciseInputs
+        .filter((ex) => ex.sets > 0)
+        .map((ex) => ({
+          exercise: ex.name,
+          sets: ex.sets,
+          reps: ex.reps || null,
+          added_weight_kg: ex.addedWeight || null,
+          notes: null,
+        })),
+      // Blank-named rows (added but never filled in) are silently dropped
+      // rather than saved as an unnamed exercise -- same "blank to skip"
+      // permissiveness as the prescribed rows above, just gated on name
+      // instead of sets since a custom row starts with neither.
+      ...customExercises
+        .filter((ex) => ex.name.trim() && ex.sets > 0)
+        .map((ex) => ({
+          exercise: ex.name.trim(),
+          sets: ex.sets,
+          reps: ex.reps || null,
+          added_weight_kg: ex.addedWeight || null,
+          notes: null,
+        })),
+    ]
     try {
       const session = await saveCalisthenics({
         date,
@@ -165,6 +216,61 @@ export function LogCalisthenicsTab() {
             </div>
           </div>
         ))}
+
+        {customExercises.map((ex) => (
+          <div key={ex.id} className="flex items-start gap-2">
+            <div className="flex-1 space-y-1.5">
+              <Input
+                placeholder="Exercise name (e.g. push-ups)"
+                value={ex.name}
+                onChange={(e) => updateCustomExercise(ex.id, "name", e.target.value)}
+              />
+              <div className="grid grid-cols-3 gap-2">
+                <Input
+                  type="number"
+                  min={0}
+                  max={20}
+                  placeholder="Sets"
+                  value={ex.sets || ""}
+                  onChange={(e) => updateCustomExercise(ex.id, "sets", Number(e.target.value))}
+                />
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  placeholder="Reps"
+                  value={ex.reps || ""}
+                  onChange={(e) => updateCustomExercise(ex.id, "reps", Number(e.target.value))}
+                />
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={0.5}
+                  placeholder="Added kg"
+                  value={ex.addedWeight || ""}
+                  onChange={(e) =>
+                    updateCustomExercise(ex.id, "addedWeight", Number(e.target.value))
+                  }
+                />
+              </div>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="mt-0.5 text-muted-foreground hover:text-[var(--band-red)]"
+              onClick={() => removeCustomExercise(ex.id)}
+              aria-label="Remove exercise"
+            >
+              <X className="size-3.5" />
+            </Button>
+          </div>
+        ))}
+
+        <Button variant="outline" size="sm" onClick={addCustomExercise}>
+          <Plus className="size-3.5" />
+          Add exercise
+        </Button>
 
         <SliderField label="Session RPE" value={rpe} onChange={setRpe} min={1} max={10} />
         <div>

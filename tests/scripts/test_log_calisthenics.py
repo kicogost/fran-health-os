@@ -56,6 +56,7 @@ class TestResolveSessionInteractiveMode:
                 "8",  # push-ups reps
                 "",  # push-ups added weight
                 "",  # push-ups notes
+                "",  # custom exercise name: blank -> none added
                 "6",  # session RPE
                 "",  # session notes
             ]
@@ -83,6 +84,7 @@ class TestResolveSessionInteractiveMode:
                 "8",
                 "",
                 "",
+                "",  # custom exercise name: blank -> none added
                 "",  # session RPE
                 "",  # session notes
             ]
@@ -91,6 +93,107 @@ class TestResolveSessionInteractiveMode:
         session = log_calisthenics.resolve_session(_args())
         assert len(session.exercises) == 1
         assert session.exercises[0]["exercise"] == "push-ups"
+
+
+class TestPromptCustomExercises:
+    def test_returns_empty_list_when_declined_immediately(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("builtins.input", lambda _: "")
+        assert log_calisthenics._prompt_custom_exercises() == []
+
+    def test_adds_one_custom_exercise(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        answers = iter(
+            [
+                "sit-ups",  # exercise name
+                "3",  # sets
+                "20",  # reps
+                "",  # added weight
+                "",  # notes
+                "",  # next exercise name: blank -> finish
+            ]
+        )
+        monkeypatch.setattr("builtins.input", lambda _: next(answers))
+        assert log_calisthenics._prompt_custom_exercises() == [
+            {"exercise": "sit-ups", "sets": 3, "reps": 20, "added_weight_kg": None, "notes": None}
+        ]
+
+    def test_keeps_prompting_until_blank_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        answers = iter(
+            [
+                "push-ups",
+                "4",
+                "15",
+                "",
+                "",
+                "abs",
+                "3",
+                "25",
+                "",
+                "",
+                "",  # blank -> finish
+            ]
+        )
+        monkeypatch.setattr("builtins.input", lambda _: next(answers))
+        exercises = log_calisthenics._prompt_custom_exercises()
+        assert [e["exercise"] for e in exercises] == ["push-ups", "abs"]
+
+    def test_blank_sets_skips_that_exercise_but_keeps_prompting(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        answers = iter(
+            [
+                "push-ups",
+                "",  # blank sets -> skip this one, but keep asking for more
+                "abs",
+                "3",
+                "25",
+                "",
+                "",
+                "",  # blank -> finish
+            ]
+        )
+        monkeypatch.setattr("builtins.input", lambda _: next(answers))
+        exercises = log_calisthenics._prompt_custom_exercises()
+        assert [e["exercise"] for e in exercises] == ["abs"]
+
+
+class TestResolveSessionCustomExercises:
+    def test_holiday_substitution_with_no_prescribed_list(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Real gap this closes: Francisco's holiday-week substitution
+        (push-ups/abs instead of the comp-prep exercises) had nowhere to go
+        with real sets/reps before this -- confirms it works even when
+        _load_prescribed_exercises returns nothing at all.
+        """
+        monkeypatch.setattr(log_calisthenics, "_load_prescribed_exercises", lambda session_type: [])
+        answers = iter(
+            [
+                "2026-09-02",  # date
+                "strength_a",  # session type
+                "push-ups",  # custom exercise name
+                "4",  # sets
+                "15",  # reps
+                "",  # added weight
+                "",  # notes
+                "abs",  # next custom exercise name
+                "3",  # sets
+                "20",  # reps
+                "",  # added weight
+                "",  # notes
+                "",  # blank -> finish custom exercises
+                "5",  # session RPE
+                "traveling, reduced session",  # session notes
+            ]
+        )
+        monkeypatch.setattr("builtins.input", lambda _: next(answers))
+        session = log_calisthenics.resolve_session(_args())
+        assert session.exercises == [
+            {"exercise": "push-ups", "sets": 4, "reps": 15, "added_weight_kg": None, "notes": None},
+            {"exercise": "abs", "sets": 3, "reps": 20, "added_weight_kg": None, "notes": None},
+        ]
+        assert session.session_rpe == 5
 
 
 class TestExerciseName:
