@@ -288,6 +288,70 @@ today. The Hooper wellness index doesn't have this problem (it's whatever
 Francisco logs that day), which is part of why it's the highest-value piece of
 this build-out.
 
+## Readiness score: HRV/RHR baselines, sleep debt, composite (2026-08-28)
+
+Unblocked by the Garmin backfill above. Built exactly to kickoff doc section 6's
+spec — no scope changes, unlike the ACWR->TSB swap.
+
+- **`metrics/baselines.py`**: `compute_hrv_baseline()` — 60-day rolling median +
+  population SD, `insufficient_data` below 21 days, then a **seed phase** (21-59
+  days) using Francisco's own placeholder thresholds (>90ms balanced, 75-85ms
+  capped — the doc didn't specify the 85-90ms and <75ms gaps, so those are
+  documented interpretation choices, easy to correct), then **switches to the
+  computed baseline automatically at 60 days** — the switchover is visible in
+  the returned `baseline_method` field itself (`"seed"` -> `"computed"`), not a
+  separate log statement. `compute_rhr_baseline()` — same structure, plus
+  `sustained_rise_flag` for 3 consecutive days each >1 SD above their *own*
+  trailing baseline (the window slides day to day, not one shared window).
+  `compute_sleep_debt()` — rolling 14-*calendar*-day sum of (8h need - actual),
+  hours, positive = deficit.
+- **`metrics/load.py`** gained `compute_tsb_zscore()` — scores the latest TSB
+  against its own trailing 90-day distribution (z-score), not a borrowed
+  absolute threshold, since raw TSB magnitude depends on still-uncalibrated
+  load units (same reasoning as the ACWR removal, ADR 0003).
+- **`metrics/readiness.py`**: `compute_readiness_score()` — the 0-100 composite,
+  weights from `config/athlete.yaml: readiness_score` (35% HRV / 25% sleep / 15%
+  RHR / 15% TSB / 10% subjective `hooper_index`, all tunable). Sleep blends last
+  night's duration and the 14-day debt 50/50 (the doc didn't specify a split).
+  RHR and TSB score in the SAME direction as HRV (higher = more ready) except
+  RHR, which is inverted (elevated RHR = less ready) — each documented in its
+  own scoring helper. **Missing components are never invented as a neutral 50**
+  — they're dropped and the remaining weights renormalize to sum to 1.0;
+  `coverage` reports what fraction of the full weight was real data, so a
+  score built from 2 of 5 components is visibly less trustworthy than one from
+  all 5, not silently identical.
+
+31 tests across the three modules, several with an exact closed-form derivation
+(not approximation): for a window of (n-1) identical values plus one outlier as
+the latest point, both the median-based baseline deviation and the mean-based
+z-score reduce to clean constants (`n/sqrt(n-1)` and `sqrt(n-1)` respectively)
+independent of the outlier's magnitude — derived independently in the test
+files, not copied from the implementation, so they actually catch transcription
+bugs (sign errors, wrong window, wrong which-value-is-latest).
+
+**Real output against the actual database (2026-08-28)**: HRV baseline
+`status="low"` — yesterday's 80ms sits just past -1 SD below the 60-day median
+of 90.5ms (SD~10.3ms), genuinely at the edge, not deep. RHR baseline
+`status="balanced"`, exactly at its own median (very stable — no
+`sustained_rise_flag`). Sleep debt is *negative* (a ~1.9h surplus over the last
+10 real nights — `confidence="partial"`, since only 10 of the trailing 14
+calendar days have real sleep data). TSB z-score is -1.45, but **this is
+computed from the same stale, pre-June load series flagged above** — read it as
+demonstrating the machinery works, not as a description of today's actual
+freshness. `hooper_index` is `None` — Francisco hasn't logged wellness data yet.
+Overall composite: **47.0, confidence="partial" (coverage 0.90 — only the
+subjective component missing)**. Per the kickoff doc's own bands this would
+read "Red," but **that reading shouldn't be trusted yet** given the TSB
+component's stale input — worth re-running once BJJ/wellness logging has
+accumulated and a load-calibration decision is made. The three genuinely live
+components (HRV, RHR, sleep) are trustworthy today; TSB and subjective are not,
+for two different reasons (stale data; no data at all).
+
+**Not yet done**: none of this writes to `derived_daily` yet (same partial-slice
+pattern as `body_comp.py` — lands with the full Phase 4 metric suite). No CLI/
+dashboard surfaces these numbers yet; they're only reachable by calling the
+functions directly, as done above.
+
 **Phase 1 summary** (2026-08-27): `core/migrations/0001_initial_schema.sql` is the
 source of truth for the schema (all 7 tables from the target schema below, applied via
 `core/db.py: apply_migrations()`, tracked in a `schema_migrations` table);
@@ -521,7 +585,7 @@ data/
 src/health_os/
   ingest/               strava_bulk.py, apple_health.py, garmin_bulk.py, common.py (shared helpers) — bjj_manual.py not needed (log_bjj.py writes directly)
   core/                 db.py, timezones.py, dedupe.py (activities cross-source dedup, live), schema.sql (snapshot, v2), migrations/000{1,2}_*.sql (source of truth), models.py
-  metrics/              body_comp.py (weight trend + comp countdown), load.py (monotony/strain, CTL/ATL/TSB — no ACWR, ADR 0003) — baselines.py, readiness.py not yet written (data now available, not yet built)
+  metrics/              body_comp.py (weight trend + comp countdown), load.py (monotony/strain, CTL/ATL/TSB — no ACWR, ADR 0003), baselines.py (HRV/RHR baselines, sleep debt), readiness.py (0-100 composite) — none of these write to derived_daily yet
   coach/                rules.py, briefing.py, weekly_retro.py
   dashboard/             app.py (Streamlit)
 scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview) — sync.py not yet written
@@ -552,36 +616,46 @@ Minimum tables, full column lists in kickoff doc section 5:
   sizes that produced it.
 - **`ingest_runs`** — audit log: source, timestamps, rows in/upserted/skipped, errors.
 
-## Derived metrics (target — lands in Phase 4, pure functions, unit-tested against fixtures)
+## Derived metrics (Phase 4, pure functions, unit-tested against fixtures)
 
-- **HRV baseline** — 60-day rolling median + SD. `balanced` within ±1 SD, `low`/`high`
-  beyond. Needs ≥21 days before any status; below that, `insufficient_data`. Seed
-  thresholds while the window fills (>90 ms green, 75-85 ms capped) are a temporary
-  placeholder — switch to the computed baseline automatically at 60 days, log the
-  switchover.
-- **RHR baseline** — same structure. Flag a >1 SD sustained rise across 3 consecutive days.
-- **CTL/ATL/TSB (Banister/TrainingPeaks)** — built in `metrics/load.py`, replaces the
-  kickoff doc's original ACWR spec (ADR 0003: the sports-science literature has moved
-  against ACWR — mathematical coupling, inconsistent injury association). CTL =
-  fitness (42-day-time-constant EWMA of daily load), ATL = fatigue (7-day), TSB =
-  CTL−ATL = freshness. Must include BJJ manual load or the numbers are meaningless.
-- **Monotony/strain (Foster)** — monotony = mean daily load ÷ SD of daily load over 7
-  days; strain = weekly load × monotony. Flag monotony >2.0.
-- **Sleep debt** — rolling 14-day sum of (8.0h need − actual), reported in hours.
-- **Weight trend** — never show raw daily weight as headline. 7-day EWMA + OLS slope
-  over trailing 21 days (kg/week) with its confidence interval — noise is comparable to
-  signal at these magnitudes.
-- **Comp countdown** — EWMA weight, kg remaining, weeks remaining, required kg/week vs
-  actual kg/week. Required >0.7 kg/week = red (a performance-risk problem, not a
-  fat-loss problem).
-- **Readiness score (0-100)** — own composite alongside Garmin's Training Readiness, so
-  disagreement is visible. Weights live in `config/athlete.yaml` (tunable): 35% HRV
-  deviation (SD units, clamped ±2), 25% sleep (last-night vs 8h need + 14-day debt), 15%
-  RHR deviation (inverted), 15% TSB scored self-relatively (e.g. a z-score within the
-  athlete's own trailing TSB distribution — raw TSB magnitude depends on load units
-  that aren't universally comparable, so don't borrow an absolute threshold from
-  elsewhere), 10% subjective input (`hooper_index`, already available — see the
-  2026-08-27 build-out above). Always emit the component breakdown alongside the score.
+- **HRV baseline** ✅ (`metrics/baselines.py: compute_hrv_baseline()`) — 60-day rolling
+  median + SD. `balanced` within ±1 SD, `low`/`high` beyond. Needs ≥21 days before any
+  status; below that, `insufficient_data`. Seed thresholds while the window fills (>90
+  ms balanced, 75-85 ms capped) are a temporary placeholder — switches to the computed
+  baseline automatically at 60 days, visible via the returned `baseline_method` field
+  rather than a separate log statement.
+- **RHR baseline** ✅ (`compute_rhr_baseline()`) — same structure. Flags a >1 SD
+  sustained rise across 3 consecutive days via `sustained_rise_flag`.
+- **CTL/ATL/TSB (Banister/TrainingPeaks)** ✅ (`metrics/load.py: compute_ctl_atl()`) —
+  replaces the kickoff doc's original ACWR spec (ADR 0003: the sports-science
+  literature has moved against ACWR — mathematical coupling, inconsistent injury
+  association). CTL = fitness (42-day-time-constant EWMA of daily load), ATL = fatigue
+  (7-day), TSB = CTL−ATL = freshness. Must include BJJ manual load or the numbers are
+  meaningless — currently mostly doesn't (see the load-staleness note above).
+- **Monotony/strain (Foster)** ✅ (`compute_monotony_strain()`) — monotony = mean daily
+  load ÷ SD of daily load over 7 days; strain = weekly load × monotony. Flags
+  monotony >2.0.
+- **Sleep debt** ✅ (`metrics/baselines.py: compute_sleep_debt()`) — rolling 14-calendar-
+  day sum of (8.0h need − actual), reported in hours.
+- **Weight trend** ✅ (`metrics/body_comp.py`) — never show raw daily weight as
+  headline. 7-day EWMA + OLS slope over trailing 21 days (kg/week) with its confidence
+  interval — noise is comparable to signal at these magnitudes.
+- **Comp countdown** ✅ (`metrics/body_comp.py`) — EWMA weight, kg remaining, weeks
+  remaining, required kg/week vs actual kg/week. Required >0.7 kg/week = red (a
+  performance-risk problem, not a fat-loss problem).
+- **Readiness score (0-100)** ✅ (`metrics/readiness.py: compute_readiness_score()`) —
+  own composite alongside Garmin's Training Readiness, so disagreement is visible.
+  Weights live in `config/athlete.yaml: readiness_score` (tunable): 35% HRV deviation
+  (SD units, clamped ±2), 25% sleep (last-night vs 8h need + 14-day debt), 15% RHR
+  deviation (inverted), 15% TSB scored self-relatively (a z-score within the athlete's
+  own trailing TSB distribution — raw TSB magnitude depends on load units that aren't
+  universally comparable, so no borrowed absolute threshold), 10% subjective input
+  (`hooper_index`). Missing components are dropped and remaining weights renormalized
+  (never invented as neutral) — `coverage` reports how much of the full weight was
+  real. Component breakdown always included. Real output against the actual database,
+  2026-08-28: **47.0, confidence "partial"** — see the readiness build-out section
+  above for the full component-by-component read and its caveats (TSB stale, no
+  subjective data logged yet).
 
 ## Coaching layer (target — lands in Phase 7)
 
