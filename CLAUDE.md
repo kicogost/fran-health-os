@@ -414,15 +414,35 @@ calls for). Full reasoning in
   timestamp parsing. 219 tests total in the suite now, all passing; `ruff
   check`/`ruff format --check` clean.
 
-**Not yet done / next steps**: this has not been run against a real Garmin
-account yet — needs Francisco to add `GARMIN_EMAIL`/`GARMIN_PASSWORD` to his own
-local `.env` (never pasted into chat) and confirm whether the account has MFA
-enabled (determines whether the first run needs to sit at an interactive
-terminal for the code prompt). Once run for real, the live-activity unit
-assumption above should be spot-checked against `scripts/sync.py`'s printed
-output, and this section/ADR 0004 updated if it's wrong. `pyproject.toml`:
-`garminconnect>=0.2.20` → `garminconnect[typed]>=0.3.11`, `pydantic>=2.0` added
-as a direct dependency (was already an installed transitive one).
+**Real first run, 2026-08-28 — confirmed working.** Francisco added
+`GARMIN_EMAIL`/`GARMIN_PASSWORD` to his own local `.env` (never pasted into
+chat) and ran `uv run python scripts/sync.py` directly. No MFA prompt occurred
+— login's internal client backends (`mobile+cffi`, `mobile+requests`) both hit
+a `429` (Garmin rate-limiting), logged as warnings, but a further internal
+fallback succeeded and login completed cleanly. Session token persisted to
+`data/.garth_tokens/garmin_tokens.json` — future runs are headless. Verified
+directly against `ingest_runs` and `daily_metrics`, not just the script's own
+printed summary: a clean `status="success"` row (3/3 rows upserted, 0 errors),
+and real values landed for 2026-08-26/27/28 — resting HR 47/53/49,
+`hrv_overnight_ms` 88/80/88 (all `"BALANCED"`), full sleep-stage breakdown +
+score (84/62/93), all correctly tagged `sources: {"...": "garmin"}`. No
+activities synced in that window (0 attempted, not an error — no Garmin-
+tracked activity existed in those 3 days). **`training_readiness` came back
+empty for all three dates** — the endpoint call itself succeeded (no
+`GarminConnectResponseValidationError`), it just returned no snapshots for
+Francisco's account in this window. Not investigated further yet — could be
+account/device-tier related, or it needs more history to populate; flagged
+as a real open question rather than guessed at.
+
+The live-activity unit assumption (seconds/meters, `ingest/garmin.py`'s
+docstring) is **still unverified** — no activity was recorded in this first
+window, so there's nothing yet to spot-check the conversion against. Revisit
+once a live-synced activity actually appears in `scripts/sync.py`'s printed
+output.
+
+`pyproject.toml`: `garminconnect>=0.2.20` → `garminconnect[typed]>=0.3.11`,
+`pydantic>=2.0` added as a direct dependency (was already an installed
+transitive one).
 
 **Apple Health "live" path — not yet built, no live API to wrap.** There is no
 real Apple Health cloud API to write an adapter against (unlike Garmin/Strava).
@@ -530,9 +550,12 @@ continuing; do not run ahead**:
 4. 🟡 Derived metrics (section "Derived metrics" below) — load/baselines/readiness all
    built and tested (see sections above), but none write to `derived_daily` yet.
 5. ⬜ Dashboard (Streamlit), read-only first, then logging forms.
-6. 🟡 Live sync — Garmin built (`ingest/garmin.py`, `scripts/sync.py`, ADR 0004), not yet
-   run against real credentials. Strava live sync skipped by decision (paid API tier as
-   of June 2026; Garmin already covers current data) — see current-status section below.
+6. 🟡 Live sync — Garmin built and confirmed working against Francisco's real account
+   (`ingest/garmin.py`, `scripts/sync.py`, ADR 0004; see current-status section below
+   for the real first-run result). Strava live sync skipped by decision (paid API tier
+   as of June 2026; Garmin already covers current data). Marked 🟡 not ✅: live-activity
+   units are still unverified (no activity synced yet), and `training_readiness` came
+   back empty on the first run — not yet root-caused.
 7. ⬜ Coaching rules engine + briefing generator.
 8. ⬜ Scheduling (launchd/cron) + correlation analysis.
 
