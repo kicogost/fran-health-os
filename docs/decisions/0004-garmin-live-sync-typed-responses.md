@@ -86,3 +86,15 @@ evidence the live endpoint carries them the same way.
   `scripts/sync.py`'s printed output on the first real run against Francisco's account,
   and this ADR updated (or a follow-up ADR opened) if it turns out to be wrong — same
   as `garmin_bulk.py`'s elevationGain correction.
+- **`training_readiness` will stay permanently NULL for Francisco's account, confirmed
+  2026-08-28.** First real run returned no snapshots for any date; investigated by
+  calling the raw (untyped) `get_training_readiness` endpoint directly and
+  `client.get_devices()` — the raw endpoint genuinely returns `[]` (no mapping bug on
+  our side), and the account's Forerunner 165 simply doesn't compute Training
+  Readiness at all (a deliberate Garmin device-tier limitation, confirmed against
+  Garmin's own FR165 manual and community forum, plus an independent device-support
+  tracker). This is not a history-length issue the way this project's own HRV baseline
+  seed phase is — no amount of waiting will populate it on this hardware. The kickoff
+  doc's framing of computing our own readiness "alongside Garmin's Training Readiness
+  so disagreement is visible" (`metrics/readiness.py`'s module docstring) doesn't apply
+  here: there is no Garmin composite to compare against on this account, only our own.

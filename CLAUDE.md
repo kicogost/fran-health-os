@@ -430,9 +430,33 @@ activities synced in that window (0 attempted, not an error — no Garmin-
 tracked activity existed in those 3 days). **`training_readiness` came back
 empty for all three dates** — the endpoint call itself succeeded (no
 `GarminConnectResponseValidationError`), it just returned no snapshots for
-Francisco's account in this window. Not investigated further yet — could be
-account/device-tier related, or it needs more history to populate; flagged
-as a real open question rather than guessed at.
+Francisco's account in this window.
+
+**Resolved, 2026-08-28**: investigated directly against the live account
+(`client.get_training_readiness()` raw, plus `client.get_devices()`) rather
+than guessed at. The raw endpoint genuinely returns `[]` — nothing is being
+lost in our `typed`/mapping layer, `_fetch_one_day_metrics()`'s handling is
+already correct. Root cause: **Francisco's Forerunner 165 doesn't compute
+Training Readiness at all** — a deliberate device-tier limitation, not a
+history-length thing (unlike this project's own HRV baseline seed phase).
+Confirmed three ways: Garmin's own FR165 owner's manual never mentions
+Training Readiness/Status/Load; Garmin's own community forum has a thread
+asking this exact question, official answer "No — deliberate market
+segmentation" (protects FR245/265 sales); an independent device-support
+tracker (the5krunner.com) explicitly lists the FR165 as unsupported alongside
+FR55/Instinct 3/Edge computers, with FR265/965/Fenix 7 Pro+/etc. supported.
+`client.get_devices()` also surfaced two old **fēnix 3** entries (2015-era,
+predates HRV/Body Battery) still registered on the account alongside the
+Forerunner 165 — harmless, clearly legacy, not a data-source concern.
+**`training_readiness` will stay permanently NULL for this account on current
+hardware** — not a bug to keep chasing. If a future watch supports it, this
+should start populating with zero code changes (the fetch/mapping logic is
+already correct, it's the account's current hardware that has nothing to
+report). Garmin's own composite readiness therefore isn't available to
+compare against this project's own `compute_readiness_score()` — the
+kickoff doc's "computed alongside Garmin's Training Readiness so disagreement
+is visible" framing doesn't apply on this hardware; our own score is the only
+composite that will ever exist for Francisco unless the watch changes.
 
 The live-activity unit assumption (seconds/meters, `ingest/garmin.py`'s
 docstring) is **still unverified** — no activity was recorded in this first
@@ -554,8 +578,9 @@ continuing; do not run ahead**:
    (`ingest/garmin.py`, `scripts/sync.py`, ADR 0004; see current-status section below
    for the real first-run result). Strava live sync skipped by decision (paid API tier
    as of June 2026; Garmin already covers current data). Marked 🟡 not ✅: live-activity
-   units are still unverified (no activity synced yet), and `training_readiness` came
-   back empty on the first run — not yet root-caused.
+   units are still unverified (no activity synced yet). `training_readiness` coming
+   back empty is resolved, not a bug — Francisco's Forerunner 165 doesn't support the
+   feature at all (device-tier limitation, confirmed against Garmin's own docs/forum).
 7. ⬜ Coaching rules engine + briefing generator.
 8. ⬜ Scheduling (launchd/cron) + correlation analysis.
 
