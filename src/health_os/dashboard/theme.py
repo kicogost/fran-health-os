@@ -1,37 +1,44 @@
 """Shared dark theme + chart helpers for the dashboard (Phase 5).
 
-One place for the "raw points always shown behind smoothed lines, lighter
-shade" rule (kickoff doc's dashboard spec) so every page draws it the same
-way instead of re-inventing the styling per chart.
+Visual language inspired by the ring-gauge/card style Francisco pointed to
+(WHOOP's app) — our own colors and components, not WHOOP's actual brand
+assets (those are proprietary, gated behind their design-guidelines PDF).
+One place for this so every page looks like the same product instead of six
+independently-styled Streamlit defaults.
 """
 
 from __future__ import annotations
 
+from math import pi
+
 import plotly.graph_objects as go
 import streamlit as st
 
-BG = "#0e1117"
-PANEL = "#161b22"
-GRID = "#262c36"
-TEXT = "#e6e6e6"
-MUTED = "#8b949e"
+BG = "#000000"
+PANEL = "#151517"
+PANEL_BORDER = "#232326"
+TRACK = "#2a2a2d"  # the "empty" part of a ring gauge
+GRID = "#232326"
+TEXT = "#f2f2f3"
+MUTED = "#8a8a8e"
 
 # One accent colour per recurring series, kept consistent across pages so
 # "HRV" always means the same colour whether you're on Today or Trends.
 ACCENT = {
-    "weight": "#58a6ff",
-    "hrv": "#3fb950",
-    "rhr": "#f85149",
-    "sleep": "#a371f7",
-    "tsb": "#d29922",
-    "ctl": "#58a6ff",
-    "atl": "#f85149",
-    "load": "#8b949e",
+    "weight": "#4a9eff",
+    "hrv": "#2ecc8f",
+    "rhr": "#f5544d",
+    "sleep": "#e0954b",
+    "tsb": "#4a9eff",
+    "ctl": "#4a9eff",
+    "atl": "#f5544d",
+    "load": "#8a8a8e",
 }
 
-GREEN = "#3fb950"
-AMBER = "#d29922"
-RED = "#f85149"
+GREEN = "#2ecc8f"
+AMBER = "#e0954b"
+RED = "#f5544d"
+BLUE = "#4a9eff"
 
 
 def configure_page(title: str) -> None:
@@ -39,7 +46,55 @@ def configure_page(title: str) -> None:
     st.markdown(
         f"""
         <style>
-        .stApp {{ background-color: {BG}; }}
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+        html, body, .stApp {{ background-color: {BG}; }}
+        .stApp, .stApp * {{
+            font-family: 'Inter', -apple-system, system-ui, sans-serif !important;
+        }}
+        #MainMenu, footer, header {{ visibility: hidden; }}
+        .block-container {{ padding-top: 2.5rem; max-width: 1200px; }}
+
+        /* st.container(border=True) -> a card. Subtle border, soft shadow for
+        depth instead of a bright outline (Linear/Vercel-style minimal dark
+        UI) -- a uniform bottom margin here means pages don't need manual
+        st.write("") spacers between cards. */
+        div[data-testid="stVerticalBlockBorderWrapper"] {{
+            background-color: {PANEL};
+            border: 1px solid {PANEL_BORDER} !important;
+            border-radius: 14px !important;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+            padding: 6px 10px;
+            margin-bottom: 20px;
+        }}
+
+        [data-testid="stMetricValue"] {{
+            font-size: 2rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }}
+        [data-testid="stMetricLabel"] {{
+            color: {MUTED};
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            font-size: 0.68rem;
+            font-weight: 600;
+        }}
+        [data-testid="stMetricDelta"] {{ font-size: 0.8rem; }}
+        h1 {{ font-weight: 800; letter-spacing: -0.02em; margin-bottom: 1.5rem; }}
+        h2, h3 {{ font-weight: 700; letter-spacing: -0.01em; }}
+        p, span, label, .stMarkdown {{ color: {TEXT}; }}
+        .hos-eyebrow {{
+            color: {MUTED};
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            font-size: 0.68rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }}
+        /* tabs, radio, and form widgets: quiet the default Streamlit chrome */
+        button[data-baseweb="tab"] {{ font-weight: 600; }}
+        div[data-testid="stForm"] {{ border: none; padding: 0; }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -67,12 +122,73 @@ def band_label(score: float | None) -> str:
     return "Red"
 
 
+def ring_svg(
+    value_label: str,
+    sub_label: str,
+    pct: float | None,
+    color: str,
+    *,
+    size: int = 160,
+    stroke: int = 12,
+) -> str:
+    """A rounded-cap circular progress ring (WHOOP-style "Recovery ring"),
+    pure inline SVG — no JS, no chart library chrome to suppress. `pct` is
+    0-100; `None` renders an empty track only (no data, not a fake zero).
+    """
+    r = (size - stroke) / 2
+    cx = cy = size / 2
+    circumference = 2 * pi * r
+    fraction = 0.0 if pct is None else max(0.0, min(1.0, pct / 100.0))
+    offset = circumference * (1 - fraction)
+    ring_color = TRACK if pct is None else color
+    return f"""
+    <div style="display:flex;flex-direction:column;align-items:center;">
+      <svg width="{size}" height="{size}" viewBox="0 0 {size} {size}">
+        <circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{TRACK}" stroke-width="{stroke}"/>
+        <circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{ring_color}"
+          stroke-width="{stroke}" stroke-linecap="round"
+          stroke-dasharray="{circumference:.2f}" stroke-dashoffset="{offset:.2f}"
+          transform="rotate(-90 {cx} {cy})"/>
+        <text x="{cx}" y="{cy - 2}" text-anchor="middle" dominant-baseline="middle"
+          font-size="{size * 0.22:.0f}" font-weight="700" fill="{TEXT}"
+          font-family="-apple-system, sans-serif">{value_label}</text>
+        <text x="{cx}" y="{cy + size * 0.16:.0f}" text-anchor="middle" dominant-baseline="middle"
+          font-size="{size * 0.075:.0f}" fill="{MUTED}" letter-spacing="1"
+          font-family="-apple-system, sans-serif">{sub_label.upper()}</text>
+      </svg>
+    </div>
+    """
+
+
+def mini_ring_svg(pct: float, color: str, *, size: int = 64, stroke: int = 7) -> str:
+    """Small ring with just the arc, no text — for compact component rows."""
+    r = (size - stroke) / 2
+    cx = cy = size / 2
+    circumference = 2 * pi * r
+    fraction = max(0.0, min(1.0, pct / 100.0))
+    offset = circumference * (1 - fraction)
+    return f"""
+    <svg width="{size}" height="{size}" viewBox="0 0 {size} {size}">
+      <circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{TRACK}" stroke-width="{stroke}"/>
+      <circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{color}" stroke-width="{stroke}"
+        stroke-linecap="round" stroke-dasharray="{circumference:.2f}"
+        stroke-dashoffset="{offset:.2f}" transform="rotate(-90 {cx} {cy})"/>
+    </svg>
+    """
+
+
+def eyebrow(text: str) -> None:
+    """Small uppercase muted label above a card's content — WHOOP's "SLEEP",
+    "RECOVERY" style section headers."""
+    st.markdown(f'<div class="hos-eyebrow">{text}</div>', unsafe_allow_html=True)
+
+
 def base_figure(*, height: int = 360) -> go.Figure:
     fig = go.Figure()
     fig.update_layout(
         height=height,
         margin=dict(l=10, r=10, t=30, b=10),
-        paper_bgcolor=BG,
+        paper_bgcolor=PANEL,
         plot_bgcolor=PANEL,
         font=dict(color=TEXT),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),

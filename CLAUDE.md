@@ -990,10 +990,75 @@ caught and fixed a real deprecation: `st.plotly_chart(..., use_container_width=T
 past its removal deadline (2025-12-31) in the installed Streamlit version — replaced
 with `width="stretch"` everywhere before this was called done.
 
-**Not yet done**: no manual visual QA in an actual browser (only `AppTest` + an HTTP
-200 check that the server boots) — the layout/spacing/colors haven't been eyeballed by
-a human yet. No scheduling (that's Phase 8). Readiness "guidance" text is a hardcoded
-lookup, not the real rules engine.
+**Not yet done**: no scheduling (that's Phase 8). Readiness "guidance" text is a
+hardcoded lookup, not the real rules engine.
+
+## Dashboard visual redesign + day-aware guidance (2026-08-28)
+
+Francisco looked at the first version in a real browser and called it "structured but
+ugly" — pointed at WHOOP's app (screenshots) and asked to check WHOOP's own design
+guidelines page. That page only gates a proprietary PDF behind ToS acceptance, so this
+redesign is built from the screenshots directly (ring gauges, near-black background,
+rounded dark cards, bold numbers) — our own colors/components inspired by that
+structure, not WHOOP's actual (proprietary) brand assets. Also checked
+`VoltAgent/awesome-claude-design` (a pointer collection of `DESIGN.md` style-guide
+files, not actual CSS) — the Linear/Vercel entries describe an "ultra-minimal, precise,
+single accent" philosophy; **did not** run the `npx getdesign@latest add ...`
+installer it points to (executing an unvetted third-party package is a real
+supply-chain risk not worth taking just to fetch a style spec) — applied that
+well-established minimal-dark-dashboard philosophy by hand instead.
+
+- **`theme.py`**: near-true-black background, refined palette (teal-green/muted-
+  orange/red/blue closer to what's visible in the WHOOP screenshots than the initial
+  GitHub-dark-mode-esque colors), Inter webfont via Google Fonts `@import` (safe here
+  — this is a normal local web server rendering to a real browser, not a sandboxed
+  Artifact with a CSP blocking external fonts). New `ring_svg()`/`mini_ring_svg()` —
+  pure inline SVG circular progress rings with rounded stroke caps (`stroke-linecap:
+  round`, standard circumference/dashoffset technique), replacing the flat
+  `st.progress()` bars from the first version. `st.container(border=True)` restyled
+  globally into the rounded dark "card" look (subtle border + soft shadow rather than
+  a bright outline) with automatic bottom margin, so pages no longer need manual
+  `st.write("")` spacer calls between sections (removed across all 6 views).
+- **Today** is the flagship redesign: readiness score is now a big central ring
+  (colored by band) instead of a plain `st.metric`; the 5 sub-components are a row of
+  small rings instead of horizontal progress bars — much closer to WHOOP's actual
+  "Recovery ring + sub-metrics" layout.
+
+**Day-aware guidance, replacing the flat weekly-generic text** — Francisco asked
+directly: "today it's Friday... you should suggest me how to do open mat, not generic
+for the week." The previous version showed the same Green/Amber/Red sentence
+regardless of what day it was. Now `views/today.py` reads `comp_prep.weekly_template`
+for *today's actual weekday* (Europe/Madrid) and looks up guidance keyed on
+`(session_type, band)` — e.g. Friday's readiness-Amber guidance is specifically "cap
+it — aim for roughly 2/3 of your usual open-mat rounds," not the same text Monday's
+technical class would get. Still an explicitly labeled **simplified preview**, not
+Phase 7's real rules engine (no structural triggers, no injury-guardrail integration,
+no 2-red/3-amber gating) — but it is a real, deterministic `(session, band) →
+instruction` lookup table, not invented per-response text, consistent with "rules
+first" even at this smaller scale.
+
+**Real schedule detail captured directly from Francisco (2026-08-28), corrected into
+`config/athlete.yaml: comp_prep.weekly_template`** — the original comp-prep plan doc
+gave session *types* (`no_gi_technical`/`hard_rounds`/`open_mat`) but not their actual
+clock-time structure:
+- Monday/Tuesday/Wednesday BJJ classes are all the same structure: 60min drilling +
+  30min rolling (4-5 × 5min rounds) — Tuesday's `hard_rounds` label means the rolling
+  portion is harder-paced, not a different class format.
+- Friday open mat: up to 10-15 rolls (round length not specified).
+- Saturday bike: **Z2-Z3 depending on the day**, 40-60km — Francisco's own direct,
+  current statement, which the config now notes supersedes the older block-specific
+  `bike_km_range` figures (60-70/50-70/40-50 across base/build/sharpen) where they
+  conflict, since it's the more current source — both are kept on record rather than
+  silently overwriting one with the other.
+- Confirmed directly: BJJ and bike stay fixed in the weekly architecture (as already
+  designed — "the architecture is fixed, the coaching layer advises within it, never
+  redesigns it"); calisthenics should also stay fixed. This matches the project's
+  existing design exactly, not a new decision — Francisco's message was confirming the
+  standing approach, not changing it.
+
+All 6 pages re-verified with `AppTest` against the real database and real
+`config/athlete.yaml` after this change (today, a real Friday, correctly renders
+open-mat-specific guidance); 227 tests passing; ruff clean.
 
 ## Working agreement
 

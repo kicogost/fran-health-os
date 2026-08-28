@@ -52,26 +52,32 @@ comp_prep:
   ends: "2026-10-18"
   weekly_template:
     # 4 mat sessions, 2 short strength sessions, 1 aerobic session, 2 rest days.
+    # Session `format` fields confirmed directly by Francisco (2026-08-28), not
+    # from the original comp-prep plan doc — that doc gave session *types*
+    # (no_gi_technical/hard_rounds/open_mat) but not the actual class structure
+    # underneath them. Both are kept: `subtype` is the plan's own categorization
+    # (drives the block-by-block guidance elsewhere), `format` is what the class
+    # concretely looks like clock-wise.
     - day: monday
       sessions:
-        - {type: bjj, subtype: no_gi_technical, notes: "positional focus, strength after the mat, never before"}
+        - {type: bjj, subtype: no_gi_technical, format: "60min drilling + 30min rolling (4-5 x 5min rounds)", notes: "positional focus, strength after the mat, never before"}
         - {type: calisthenics, subtype: strength_a, duration_min: 25}
     - day: tuesday
       sessions:
-        - {type: bjj, subtype: hard_rounds, notes: "highest-intensity sparring day of the week"}
+        - {type: bjj, subtype: hard_rounds, format: "60min drilling + 30min rolling (4-5 x 5min rounds)", notes: "highest-intensity sparring day of the week -- same class structure as Monday/Wednesday, harder pace in the rolling portion"}
     - day: wednesday
       sessions:
-        - {type: bjj, subtype: no_gi_technical, notes: "technical focus, lighter rolls"}
+        - {type: bjj, subtype: no_gi_technical, format: "60min drilling + 30min rolling (4-5 x 5min rounds)", notes: "technical focus, lighter rolls"}
         - {type: calisthenics, subtype: strength_b, duration_min: 25}
     - day: thursday
       sessions:
         - {type: rest, notes: "mobility / walk / sauna okay, no training"}
     - day: friday
       sessions:
-        - {type: bjj, subtype: open_mat, notes: "live competition-style rounds against varied partners"}
+        - {type: bjj, subtype: open_mat, format: "up to 10-15 x rolls", notes: "live competition-style rounds against varied partners"}
     - day: saturday
       sessions:
-        - {type: bike, subtype: easy_z2, notes: "conversational pace, with father"}
+        - {type: bike, subtype: easy_z2, distance_km_range: [40, 60], zone_range: "Z2-Z3 depending on the day", notes: "conversational pace, with father -- Francisco's own general range (2026-08-28), not always strictly Z2; supersedes the block-specific bike_km_range below where they conflict, since it's the more current/direct source"}
     - day: sunday
       sessions:
         - {type: rest, notes: "full rest, or 20 min easy mobility"}

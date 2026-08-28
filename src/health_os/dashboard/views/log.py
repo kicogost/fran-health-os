@@ -55,7 +55,7 @@ with tab_bjj:
             f"(load {existing['computed_load']:.0f}). Submitting again will overwrite it."
         )
 
-    with st.form("bjj_form"):
+    with st.container(border=True), st.form("bjj_form"):
         bjj_date = st.date_input("Date", value=datetime.fromisoformat(_today())).isoformat()
         duration_min = st.number_input("Duration (min)", min_value=1, max_value=600, value=90)
         session_rpe = st.slider("Session RPE", 1, 10, 7)
@@ -117,7 +117,7 @@ with tab_wellness:
 
     log_wellness_scores = st.checkbox("Log the 4 wellness scores today", value=True)
 
-    with st.form("wellness_form"):
+    with st.container(border=True), st.form("wellness_form"):
         wellness_date = st.date_input(
             "Date", value=datetime.fromisoformat(_today()), key="wellness_date"
         ).isoformat()
@@ -177,7 +177,7 @@ with tab_waist:
             f"Already logged today ({existing['value_cm']} cm). Submitting again will overwrite it."
         )
 
-    with st.form("waist_form"):
+    with st.container(border=True), st.form("waist_form"):
         waist_date = st.date_input(
             "Date", value=datetime.fromisoformat(_today()), key="waist_date"
         ).isoformat()
