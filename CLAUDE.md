@@ -1816,6 +1816,39 @@ Not a redesign of the whole visual system (colors/theme/font were already right,
 the data itself) — a tightening pass: density, elevation, real icons, motion. Same
 Today page, same data, verified against the real running app again after the change.
 
+**Round 2, same day — Francisco's honest reaction to round 1's screenshot: "looks
+pretty much the same as before no?"** He was right. Round 1's changes (density,
+hover/motion timing, icon-not-emoji) were real but mostly invisible in a static,
+no-interaction screenshot — hover states need a pointer, the count-up settles before
+a human actually looks, and the emoji-to-icon fix only shows up on a day with
+structural warnings (none that day). A static-screenshot judgment call needed
+static-visible changes, not just under-the-hood correctness.
+
+Went back to the same `ui-ux-pro-max-skill` data for what round 1 had read but not
+yet applied: `styles.csv`'s "Dark Mode (OLED)" row explicitly calls for "Minimal glow
+(text-shadow: 0 0 10px)" and vibrant accent treatment — round 1 applied the density
+guidance from that row but skipped the glow entirely. Added, for real this time:
+- A soft blurred radial glow behind the readiness ring, colored by the day's actual
+  band (amber that day) — `ReadinessRing.tsx`, pure CSS blur, no new dependency.
+- Gradient strokes on both rings (light tint → base band color, new `--band-*-light`
+  CSS variables) instead of a flat single-color arc — the same visual language Apple
+  Watch activity rings and WHOOP's recovery ring use.
+- Icons on every stat card and session (`Moon`/`Scale`/`Target`/`Utensils`/`Swords`/
+  `Bike`/`Dumbbell`/`BedDouble` from `lucide-react`, already installed, zero new
+  dependency) — round 1's icon fix only touched the warning icon; every OTHER icon
+  slot on the page was still bare text.
+- A colored top accent line and a very faint (6% opacity) radial color wash on the
+  hero readiness card, and a page-level background gradient tinted by the day's own
+  band color — the page's overall color mood now visibly reflects the actual
+  readiness state instead of being uniformly neutral-dark regardless of the number.
+
+Verified the same way as round 1 (Chrome's real `--force-prefers-reduced-motion`
+flag for a settled, non-racing capture) — the screenshot after round 2 is visibly,
+not just technically, different: an amber glow behind the ring, a warm-tinted card,
+icons throughout. Round 1's lesson, stated plainly rather than glossed over: reading
+real design data is necessary but not sufficient — it also has to be checked against
+what a human actually sees in a static view, not just what the reasoning says to do.
+
 - Python 3.12+, `uv` for deps, `ruff` for lint/format, `pytest` for tests, type hints on
   every public function.
 - **Ask before adding any dependency** not already named in this doc or `pyproject.toml`, and say what it buys.

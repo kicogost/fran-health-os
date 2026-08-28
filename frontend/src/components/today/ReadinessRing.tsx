@@ -1,4 +1,4 @@
-import { BAND_COLORS, BAND_LABELS } from "@/lib/band"
+import { BAND_COLORS, BAND_COLORS_LIGHT, BAND_LABELS } from "@/lib/band"
 import { useCountUp } from "@/hooks/useCountUp"
 import type { ReadinessBand } from "@/types/today"
 
@@ -9,12 +9,12 @@ interface ReadinessRingProps {
 }
 
 /** The flagship central ring -- score 0-100, colored by readiness band.
- * Same circumference/dashoffset technique as the Streamlit dashboard's
- * `theme.py: ring_svg()` (rounded stroke caps, track + progress arc), now
- * a real React component instead of an injected raw-SVG string. The score
- * counts up on mount rather than appearing instantly -- a "real-time
- * number animation," the exact effect ui-reasoning.csv names for this kind
- * of status dashboard (see lib/styles.ts's comment for the source).
+ * Gradient stroke (light tint -> base color) and a soft blurred glow behind
+ * it, the same "minimal glow" + gradient-arc treatment ui-ux-pro-max-skill's
+ * actual "Dark Mode (OLED)" style data names, and the same visual language
+ * Apple Watch activity rings / WHOOP's recovery ring use -- not a flat
+ * single-color arc. The score counts up on mount rather than appearing
+ * instantly (that dataset's "real-time number animations" effect).
  */
 export function ReadinessRing({ score, band, size = 220 }: ReadinessRingProps) {
   const animated = useCountUp(score, 200)
@@ -24,10 +24,27 @@ export function ReadinessRing({ score, band, size = 220 }: ReadinessRingProps) {
   const clamped = animated !== null ? Math.max(0, Math.min(100, animated)) : 0
   const dashoffset = circumference * (1 - clamped / 100)
   const color = BAND_COLORS[band]
+  const colorLight = BAND_COLORS_LIGHT[band]
+  const gradientId = `readiness-gradient-${band}`
 
   return (
     <div className="relative" style={{ width: size, height: size }}>
-      <svg width={size} height={size} className="-rotate-90">
+      {score !== null && (
+        <div
+          className="absolute inset-[-20%] rounded-full blur-3xl opacity-25 pointer-events-none"
+          style={{
+            background: `radial-gradient(circle, ${color} 0%, transparent 70%)`,
+          }}
+          aria-hidden
+        />
+      )}
+      <svg width={size} height={size} className="-rotate-90 relative">
+        <defs>
+          <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor={colorLight} />
+            <stop offset="100%" stopColor={color} />
+          </linearGradient>
+        </defs>
         <circle
           cx={size / 2}
           cy={size / 2}
@@ -41,12 +58,13 @@ export function ReadinessRing({ score, band, size = 220 }: ReadinessRingProps) {
             cx={size / 2}
             cy={size / 2}
             r={radius}
-            stroke={color}
+            stroke={`url(#${gradientId})`}
             strokeWidth={strokeWidth}
             fill="none"
             strokeLinecap="round"
             strokeDasharray={circumference}
             strokeDashoffset={dashoffset}
+            style={{ filter: `drop-shadow(0 0 6px ${color}66)` }}
           />
         )}
       </svg>

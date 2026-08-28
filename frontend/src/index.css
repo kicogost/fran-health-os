@@ -101,6 +101,15 @@
     --band-amber: #f1c21b;
     --band-red: #fa4d56;
     --band-blue: #78a9ff;
+
+    /* Lighter tints of each band color, for gradient-stroke rings and glow
+       highlights -- the "minimal glow" + gradient-arc treatment several
+       premium ring UIs use (Apple Watch activity rings, WHOOP's recovery
+       ring) instead of a single flat stroke color. */
+    --band-green-light: #a7e9bb;
+    --band-amber-light: #ffe066;
+    --band-red-light: #ffb3b8;
+    --band-blue-light: #c2d9ff;
 }
 
 @layer base {

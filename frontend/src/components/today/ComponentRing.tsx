@@ -1,4 +1,4 @@
-import { BAND_COLORS, scoreToBand } from "@/lib/band"
+import { BAND_COLORS, BAND_COLORS_LIGHT, scoreToBand } from "@/lib/band"
 import { useCountUp } from "@/hooks/useCountUp"
 
 const COMPONENT_LABELS: Record<string, string> = {
@@ -18,7 +18,8 @@ interface ComponentRingProps {
 /** A small ring for one readiness sub-component (HRV/RHR/sleep/TSB/
  * subjective), colored by the SAME 75/55 band thresholds as the main ring
  * (lib/band.ts) so a component ring and the overall ring never disagree on
- * what "amber" looks like. Counts up on mount, same as ReadinessRing.
+ * what "amber" looks like. Same gradient-stroke treatment as the main ring,
+ * scaled down. Counts up on mount, same as ReadinessRing.
  */
 export function ComponentRing({ componentKey, score, size = 64 }: ComponentRingProps) {
   const animated = useCountUp(score, 180) ?? 0
@@ -27,12 +28,21 @@ export function ComponentRing({ componentKey, score, size = 64 }: ComponentRingP
   const circumference = 2 * Math.PI * radius
   const clamped = Math.max(0, Math.min(100, animated))
   const dashoffset = circumference * (1 - clamped / 100)
-  const color = BAND_COLORS[scoreToBand(score)]
+  const band = scoreToBand(score)
+  const color = BAND_COLORS[band]
+  const colorLight = BAND_COLORS_LIGHT[band]
+  const gradientId = `component-gradient-${componentKey}`
 
   return (
     <div className="flex flex-col items-center gap-1.5">
       <div className="relative" style={{ width: size, height: size }}>
         <svg width={size} height={size} className="-rotate-90">
+          <defs>
+            <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor={colorLight} />
+              <stop offset="100%" stopColor={color} />
+            </linearGradient>
+          </defs>
           <circle
             cx={size / 2}
             cy={size / 2}
@@ -45,7 +55,7 @@ export function ComponentRing({ componentKey, score, size = 64 }: ComponentRingP
             cx={size / 2}
             cy={size / 2}
             r={radius}
-            stroke={color}
+            stroke={`url(#${gradientId})`}
             strokeWidth={strokeWidth}
             fill="none"
             strokeLinecap="round"

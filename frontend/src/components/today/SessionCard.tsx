@@ -1,4 +1,4 @@
-import { TriangleAlert } from "lucide-react"
+import { BedDouble, Bike, Dumbbell, Swords, TriangleAlert, type LucideIcon } from "lucide-react"
 import { CARD_CLASS } from "@/lib/styles"
 import type { Session, StructuralFlags } from "@/types/today"
 
@@ -8,6 +8,13 @@ const WARNING_MESSAGES: Record<keyof StructuralFlags, string> = {
   hrv_sustained_low: "HRV has sat >1 SD below baseline for 3 straight days.",
   tsb_persistently_negative: "TSB has been negative for 4+ straight days.",
   monotony_strain: "High monotony this week with strain in the recent top quartile.",
+}
+
+const SESSION_ICONS: Record<string, LucideIcon> = {
+  bjj: Swords,
+  bike: Bike,
+  calisthenics: Dumbbell,
+  rest: BedDouble,
 }
 
 interface SessionCardProps {
@@ -35,19 +42,27 @@ export function SessionCard({ weekdayName, sessions, structuralFlags }: SessionC
           Nothing scheduled today per <code className="text-sm">comp_prep.weekly_template</code>.
         </p>
       ) : (
-        <div className="space-y-3">
-          {sessions.map((session, i) => (
-            <div key={i}>
-              <p className="text-lg font-medium text-foreground">
-                {session.label} -- {session.instruction}
-              </p>
-              {(session.format ?? session.notes) && (
-                <p className="text-sm text-muted-foreground mt-0.5">
-                  {session.format ?? session.notes}
-                </p>
-              )}
-            </div>
-          ))}
+        <div className="space-y-4">
+          {sessions.map((session, i) => {
+            const Icon = SESSION_ICONS[session.type] ?? Dumbbell
+            return (
+              <div key={i} className="flex items-start gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent">
+                  <Icon className="h-4 w-4 text-foreground" strokeWidth={2} />
+                </span>
+                <div>
+                  <p className="text-lg font-medium text-foreground leading-snug">
+                    {session.label} -- {session.instruction}
+                  </p>
+                  {(session.format ?? session.notes) && (
+                    <p className="text-sm text-muted-foreground mt-0.5">
+                      {session.format ?? session.notes}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )
+          })}
         </div>
       )}
 

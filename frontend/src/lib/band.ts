@@ -21,6 +21,17 @@ export const BAND_COLORS: Record<ReadinessBand, string> = {
   red: "var(--band-red)",
 }
 
+// Lighter tints, used as the gradient-stroke highlight and glow color for
+// each band -- see index.css's comment for why (gradient-arc rings +
+// minimal-glow, both drawn from ui-ux-pro-max-skill's actual "Dark Mode
+// (OLED)" style data, not invented).
+export const BAND_COLORS_LIGHT: Record<ReadinessBand, string> = {
+  no_data: "var(--band-blue-light)",
+  green: "var(--band-green-light)",
+  amber: "var(--band-amber-light)",
+  red: "var(--band-red-light)",
+}
+
 export const BAND_LABELS: Record<ReadinessBand, string> = {
   no_data: "No data",
   green: "Green",
