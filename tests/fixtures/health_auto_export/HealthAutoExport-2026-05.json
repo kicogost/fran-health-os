@@ -1,0 +1,14 @@
+{
+  "data": {
+    "metrics": [
+      {
+        "name": "weight_body_mass",
+        "units": "kg",
+        "data": [
+          { "qty": 79.0, "date": "2026-01-29 08:00:00 +0100", "source": "RENPHO Health" },
+          { "qty": 999.0, "date": "2026-01-29 09:00:00 +0100", "source": "SomeRandomApp" }
+        ]
+      }
+    ]
+  }
+}

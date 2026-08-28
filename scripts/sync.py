@@ -4,13 +4,21 @@
     uv run python scripts/sync.py                 # trailing 3 days
     uv run python scripts/sync.py --days 7
 
-Garmin only for now. Live Strava sync is deliberately skipped: Strava
-introduced a paid ($11.99/mo) developer API tier in June 2026, and Garmin
-already covers current activities — Strava's role in this project is purely
-historical backfill (already done, see `scripts/backfill.py`). Apple Health's
-"live" path is the Health Auto Export iOS app folder-dropping exports into
-`APPLE_HEALTH_EXPORT_DIR`; picking those up is just re-running
-`scripts/backfill.py --source apple_health`, no separate live adapter needed.
+Covers Garmin (activities + daily wellness) and Health Auto Export (weight
+only). Live Strava sync is deliberately skipped: Strava introduced a paid
+($11.99/mo) developer API tier in June 2026, and Garmin already covers
+current activities — Strava's role in this project is purely historical
+backfill (already done, see `scripts/backfill.py`).
+
+Health Auto Export (the iOS app, Premium tier) folder-drops JSON files into
+`HEALTH_AUTO_EXPORT_DIR` (default `data/raw/health_auto_export`, synced there
+from iCloud Drive) on its own schedule — this is a genuinely different JSON
+schema from the native Health app's `export.xml`
+(`ingest/apple_health.py`/`scripts/backfill.py --source apple_health`), not a
+re-run of that same path (an earlier draft of this docstring assumed it would
+be; corrected once the real export was inspected — see
+`ingest/health_auto_export.py`'s module docstring). Only `weight_body_mass`
+is extracted, same allowlist-by-source-name policy as the bulk XML ingester.
 
 Fetches a trailing window (default 3 days) rather than "since last sync",
 deliberately: Garmin sometimes revises a day's wellness numbers after the
@@ -23,6 +31,7 @@ a row for the same window is always safe.
 from __future__ import annotations
 
 import argparse
+import os
 import sqlite3
 import sys
 import traceback
@@ -36,9 +45,10 @@ from garminconnect import GarminConnectAuthenticationError  # noqa: E402
 from health_os.core import db  # noqa: E402
 from health_os.core.dedupe import dedupe_activities  # noqa: E402
 from health_os.core.timezones import to_local_date  # noqa: E402
-from health_os.ingest import garmin  # noqa: E402
+from health_os.ingest import garmin, health_auto_export  # noqa: E402
 
 DEFAULT_WINDOW_DAYS = 3
+DEFAULT_HEALTH_AUTO_EXPORT_DIR = "data/raw/health_auto_export"
 
 
 def _today_local() -> date:
@@ -120,6 +130,39 @@ def sync_garmin(conn: sqlite3.Connection, start_date: date, end_date: date) -> b
     return True
 
 
+def sync_health_auto_export(conn: sqlite3.Connection) -> bool:
+    export_dir = Path(os.environ.get("HEALTH_AUTO_EXPORT_DIR", DEFAULT_HEALTH_AUTO_EXPORT_DIR))
+    if not export_dir.exists() or not any(export_dir.glob("HealthAutoExport-*.json")):
+        print(f"health_auto_export: no export found under {export_dir} yet — skipping")
+        return True
+
+    run_id = db.start_ingest_run(conn, "health_auto_export")
+    rows_in = rows_upserted = 0
+    try:
+        for metric in health_auto_export.parse_weight(export_dir):
+            rows_in += 1
+            db.upsert(conn, "daily_metrics", metric.to_row(), ["date"])
+            rows_upserted += 1
+    except Exception as exc:  # noqa: BLE001 - reported to ingest_runs, not swallowed
+        db.finish_ingest_run(
+            conn,
+            run_id,
+            status="failed",
+            rows_in=rows_in,
+            rows_upserted=rows_upserted,
+            errors=[str(exc)],
+        )
+        print(f"health_auto_export: FAILED after {rows_upserted} rows — {exc}")
+        traceback.print_exc()
+        return False
+
+    db.finish_ingest_run(
+        conn, run_id, status="success", rows_in=rows_in, rows_upserted=rows_upserted, rows_skipped=0
+    )
+    print(f"health_auto_export: {rows_upserted} rows upserted from {export_dir}")
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -136,7 +179,9 @@ def main(argv: list[str] | None = None) -> int:
 
     conn = db.init_db(args.db_path)
     try:
-        ok = sync_garmin(conn, start_date, end_date)
+        garmin_ok = sync_garmin(conn, start_date, end_date)
+        health_auto_export_ok = sync_health_auto_export(conn)
+        ok = garmin_ok and health_auto_export_ok
 
         # Cross-source dedup (design principle 5) always runs after ingestion,
         # regardless of per-source outcome — see scripts/backfill.py's

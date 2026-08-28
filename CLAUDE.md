@@ -468,23 +468,86 @@ output.
 `pydantic>=2.0` added as a direct dependency (was already an installed
 transitive one).
 
-**Apple Health "live" path — not yet built, no live API to wrap.** There is no
-real Apple Health cloud API to write an adapter against (unlike Garmin/Strava).
-The pragmatic path, already the direction pointed to earlier in this project's
-"Data sources" section, is: install **Health Auto Export** (iOS app) on
-Francisco's phone, configure it to export on a schedule to an iCloud Drive
-folder that syncs down to `APPLE_HEALTH_EXPORT_DIR` (`data/raw/apple_health` by
-default) on this machine, then just re-run
-`scripts/backfill.py --source apple_health` against that folder — no new code
-needed, `ingest/apple_health.py` already handles re-ingestion idempotently.
-**Not done yet because it needs Francisco to actually install and configure the
-iOS app first** (a phone-side action, not something buildable from here) — once
-a real export lands from it, its structure should be inspected the same
-"verify, don't assume" way every other parser's real export was, since Health
-Auto Export's own JSON/CSV shape has never been checked against this codebase's
-assumptions. Given Apple Health is already a lower-priority, mostly-duplicate
-source (see "Data sources" section), this is fine to defer — Garmin's live sync
-above covers the actually time-sensitive data (HRV/sleep/RHR/readiness).
+## Apple Health "live" weight sync built via Health Auto Export (2026-08-28)
+
+Francisco installed **Health Auto Export** (iOS app, Premium/lifetime tier —
+needed specifically for the "Automations" feature; the cheaper Basic tier
+only offers manual/Shortcuts-triggered export, no scheduling) and set up an
+"iCloud Drive" automation named `HealthOS`. **Correcting an earlier wrong
+assumption in this file**: the original plan (see git history) was "just
+re-run `scripts/backfill.py --source apple_health` against the synced
+folder, no new code needed" — that assumed Health Auto Export produces the
+same `export.xml` format as the native Health app's one-time export. **It
+does not.** Inspecting Francisco's real exported files (not assumed from the
+app's docs) showed a completely different JSON schema, so a new dedicated
+module was written: `ingest/health_auto_export.py`.
+
+Real format, verified against three actual files copied from Francisco's
+account:
+```json
+{"data": {"metrics": [
+  {"name": "weight_body_mass", "units": "kg",
+   "data": [{"qty": 78.45, "date": "2026-08-21 00:00:00 +0200", "source": "RENPHO Health"}]}
+]}}
+```
+Only `weight_body_mass` is extracted — `lean_body_mass`/`body_mass_index` ride
+along in the same "Body Mass" bundle but have no column in our schema, known
+gap not silently dropped. Reuses `AppleHealthSourceConfig` (the same
+`config/sources.yaml: apple_health.weight_source_names` allowlist) and the
+same "latest reading per date wins, never averaged" rule as the bulk XML
+parser, applied across *all* `HealthAutoExport-*.json` files in the directory
+together (the app can produce several per run with overlapping date
+coverage — reading them all and taking the latest per date handles that
+correctly rather than requiring the caller to pick "the right file").
+
+Real gotcha, verified by testing rather than assumed: the `date` field's
+format (`"2026-08-21 00:00:00 +0200"`, space before a colon-less offset) is
+byte-for-byte the same shape the native `export.xml` uses — both trace back
+to the same HealthKit date serialization — so the existing
+`strptime(..., "%Y-%m-%d %H:%M:%S %z")` approach carries over unchanged.
+Confirmed `datetime.fromisoformat` actually *rejects* this shape (space
+before the offset) rather than assuming it would "just work" since it looks
+ISO-ish.
+
+**Real cross-check, not just internal consistency**: the automation's
+"Week"-range file (Health Auto Export names non-daily exports by ISO week
+number, e.g. `HealthAutoExport-2026-34.json`) reported **78.45 kg on
+2026-08-21, source "RENPHO Health"** — exactly matching the figure already in
+the database from the historical `export.xml` backfill months earlier.
+
+**Real find while setting this up**: two much larger files
+(`HealthAutoExport-2026-08-27.json` ~1.1MB, `-08-28.json` ~370KB) turned up
+alongside the real one, containing 7-12 unrelated metrics (`heart_rate`,
+`sleep_analysis`, `step_count`, ...) — leftovers from before the automation's
+"Select Health Metrics" setting was narrowed down to Body Mass only.
+`parse_weight()` only ever looks for the `weight_body_mass` metric name, so
+these stray files are harmless to leave in the directory rather than
+something that needed cleaning up first. Also decided, after asking
+Francisco directly: **Workouts are not exported from Health Auto Export at
+all** — he confirmed he no longer uses BJJBuddy (the third-party app that
+was the original reason Apple Health workouts had unique value, per the
+Phase 2 Apple Health summary above) or logs sessions via Apple Watch instead
+of Garmin, so there is currently no non-Garmin workout source left to
+capture live. If that changes, a second automation (same iCloud Drive
+destination, Data Type = Workouts) is a 30-second addition, not a redesign.
+
+Wired into `scripts/sync.py` as `sync_health_auto_export()`, run alongside
+the Garmin sync on every invocation, reading from `HEALTH_AUTO_EXPORT_DIR`
+(new env var, default `data/raw/health_auto_export` — separate from
+`APPLE_HEALTH_EXPORT_DIR`, which stays pointed at the native XML export;
+these are two different pipelines now, not one). 8 new tests
+(`tests/ingest/test_health_auto_export.py`) against synthetic fixtures —
+latest-wins, source-allowlist-filters-before-latest-wins-comparison (a real
+distinct case: an untrusted source's later timestamp must not win just
+because it's later), multi-file combination, lb→kg conversion, empty
+directory. **Real first run against Francisco's actual files (2026-08-28)**:
+clean `success`, 1/1 rows upserted, `daily_metrics` for 2026-08-21 correctly
+got `weight_kg` set without touching that date's pre-existing Garmin fields
+(`resting_hr`/`hrv_overnight_ms` from the historical backfill stayed intact)
+— the partial-upsert-doesn't-clobber design (Phase 1) working exactly as
+intended on real data, not just in tests.
+
+227 tests total now, all passing; `ruff check`/`ruff format --check` clean.
 
 **Phase 1 summary** (2026-08-27): `core/migrations/0001_initial_schema.sql` is the
 source of truth for the schema (all 7 tables from the target schema below, applied via
@@ -576,8 +639,12 @@ continuing; do not run ahead**:
 5. ⬜ Dashboard (Streamlit), read-only first, then logging forms.
 6. 🟡 Live sync — Garmin built and confirmed working against Francisco's real account
    (`ingest/garmin.py`, `scripts/sync.py`, ADR 0004; see current-status section below
-   for the real first-run result). Strava live sync skipped by decision (paid API tier
-   as of June 2026; Garmin already covers current data). Marked 🟡 not ✅: live-activity
+   for the real first-run result). Health Auto Export weight sync also built and
+   confirmed working (`ingest/health_auto_export.py`, wired into the same
+   `scripts/sync.py`) — genuinely a different JSON format from the native XML
+   export, corrected once inspected, see current-status section below. Strava live
+   sync skipped by decision (paid API tier as of June 2026; Garmin already covers
+   current data). Marked 🟡 not ✅: live-activity
    units are still unverified (no activity synced yet). `training_readiness` coming
    back empty is resolved, not a bug — Francisco's Forerunner 165 doesn't support the
    feature at all (device-tier limitation, confirmed against Garmin's own docs/forum).
@@ -657,9 +724,13 @@ kickoff doc section 2; summary:
   from times the watch wasn't worn, and (2) third-party HealthKit apps that don't write
   to Garmin. One-time export via the Health app → `export.zip` → huge `export.xml`,
   parsed with **streaming** `lxml.etree.iterparse` (never `ElementTree.parse`, it will
-  exhaust RAM). Ongoing sync via the **Health Auto Export** iOS app, folder-drop first,
-  REST later if wanted. Every record carries a source device — filter out
-  Garmin-originated records at ingest.
+  exhaust RAM). Every record carries a source device — filter out Garmin-originated
+  records at ingest. **Ongoing weight sync via the Health Auto Export iOS app**
+  (`ingest/health_auto_export.py`, built and confirmed working 2026-08-28) — its own
+  JSON schema, genuinely different from `export.xml`, not the same pipeline. Only
+  weight is synced this way (Francisco confirmed he no longer uses BJJBuddy or logs
+  workouts via Apple Watch, so there's currently no non-Garmin workout source left to
+  capture live — see current-status section for detail).
 - **Strava** — official free API, `stravalib` for OAuth/refresh. Look up current
   published rate limits rather than trusting a stale number; implement backoff against
   them. Recent activities duplicate Garmin (which auto-uploads to Strava) — Strava's
@@ -725,7 +796,7 @@ data/
   raw/                 immutable per-source downloads (gitignored)
   health.db             the one canonical store (gitignored)
 src/health_os/
-  ingest/               strava_bulk.py, apple_health.py, garmin_bulk.py (historical), garmin.py (Phase 6 live sync, ADR 0004), common.py (shared helpers) — bjj_manual.py not needed (log_bjj.py writes directly)
+  ingest/               strava_bulk.py, apple_health.py (historical XML), garmin_bulk.py (historical), garmin.py (Phase 6 live sync, ADR 0004), health_auto_export.py (Phase 6 live weight sync — different JSON format from apple_health.py, not the same pipeline), common.py (shared helpers) — bjj_manual.py not needed (log_bjj.py writes directly)
   core/                 db.py, timezones.py, dedupe.py (activities cross-source dedup, live), schema.sql (snapshot, v2), migrations/000{1,2}_*.sql (source of truth), models.py
   metrics/              body_comp.py (weight trend + comp countdown), load.py (monotony/strain, CTL/ATL/TSB — no ACWR, ADR 0003), baselines.py (HRV/RHR baselines, sleep debt), readiness.py (0-100 composite) — none of these write to derived_daily yet
   coach/                rules.py, briefing.py, weekly_retro.py

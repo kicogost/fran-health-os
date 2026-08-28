@@ -1,0 +1,28 @@
+{
+  "data": {
+    "metrics": [
+      {
+        "name": "weight_body_mass",
+        "units": "kg",
+        "data": [
+          { "qty": 80.0, "date": "2026-01-28 07:00:00 +0100", "source": "RENPHO Health" },
+          { "qty": 80.5, "date": "2026-01-28 19:00:00 +0100", "source": "RENPHO Health" }
+        ]
+      },
+      {
+        "name": "lean_body_mass",
+        "units": "kg",
+        "data": [
+          { "qty": 60.0, "date": "2026-01-28 07:00:00 +0100", "source": "RENPHO Health" }
+        ]
+      },
+      {
+        "name": "heart_rate",
+        "units": "count/min",
+        "data": [
+          { "qty": 55.0, "date": "2026-01-28 08:00:00 +0100", "source": "Forerunner 165" }
+        ]
+      }
+    ]
+  }
+}
