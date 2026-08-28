@@ -111,11 +111,25 @@ def compute_daily_plan(
     version of "today's actual coaching decision" in this codebase, not a
     real one here and a simplified preview duplicated in `dashboard/`.
     `today` is an explicit ISO date (Europe/Madrid) rather than read from the
-    clock here, so this is testable without mocking `datetime.now()`.
+    clock here, so this is testable without mocking `datetime.now()` — and,
+    since `scripts/briefing.py --date <past date>` is an explicitly supported
+    backtest path, `today` can be any historical date, not just "now."
+    Every series fetched below is truncated to `<= today` right after
+    fetching, for exactly that reason: a real bug (found 2026-08-28) had
+    `daily_rows`/`daily_load_series`/`tsb_series` fetched unbounded, so
+    calling this with a past `today` while the DB already has LATER rows
+    (the normal state of affairs days after the fact) could leak future data
+    into the structural flags below (`hrv_sustained_low`,
+    `tsb_persistently_negative`, `monotony_strain`) and into
+    `_notable_trend_observation()`, even though the readiness SCORE itself
+    was already correctly bounded via `_readiness_result_as_of()`'s own
+    per-day truncation — an internally inconsistent result for one `as_of`
+    date. Truncating once here, immediately after each fetch, means every
+    downstream consumer in this function only ever sees data through `today`.
     """
-    daily_rows = _fetch_daily_metrics(conn)
+    daily_rows = [r for r in _fetch_daily_metrics(conn) if r["date"] <= today]
     bjj_cal = config["training_load"]["bjj_rpe_calibration_factor"]
-    daily_load_series = _fetch_load_series(conn, bjj_cal)
+    daily_load_series = [(d, load) for d, load in _fetch_load_series(conn, bjj_cal) if d <= today]
     tsb_series = [
         (d, tsb) for d, _ctl, _atl, tsb in load_metrics.compute_ctl_atl(daily_load_series)
     ]

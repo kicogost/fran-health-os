@@ -43,6 +43,104 @@ class TestMigrations:
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
 
+class TestMigrationAtomicity:
+    """Real bug found 2026-08-28, confirmed by direct reproduction:
+    `conn.executescript()` does NOT run a multi-statement migration file as
+    one rollback-able transaction on its own -- each DDL statement ran in
+    SQLite's own autocommit mode, so a failure partway through a script left
+    earlier statements permanently applied but never recorded in
+    `schema_migrations`, wedging every future `apply_migrations()` call
+    (it would retry the same broken script and fail again on the very first,
+    already-applied statement). Fixed by prepending a literal `BEGIN;` to the
+    script text and managing commit/rollback explicitly in Python.
+    """
+
+    def _write_migration(self, migrations_dir, name: str, sql: str) -> None:
+        (migrations_dir / name).write_text(sql)
+
+    def test_failing_multi_statement_migration_leaves_no_partial_state(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(db_module, "MIGRATIONS_DIR", tmp_path)
+        self._write_migration(
+            tmp_path,
+            "0001_broken.sql",
+            "CREATE TABLE t1 (id INTEGER);\n"
+            "CREATE TABLE t2 (id INTEGER);\n"
+            "CREATE TABLE t1 (id INTEGER);\n",  # duplicate -- fails
+        )
+        conn = db_module.connect(":memory:")
+        try:
+            with pytest.raises(sqlite3.OperationalError):
+                db_module.apply_migrations(conn)
+
+            # Neither t1 nor t2 should have survived the failed script.
+            tables = {
+                r["name"]
+                for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('t1', 't2')"
+                )
+            }
+            assert tables == set()
+            versions = [r["version"] for r in conn.execute("SELECT version FROM schema_migrations")]
+            assert versions == []
+        finally:
+            conn.close()
+
+    def test_retry_after_fixing_a_failed_migration_applies_cleanly(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(db_module, "MIGRATIONS_DIR", tmp_path)
+        self._write_migration(
+            tmp_path,
+            "0001_broken.sql",
+            "CREATE TABLE t3 (id INTEGER);\nCREATE TABLE t3 (id INTEGER);\n",
+        )
+        conn = db_module.connect(":memory:")
+        try:
+            with pytest.raises(sqlite3.OperationalError):
+                db_module.apply_migrations(conn)
+
+            # Fix the file (same version, corrected content) and retry --
+            # must succeed cleanly with no leftover corruption from the
+            # earlier failed attempt.
+            self._write_migration(tmp_path, "0001_broken.sql", "CREATE TABLE t3 (id INTEGER);\n")
+            applied = db_module.apply_migrations(conn)
+            assert applied == [1]
+            assert (
+                conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 't3'"
+                ).fetchone()
+                is not None
+            )
+            assert [
+                r["version"] for r in conn.execute("SELECT version FROM schema_migrations")
+            ] == [1]
+        finally:
+            conn.close()
+
+    def test_successful_migration_and_schema_migrations_row_commit_together(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(db_module, "MIGRATIONS_DIR", tmp_path)
+        self._write_migration(tmp_path, "0001_good.sql", "CREATE TABLE t4 (id INTEGER);\n")
+        conn = db_module.connect(":memory:")
+        try:
+            applied = db_module.apply_migrations(conn)
+            assert applied == [1]
+            assert (
+                conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 't4'"
+                ).fetchone()
+                is not None
+            )
+            assert [
+                r["version"] for r in conn.execute("SELECT version FROM schema_migrations")
+            ] == [1]
+        finally:
+            conn.close()
+
+
 class TestResolveDbPath:
     def test_explicit_arg_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("HEALTH_OS_DB_PATH", "env/path.db")
@@ -311,3 +409,10 @@ class TestIngestRuns:
         run_id = db_module.start_ingest_run(conn, "garmin")
         with pytest.raises(ValueError):
             db_module.finish_ingest_run(conn, run_id, status="done")
+
+    def test_rejects_unknown_run_id_instead_of_silent_no_op(self, conn: sqlite3.Connection) -> None:
+        # Real gap found 2026-08-28: an UPDATE ... WHERE id = ? that matches
+        # no row used to silently succeed, in a table whose whole purpose is
+        # being the audit trail for noticing a silently-broken pipeline.
+        with pytest.raises(ValueError, match="no ingest_runs row"):
+            db_module.finish_ingest_run(conn, 999999, status="success")

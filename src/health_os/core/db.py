@@ -92,18 +92,43 @@ def apply_migrations(conn: sqlite3.Connection) -> list[int]:
     """Apply any migrations not yet recorded in `schema_migrations`, in order.
 
     Each migration runs in its own transaction: either it and its
-    `schema_migrations` row both commit, or neither does. Returns the list of
-    newly-applied version numbers (empty if the schema was already current).
+    `schema_migrations` row both commit, or neither does — including a
+    migration file with MULTIPLE statements. This used to be false (a real
+    bug, found 2026-08-28, confirmed by direct reproduction): `conn.
+    executescript()` does not honor Python's own transaction machinery —
+    each DDL statement in the script ran in SQLite's own autocommit mode, so
+    a failure on, say, the 3rd of 5 statements left the first 2 permanently
+    applied but the migration never recorded in `schema_migrations`. Every
+    later call to `apply_migrations()` (i.e. every future `backfill.py`/
+    `sync.py`/test run) would then retry the same broken script and fail
+    again on the very first, already-applied statement — an unrecoverable
+    wedge without manual `DROP TABLE` surgery.
+
+    Fixed by prepending a literal `BEGIN;` to the script text (`executescript`
+    "disregards isolation_level; any transaction control must be added to
+    sql_script" per its own docs — SQLite's DDL genuinely IS transactional
+    when explicitly wrapped, unlike its default per-statement autocommit
+    mode) and managing the commit/rollback ourselves via `conn.commit()`/
+    `conn.rollback()` in Python, so the `schema_migrations` INSERT below
+    lands in the SAME transaction as the migration's own statements — proven
+    correct against a direct repro (a 3-statement script with the last
+    statement failing; verified zero tables persisted after rollback, and
+    that a corrected retry then applies cleanly with no leftover corruption)
+    before this was trusted, not merely reasoned about.
     """
     applied_versions: list[int] = []
     for version, path in _pending_migrations(conn):
         sql = path.read_text()
-        with conn:
-            conn.executescript(sql)
+        try:
+            conn.executescript("BEGIN;\n" + sql)
             conn.execute(
                 "INSERT INTO schema_migrations (version, filename) VALUES (?, ?)",
                 (version, path.name),
             )
+        except Exception:
+            conn.rollback()
+            raise
+        conn.commit()
         applied_versions.append(version)
     return applied_versions
 
@@ -230,11 +255,17 @@ def finish_ingest_run(
     rows_skipped: int | None = None,
     errors: list[str] | None = None,
 ) -> None:
-    """Record the outcome of an ingestion run started with `start_ingest_run()`."""
+    """Record the outcome of an ingestion run started with `start_ingest_run()`.
+
+    Raises `ValueError` if `run_id` doesn't match any row — a caller passing
+    the wrong id (or one from a different DB connection/path) used to fail
+    silently, in a table whose entire purpose is being the audit trail for
+    noticing a silently-broken pipeline (real gap, found 2026-08-28).
+    """
     if status not in ("success", "failed"):
         raise ValueError(f"status must be 'success' or 'failed', got {status!r}")
     with conn:
-        conn.execute(
+        cursor = conn.execute(
             """
             UPDATE ingest_runs
             SET finished_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
@@ -254,3 +285,5 @@ def finish_ingest_run(
                 "run_id": run_id,
             },
         )
+    if cursor.rowcount == 0:
+        raise ValueError(f"finish_ingest_run: no ingest_runs row with id={run_id}")
