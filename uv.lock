@@ -510,6 +510,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/41/bd/4a9ae7aa9fd5b8d49385ed3fa8e88c68b3e0a1d25b78c63b08be988829b8/garminconnect-0.3.11-py3-none-any.whl", hash = "sha256:58568f339b00cc47d01b2dee347a82c491a45996bb13757a050df03b7049f945", size = 93608, upload-time = "2026-08-19T07:33:59.097Z" },
 ]
 
+[package.optional-dependencies]
+typed = [
+    { name = "pydantic" },
+]
+
 [[package]]
 name = "garth"
 version = "0.8.0"
@@ -553,12 +558,13 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fitdecode" },
-    { name = "garminconnect" },
+    { name = "garminconnect", extra = ["typed"] },
     { name = "garth" },
     { name = "lxml" },
     { name = "numpy" },
     { name = "pandas" },
     { name = "plotly" },
+    { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "scipy" },
@@ -583,12 +589,13 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fitdecode", specifier = ">=0.10.0" },
-    { name = "garminconnect", specifier = ">=0.2.20" },
+    { name = "garminconnect", extras = ["typed"], specifier = ">=0.3.11" },
     { name = "garth", specifier = ">=0.4.44" },
     { name = "lxml", specifier = ">=5.2" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pandas", specifier = ">=2.2" },
     { name = "plotly", specifier = ">=5.22" },
+    { name = "pydantic", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.2" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
     { name = "python-dotenv", specifier = ">=1.0" },

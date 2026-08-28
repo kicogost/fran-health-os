@@ -352,6 +352,96 @@ pattern as `body_comp.py` — lands with the full Phase 4 metric suite). No CLI/
 dashboard surfaces these numbers yet; they're only reachable by calling the
 functions directly, as done above.
 
+## Garmin live sync built, Phase 6 (2026-08-28)
+
+`ingest/garmin.py` (new — distinct from `ingest/garmin_bulk.py`, the historical
+parser) and `scripts/sync.py` (new — the Phase 6 daily entrypoint the kickoff doc
+calls for). Full reasoning in
+[ADR 0004](docs/decisions/0004-garmin-live-sync-typed-responses.md); summary:
+
+- **Auth**: `garminconnect.Garmin(email, password, prompt_mfa=...)` +
+  `.login(tokenstore)`, reading `GARMIN_EMAIL`/`GARMIN_PASSWORD`/`GARTH_TOKEN_DIR`
+  from `.env`. Verified against the actually-installed library's `login()` source
+  (not assumed): first run against an MFA-enabled account blocks on an `input()`
+  prompt for the 6-digit code; tokens then persist to `GARTH_TOKEN_DIR` so every
+  later run is headless. Credentials are never pasted into chat — Francisco adds
+  them to his own local `.env` directly.
+- **Daily wellness** (`fetch_daily_metrics`) uses `client.typed.*` — the
+  `garminconnect[typed]` extra's Pydantic-validated response models, read directly
+  from the installed package source (`garminconnect/typed.py`) rather than guessed
+  from docs. Covers `resting_hr`, `steps`, `active_kcal`/`total_kcal`, `stress_avg`,
+  `body_battery_max`/`min` (`get_stats`); full sleep stage breakdown + score
+  (`get_sleep_data`); `hrv_overnight_ms`/`hrv_status` (`get_hrv_data` — `None` is a
+  documented valid "no data" response, handled explicitly, not an error);
+  `training_readiness` (`get_training_readiness`, preferring the
+  `AFTER_WAKEUP_RESET` snapshot then falling back to the most recent timestamp,
+  mirroring the library's own `get_morning_training_readiness` logic). **Fills a
+  real gap from the bulk export**: `training_readiness` was confirmed absent from
+  the historical GDPR dump — this is the first place it's ever populated.
+  A `GarminConnectResponseValidationError` on any one endpoint/date is caught,
+  recorded into `ingest_runs.errors`, and that endpoint's fields are simply
+  omitted for that date rather than crashing the sync.
+- **Activities** (`fetch_activities`) — a genuinely new signal:
+  `activity_training_load` is present on live activities (`typed.Activity`) even
+  though it's absent from the bulk export, so training load stops being
+  permanently NULL for Garmin-sourced rows going forward (still NULL for
+  historical rows). **Units are a documented, not-yet-verified assumption**:
+  `typed.Activity`'s `distance`/`duration`/`elevation_gain` carry no unit suffix
+  the way the wellness models do (contrast `total_distance_meters` on
+  `DailyStats`), so this assumes the standard Garmin Connect REST convention
+  (seconds, meters) — a *different* convention from the bulk export's
+  centimeters/milliseconds. `scripts/sync.py` prints each newly-synced activity's
+  converted numbers specifically so a wrong guess is visible on the first real
+  run, same spirit as the elevationGain cross-check that caught a real bug in
+  `garmin_bulk.py`. HR zones (`hrTimeInZone_0..6`) and `perceived_rpe`
+  (`workoutRpe`) — both present on the bulk export — stay NULL for live-synced
+  activities: `typed.Activity` doesn't model either, and there's no verified
+  evidence the live endpoint carries them the same way. Known gap, not silent.
+- **`scripts/sync.py`** fetches a trailing window (default 3 days, `--days` to
+  override) rather than "since last sync" — deliberately, since Garmin sometimes
+  revises a day's wellness numbers after the fact (delayed HRV computation,
+  firmware backfill), so re-upserting a short trailing window self-heals that for
+  free. Runs `dedupe_activities()` after, same as `backfill.py`. Live Strava sync
+  is **not built** — deliberate, not an oversight: Strava introduced a paid
+  ($11.99/mo) developer API tier in June 2026 (confirmed via WebSearch across
+  multiple sources), and Garmin already covers current activities, so paying for
+  Strava API access would buy nothing Strava's role here (historical depth,
+  already backfilled) actually needs.
+- **19 new tests** (`tests/ingest/test_garmin.py`) against fake `Garmin`/`typed`
+  client doubles — never the real API. Covers the merge logic, the `None`-HRV
+  case, the AFTER_WAKEUP_RESET/latest-timestamp readiness fallback, per-endpoint
+  validation-error isolation, malformed-activity skipping, and the naive-GMT-
+  timestamp parsing. 219 tests total in the suite now, all passing; `ruff
+  check`/`ruff format --check` clean.
+
+**Not yet done / next steps**: this has not been run against a real Garmin
+account yet — needs Francisco to add `GARMIN_EMAIL`/`GARMIN_PASSWORD` to his own
+local `.env` (never pasted into chat) and confirm whether the account has MFA
+enabled (determines whether the first run needs to sit at an interactive
+terminal for the code prompt). Once run for real, the live-activity unit
+assumption above should be spot-checked against `scripts/sync.py`'s printed
+output, and this section/ADR 0004 updated if it's wrong. `pyproject.toml`:
+`garminconnect>=0.2.20` → `garminconnect[typed]>=0.3.11`, `pydantic>=2.0` added
+as a direct dependency (was already an installed transitive one).
+
+**Apple Health "live" path — not yet built, no live API to wrap.** There is no
+real Apple Health cloud API to write an adapter against (unlike Garmin/Strava).
+The pragmatic path, already the direction pointed to earlier in this project's
+"Data sources" section, is: install **Health Auto Export** (iOS app) on
+Francisco's phone, configure it to export on a schedule to an iCloud Drive
+folder that syncs down to `APPLE_HEALTH_EXPORT_DIR` (`data/raw/apple_health` by
+default) on this machine, then just re-run
+`scripts/backfill.py --source apple_health` against that folder — no new code
+needed, `ingest/apple_health.py` already handles re-ingestion idempotently.
+**Not done yet because it needs Francisco to actually install and configure the
+iOS app first** (a phone-side action, not something buildable from here) — once
+a real export lands from it, its structure should be inspected the same
+"verify, don't assume" way every other parser's real export was, since Health
+Auto Export's own JSON/CSV shape has never been checked against this codebase's
+assumptions. Given Apple Health is already a lower-priority, mostly-duplicate
+source (see "Data sources" section), this is fine to defer — Garmin's live sync
+above covers the actually time-sensitive data (HRV/sleep/RHR/readiness).
+
 **Phase 1 summary** (2026-08-27): `core/migrations/0001_initial_schema.sql` is the
 source of truth for the schema (all 7 tables from the target schema below, applied via
 `core/db.py: apply_migrations()`, tracked in a `schema_migrations` table);
@@ -435,10 +525,14 @@ continuing; do not run ahead**:
 0. ✅ Repo scaffold, `pyproject.toml`, `.env.example`, `config/athlete.yaml`, this file, ADR 0001.
 1. ✅ Schema + DB layer (`core/db.py`, `core/schema.sql`, upsert helpers, `ingest_runs` audit table).
 2. ✅ Historical backfill — Strava, Apple Health, and Garmin all backfilled.
-3. ⬜ Deduplication and canonical merge across sources.
-4. ⬜ Derived metrics (section "Derived metrics" below), with unit tests.
+3. ✅ Deduplication and canonical merge across sources (`core/dedupe.py`, wired into
+   `scripts/backfill.py`; 5 real duplicate groups found and merged).
+4. 🟡 Derived metrics (section "Derived metrics" below) — load/baselines/readiness all
+   built and tested (see sections above), but none write to `derived_daily` yet.
 5. ⬜ Dashboard (Streamlit), read-only first, then logging forms.
-6. ⬜ Live incremental sync (Garmin unofficial client + Strava API) + `scripts/sync.py`.
+6. 🟡 Live sync — Garmin built (`ingest/garmin.py`, `scripts/sync.py`, ADR 0004), not yet
+   run against real credentials. Strava live sync skipped by decision (paid API tier as
+   of June 2026; Garmin already covers current data) — see current-status section below.
 7. ⬜ Coaching rules engine + briefing generator.
 8. ⬜ Scheduling (launchd/cron) + correlation analysis.
 
@@ -583,12 +677,12 @@ data/
   raw/                 immutable per-source downloads (gitignored)
   health.db             the one canonical store (gitignored)
 src/health_os/
-  ingest/               strava_bulk.py, apple_health.py, garmin_bulk.py, common.py (shared helpers) — bjj_manual.py not needed (log_bjj.py writes directly)
+  ingest/               strava_bulk.py, apple_health.py, garmin_bulk.py (historical), garmin.py (Phase 6 live sync, ADR 0004), common.py (shared helpers) — bjj_manual.py not needed (log_bjj.py writes directly)
   core/                 db.py, timezones.py, dedupe.py (activities cross-source dedup, live), schema.sql (snapshot, v2), migrations/000{1,2}_*.sql (source of truth), models.py
   metrics/              body_comp.py (weight trend + comp countdown), load.py (monotony/strain, CTL/ATL/TSB — no ACWR, ADR 0003), baselines.py (HRV/RHR baselines, sleep debt), readiness.py (0-100 composite) — none of these write to derived_daily yet
   coach/                rules.py, briefing.py, weekly_retro.py
   dashboard/             app.py (Streamlit)
-scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview) — sync.py not yet written
+scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview), sync.py (Phase 6 daily live-sync entrypoint — Garmin only, see below)
 tests/                  core/, ingest/, metrics/, scripts/, fixtures/ (synthetic — never real personal data, fixtures are committed to git)
 docs/decisions/          ADRs, one per non-obvious choice
 ```

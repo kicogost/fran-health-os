@@ -12,9 +12,15 @@ dependencies = [
     "python-dotenv>=1.0",
     # DB
     # sqlite3 is stdlib; no driver dependency needed.
-    # Garmin (unofficial client)
-    "garminconnect>=0.2.20",
+    # Garmin (unofficial client). >=0.3.11 for the `typed` extra: validated
+    # Pydantic response models for the live-sync endpoints (ingest/garmin.py) —
+    # see docs/decisions/0004-garmin-live-sync-typed-responses.md for why we
+    # lean on this over hand-parsing raw dicts. pydantic itself was already an
+    # installed transitive dep (via garth/stravalib); this just makes the
+    # dependency direct and explicit now that we import it ourselves.
+    "garminconnect[typed]>=0.3.11",
     "garth>=0.4.44",
+    "pydantic>=2.0",
     # FIT file parsing
     "fitdecode>=0.10.0",
     # Apple Health export parsing
