@@ -50,6 +50,13 @@ pattern):
   convention — guessing that over would repeat exactly the kind of
   unverified-unit mistake `garmin_bulk.py`'s elevationGain history warns
   against. Left as a follow-up once a real live response can be inspected.
+
+`fetch_activity_laps()` (added 2026-08-28) is a separate, opt-in capability —
+per-lap detail for Francisco's manually-lapped BJJ round tracking
+(`docs/bjj_recording_workflow.md`), not fetched for every activity by default.
+`scripts/sync.py` calls it only for activities with `sub_sport == "bjj"`, since
+most other sports either have no meaningful laps (a single-lap run) or don't
+need round-by-round detail — see that script for the exact scoping.
 """
 
 from __future__ import annotations
@@ -64,7 +71,7 @@ from garminconnect import Garmin
 from garminconnect.typed import Activity as TypedActivity
 from garminconnect.typed import GarminConnectResponseValidationError
 
-from health_os.core.models import Activity, DailyMetric
+from health_os.core.models import Activity, ActivityLap, DailyMetric
 from health_os.core.timezones import to_local_date, to_utc_iso
 from health_os.ingest.common import normalize_sport_name
 
@@ -314,3 +321,67 @@ def fetch_activities(
         activity = _activity_to_model(typed_activity)
         if activity is not None:
             yield activity
+
+
+def fetch_activity_laps(
+    client: Garmin, activity_id: str, *, errors: list[str] | None = None
+) -> Iterator[ActivityLap]:
+    """One `ActivityLap` per entry in `get_activity_splits(activity_id)['lapDTOs']`
+    — round-by-round detail for Francisco's manually-lapped BJJ sessions
+    (`docs/bjj_recording_workflow.md`).
+
+    `get_activity_splits()` returns raw (untyped) dicts, not a `client.typed.*`
+    model — confirmed by inspection against a real activity (2026-08-28), not
+    assumed: `lapDTOs[i]['startTimeGMT']` uses the SAME "no offset, semantically
+    UTC" convention as the whole-activity `startTimeGMT` field, just 'T'-
+    separated with fractional seconds ("2026-08-28T12:18:53.0") rather than
+    space-separated — `_parse_garmin_gmt_timestamp()` already handles both
+    shapes with zero changes needed, verified directly.
+
+    `activity_id` here is `activities.source_id` (the bare Garmin numeric id),
+    NOT `activities.activity_id` (the "garmin:<id>" synthesized key) — callers
+    pass the same id they'd pass to `get_activities_by_date`'s raw activityId.
+
+    Real caveat, worth remembering before reading `intensity_type` as meaning
+    anything: Garmin's `intensityType` is built for its own structured-interval
+    workout types (warmup/active/rest/cooldown), not freeform manually-pressed
+    laps — a real test recording showed `"ACTIVE"` for every lap regardless of
+    whether it was drilling or sparring. It is stored here verbatim anyway
+    (never discarded — design principle 6), but distinguishing sparring from
+    rest rounds for Francisco's own lapping style needs an HR-based heuristic
+    on top of this raw data (`metrics/bjj_laps.py`), not this field.
+    """
+    try:
+        raw = client.get_activity_splits(str(activity_id))
+    except Exception as exc:  # noqa: BLE001 - reported to caller, not swallowed
+        if errors is not None:
+            errors.append(f"get_activity_splits({activity_id}) failed: {exc}")
+        return
+
+    for lap in raw.get("lapDTOs", []) or []:
+        start_time_gmt = lap.get("startTimeGMT")
+        lap_index = lap.get("lapIndex")
+        if start_time_gmt is None or lap_index is None:
+            if errors is not None:
+                errors.append(f"activity {activity_id}: lap missing startTimeGMT/lapIndex, skipped")
+            continue
+        try:
+            start_utc = _parse_garmin_gmt_timestamp(start_time_gmt)
+        except ValueError as exc:
+            if errors is not None:
+                errors.append(f"activity {activity_id} lap {lap_index}: bad timestamp — {exc}")
+            continue
+
+        avg_hr = lap.get("averageHR")
+        max_hr = lap.get("maxHR")
+        yield ActivityLap(
+            activity_id=Activity.make_id("garmin", str(activity_id)),
+            lap_index=int(lap_index),
+            start_utc=start_utc,
+            duration_s=lap.get("duration"),
+            distance_m=lap.get("distance"),
+            avg_hr=round(avg_hr) if avg_hr is not None else None,
+            max_hr=round(max_hr) if max_hr is not None else None,
+            calories=lap.get("calories"),
+            intensity_type=lap.get("intensityType"),
+        )

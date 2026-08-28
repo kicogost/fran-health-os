@@ -7,9 +7,10 @@
 -- without reading every migration in sequence. tests/core/test_schema_sync.py fails
 -- if this drifts from the migrations.
 --
--- Current version: 3 (core/migrations/0001_initial_schema.sql,
+-- Current version: 4 (core/migrations/0001_initial_schema.sql,
 -- core/migrations/0002_bjj_wellness_and_load.sql,
--- core/migrations/0003_calisthenics_sessions.sql)
+-- core/migrations/0003_calisthenics_sessions.sql,
+-- core/migrations/0004_activity_laps.sql)
 --
 -- Note: this snapshot is semantically compared against the migrated schema
 -- (column name/type/notnull/pk/default per table), not byte-for-byte SQL text —
@@ -89,6 +90,30 @@ CREATE TABLE IF NOT EXISTS activities (
 );
 
 CREATE INDEX IF NOT EXISTS idx_activities_local_date ON activities (local_date);
+
+-- Per-lap detail for an activity — added migration 0004 for Francisco's
+-- manually-lapped BJJ round tracking (lap 1 = drilling, then one lap per
+-- sparring round or full rest round, docs/bjj_recording_workflow.md). Raw
+-- Garmin `get_activity_splits()` fields only — `intensity_type` is stored
+-- verbatim (Garmin's own field, built for structured-interval workouts, NOT a
+-- sparring/rest classification for freeform laps); the HR-based heuristic that
+-- actually distinguishes sparring from rest lives in metrics/bjj_laps.py, kept
+-- out of this raw table (raw vs. derived stays separate, design principle 6).
+CREATE TABLE IF NOT EXISTS activity_laps (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    activity_id    TEXT NOT NULL REFERENCES activities (activity_id),
+    lap_index      INTEGER NOT NULL,
+    start_utc      TEXT NOT NULL,
+    duration_s     REAL,
+    distance_m     REAL,
+    avg_hr         INTEGER,
+    max_hr         INTEGER,
+    calories       REAL,
+    intensity_type TEXT,             -- raw Garmin value, e.g. "ACTIVE" -- not a classification
+    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE (activity_id, lap_index)
+);
 
 -- Manual BJJ log — first-class ingestion path (kickoff doc section 2.4), not an
 -- afterthought. `linked_activity_id` points at the chest-strap-recorded Garmin

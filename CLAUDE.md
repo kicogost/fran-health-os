@@ -835,12 +835,12 @@ data/
   health.db             the one canonical store (gitignored)
 src/health_os/
   ingest/               strava_bulk.py, apple_health.py (historical XML), garmin_bulk.py (historical), garmin.py (Phase 6 live sync, ADR 0004), health_auto_export.py (Phase 6 live weight sync — different JSON format from apple_health.py, not the same pipeline), common.py (shared helpers) — bjj_manual.py not needed (log_bjj.py writes directly)
-  core/                 db.py, timezones.py, dedupe.py (activities cross-source dedup, live), schema.sql (snapshot, v2), migrations/000{1,2}_*.sql (source of truth), models.py
-  metrics/              body_comp.py (weight trend + comp countdown), load.py (monotony/strain, CTL/ATL/TSB — no ACWR, ADR 0003), baselines.py (HRV/RHR baselines, sleep debt), readiness.py (0-100 composite) — none of these write to derived_daily yet
+  core/                 db.py, timezones.py, dedupe.py (activities cross-source dedup, live), schema.sql (snapshot, v4), migrations/000{1,2,3,4}_*.sql (source of truth), models.py
+  metrics/              body_comp.py (weight trend + comp countdown), load.py (monotony/strain, CTL/ATL/TSB — no ACWR, ADR 0003), baselines.py (HRV/RHR baselines, sleep debt), readiness.py (0-100 composite), bjj_laps.py (HR-based sparring/rest lap classification) — none of these write to derived_daily yet
   coach/                rules.py, briefing.py, weekly_retro.py
   dashboard/             app.py (Streamlit entrypoint, st.navigation), theme.py (dark theme + chart helpers), data.py (cached DB/config access), views/{today,trends,training,comp_prep,log,data_health}.py
-scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_calisthenics.py (manual calisthenics logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview), sync.py (Phase 6 daily live-sync entrypoint — Garmin + Health Auto Export), briefing.py (Phase 7 CLI), weekly_retro.py (Phase 7 CLI), morning_run.sh (Phase 8 — chains sync+briefing+retro, what launchd actually runs)
-launchd/                com.healthos.morning.plist (Phase 8 — installed as a real LaunchAgent, 07:00 Europe/Madrid daily)
+scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_calisthenics.py (manual calisthenics logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview), sync.py (Phase 6 daily live-sync entrypoint — Garmin + Health Auto Export, incl. per-lap detail for sub_sport=="bjj" activities), briefing.py (Phase 7 CLI), weekly_retro.py (Phase 7 CLI), morning_run.sh (Phase 8 — chains sync+briefing+retro, what launchd actually runs)
+launchd/                com.healthos.morning.plist (Phase 8 — installed as a real LaunchAgent, 10:00 Europe/Madrid daily, moved from an initial 07:00 default per Francisco's request)
 tests/                  core/, ingest/, metrics/, coach/, scripts/, fixtures/ (synthetic — never real personal data, fixtures are committed to git)
 docs/decisions/          ADRs, one per non-obvious choice
 ```
@@ -859,6 +859,14 @@ Minimum tables, full column lists in kickoff doc section 5:
   the chest strap (ADR 0002) is in use, also carries a `linked_activity_id` pointing at
   the matching Garmin-recorded activity for that session — linked, not deduplicated
   against it; see `docs/bjj_recording_workflow.md`.
+- **`activity_laps`** (migration 0004) — one row per `(activity_id, lap_index)`,
+  raw per-lap detail (`avg_hr`, `max_hr`, `duration_s`, Garmin's own
+  `intensity_type`) for Francisco's manually-lapped BJJ round tracking. The
+  sparring-vs-rest read is a derived heuristic (`metrics/bjj_laps.py`), not stored
+  here — see "Round-by-round BJJ lap ingestion" above.
+- **`calisthenics_sessions`** (migration 0003) — one row per `(date, session_type)`,
+  exercise-level detail (`exercises_json`: sets/reps/added weight per exercise)
+  Garmin's own "Strength Training" activity type can't capture.
 - **`subjective_log`** — one row/date: felt note, protein_hit, gassed, niggles, day_note,
   `social_meal` (correlated against weight trend — this is the known deficit disruptor),
   plus a Hooper-Mackinnon-inspired `sleep_quality`/`stress`/`fatigue`/`muscle_soreness`
@@ -1052,11 +1060,72 @@ function is for CamelCase API constants, not user-typed names) whenever
 a real, filterable signal. 2 new tests, 293 total passing.
 
 Francisco's lap-recording plan (lap per round, rest rounds lapped separately, HR
-level distinguishing sparring from rest after the fact) works today directly in
-Garmin Connect but **does not flow into Health OS yet** — `ingest/garmin.py` only
-pulls whole-activity summaries. `get_activity_splits()` exists on the installed
-client for this; not yet called anywhere. Real, scoped, flagged next step if wanted
-— not started.
+level distinguishing sparring from rest after the fact) — **built and verified
+end-to-end 2026-08-28, see "Round-by-round BJJ lap ingestion" below.**
+
+## Round-by-round BJJ lap ingestion (2026-08-28)
+
+Francisco's actual recording plan (lap 1 = drilling at the top of class, a new
+lap at the start of each sparring round, a full rest round lapped separately
+too, intending sparring-vs-rest to be readable from HR level after the fact) —
+built and verified end-to-end against his real test recording
+(`activityId 24147743826`, `sport=other, sub_sport=bjj`), not just against fakes.
+
+- **`core/migrations/0004_activity_laps.sql`** (schema version 3 → 4) — new
+  `activity_laps` table, grain `(activity_id, lap_index)`, FK to
+  `activities.activity_id`. `core/models.py: ActivityLap` holds only the raw
+  Garmin fields (`start_utc`, `duration_s`, `distance_m`, `avg_hr`, `max_hr`,
+  `calories`, `intensity_type`) — no classification baked in (raw vs. derived
+  stays separate, same split as `daily_metrics` vs `derived_daily`).
+- **`ingest/garmin.py: fetch_activity_laps()`** calls `get_activity_splits()` —
+  confirmed present on the installed client by direct inspection, real
+  response shape checked against Francisco's actual test activity first (not
+  assumed from docs). Reuses `_parse_garmin_gmt_timestamp()` completely
+  unchanged — it already handled this endpoint's 'T'-separated,
+  fractional-second timestamp shape (`"2026-08-28T12:18:53.0"`), a different
+  shape from the whole-activity endpoint's space-separated one, with zero code
+  changes needed, verified directly.
+- **`scripts/sync.py`** calls it **only for activities with `sub_sport ==
+  "bjj"`** — a deliberate scope decision, not fetched for every activity by
+  default, since most other sports have no meaningful laps (a single-lap run)
+  and there's no benefit to the extra API call per activity.
+- **Real, honest limitation, confirmed rather than assumed away**: Garmin's
+  `intensityType` came back `"ACTIVE"` for both real laps in the test
+  recording — it's built for Garmin's own structured-interval workout types,
+  not freeform manually-pressed laps, so it does **not** distinguish sparring
+  from rest for Francisco's recording style. That read has to come from our
+  own code.
+- **`metrics/bjj_laps.py: classify_bjj_laps()`** is that code — a pure,
+  self-relative heuristic (design principle 6: this is a derived opinion, not
+  a fact, and is kept out of the raw `activity_laps` table on purpose). Lap 1
+  is always `warmup_or_drilling` (Francisco's own stated workflow, a fixed
+  rule not a guess); every later lap is compared against the **median avg_hr
+  of the OTHER round laps in the same activity** — self-relative rather than a
+  fixed BPM cutoff, the same principle already used for the HRV/RHR baselines
+  and the TSB z-score (ADR 0003) elsewhere in this project, since an absolute
+  threshold would be wrong for a bad night and wrong again for a fitter
+  version of the same athlete later. Needs ≥2 round laps with real HR data to
+  attempt a split; returns `insufficient_data` per lap below that rather than
+  guessing — which is exactly what the real 2-lap test recording produced
+  (it was a connectivity test, not a real class, so there was only one round
+  lap to compare against nothing).
+- **Verified against the real account end-to-end**, not just unit tests: ran
+  `scripts/sync.py` for real — it correctly detected the one `sub_sport=="bjj"`
+  activity in the trailing window, fetched 2 real laps via
+  `get_activity_splits()`, and upserted them into the real `activity_laps`
+  table (`garmin:24147743826`, lap 1 avg_hr=65 → `warmup_or_drilling`, lap 2
+  avg_hr=73 → `insufficient_data`, correctly not over-claiming a sparring/rest
+  read from a single round lap).
+- 10 new tests (`tests/ingest/test_garmin.py::TestFetchActivityLaps`,
+  `tests/metrics/test_bjj_laps.py`, `tests/core/test_models.py::TestActivityLap`
+  including a real FK-violation check). 309 tests total, ruff clean.
+
+**Not yet done**: no dashboard surface for lap/classification data — only
+reachable by calling `classify_bjj_laps()` directly right now, same
+"computed but not displayed yet" state several Phase 4 metrics were in before
+the dashboard existed. Worth a Training-page addition once a real multi-round
+class gets recorded, since the 2-lap test above only checks the mechanism
+works, not what a real sparring session's round-by-round data looks like.
 
 ## Calisthenics tracking closed, a real gap (2026-08-28)
 

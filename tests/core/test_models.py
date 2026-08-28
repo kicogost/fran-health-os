@@ -7,6 +7,7 @@ import pytest
 from health_os.core import db as db_module
 from health_os.core.models import (
     Activity,
+    ActivityLap,
     BjjSession,
     BodyMeasurement,
     CalisthenicsSession,
@@ -177,6 +178,67 @@ class TestCalisthenicsSession:
         s = CalisthenicsSession(date="2026-08-24", session_type="strength_a")
         row = s.to_row()
         assert "exercises_json" not in row
+
+
+def _insert_parent_activity(conn: sqlite3.Connection, activity_id: str = "garmin:123") -> None:
+    _, source_id = activity_id.split(":", 1)
+    a = Activity(
+        activity_id=activity_id,
+        source="garmin",
+        source_id=source_id,
+        start_utc="2026-08-28T12:00:00Z",
+        local_date="2026-08-28",
+        sport="other",
+        sub_sport="bjj",
+    )
+    db_module.upsert(conn, "activities", a.to_row(), ["source", "source_id"])
+
+
+class TestActivityLap:
+    def test_round_trip(self, conn: sqlite3.Connection) -> None:
+        _insert_parent_activity(conn)
+        lap = ActivityLap(
+            activity_id="garmin:123",
+            lap_index=2,
+            start_utc="2026-08-28T12:19:20Z",
+            duration_s=15.731,
+            avg_hr=73,
+            max_hr=77,
+            intensity_type="ACTIVE",
+        )
+        db_module.upsert(conn, "activity_laps", lap.to_row(), ["activity_id", "lap_index"])
+        row = conn.execute(
+            "SELECT * FROM activity_laps WHERE activity_id = ? AND lap_index = ?",
+            ("garmin:123", 2),
+        ).fetchone()
+        reloaded = ActivityLap.from_row(row)
+        assert reloaded.avg_hr == 73
+        assert reloaded.max_hr == 77
+        assert reloaded.intensity_type == "ACTIVE"
+        assert reloaded.start_utc == "2026-08-28T12:19:20Z"
+
+    def test_unique_on_activity_and_lap_index_upserts_not_duplicates(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        _insert_parent_activity(conn)
+        lap = ActivityLap(activity_id="garmin:123", lap_index=1, start_utc="2026-08-28T12:00:00Z")
+        db_module.upsert(conn, "activity_laps", lap.to_row(), ["activity_id", "lap_index"])
+        updated = ActivityLap(
+            activity_id="garmin:123", lap_index=1, start_utc="2026-08-28T12:00:00Z", avg_hr=99
+        )
+        db_module.upsert(conn, "activity_laps", updated.to_row(), ["activity_id", "lap_index"])
+        rows = conn.execute(
+            "SELECT * FROM activity_laps WHERE activity_id = ?", ("garmin:123",)
+        ).fetchall()
+        assert len(rows) == 1
+        assert rows[0]["avg_hr"] == 99
+
+    def test_rejects_lap_referencing_unknown_activity(self, conn: sqlite3.Connection) -> None:
+        lap = ActivityLap(
+            activity_id="garmin:does-not-exist", lap_index=1, start_utc="2026-08-28T12:00:00Z"
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            db_module.upsert(conn, "activity_laps", lap.to_row(), ["activity_id", "lap_index"])
 
 
 class TestSubjectiveLogEntry:

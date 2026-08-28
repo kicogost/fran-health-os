@@ -73,6 +73,8 @@ class _FakeClient:
         self.typed = typed or _FakeTyped()
         self.activities: list[dict] = []
         self.raise_on_get_activities: Exception | None = None
+        self.splits: dict[str, dict] = {}
+        self.raise_on_get_activity_splits: Exception | None = None
 
     def get_activities_by_date(
         self, startdate: str, enddate: str | None = None, activitytype=None, sortorder=None
@@ -80,6 +82,11 @@ class _FakeClient:
         if self.raise_on_get_activities is not None:
             raise self.raise_on_get_activities
         return self.activities
+
+    def get_activity_splits(self, activity_id: str) -> dict:
+        if self.raise_on_get_activity_splits is not None:
+            raise self.raise_on_get_activity_splits
+        return self.splits.get(str(activity_id), {"activityId": activity_id, "lapDTOs": []})
 
 
 def _one_day() -> tuple[date, date]:
@@ -336,3 +343,76 @@ class TestFetchActivities:
         client.activities = [_raw_activity(startTimeGMT="2026-01-15 23:30:00")]
         activities = list(garmin.fetch_activities(client, *_one_day()))
         assert activities[0].start_utc == "2026-01-15T23:30:00Z"
+
+
+def _raw_lap(**overrides) -> dict:
+    base = {
+        "startTimeGMT": "2026-08-28T12:18:53.0",
+        "distance": 0.0,
+        "duration": 26.621,
+        "averageHR": 65.0,
+        "maxHR": 72.0,
+        "calories": 1.0,
+        "lapIndex": 1,
+        "intensityType": "ACTIVE",
+    }
+    base.update(overrides)
+    return base
+
+
+class TestFetchActivityLaps:
+    def test_maps_real_shaped_lap_response(self) -> None:
+        # Real response shape, verified 2026-08-28 against Francisco's actual
+        # test recording (activityId 24147743826) -- see CLAUDE.md.
+        client = _FakeClient()
+        client.splits["24147743826"] = {
+            "activityId": 24147743826,
+            "lapDTOs": [
+                _raw_lap(
+                    lapIndex=1, startTimeGMT="2026-08-28T12:18:53.0", averageHR=65.0, maxHR=72.0
+                ),
+                _raw_lap(
+                    lapIndex=2, startTimeGMT="2026-08-28T12:19:20.0", averageHR=73.0, maxHR=77.0
+                ),
+            ],
+        }
+        laps = list(garmin.fetch_activity_laps(client, "24147743826"))
+        assert len(laps) == 2
+        first = laps[0]
+        assert first.activity_id == "garmin:24147743826"
+        assert first.lap_index == 1
+        assert first.start_utc == "2026-08-28T12:18:53Z"
+        assert first.avg_hr == 65
+        assert first.max_hr == 72
+        assert first.intensity_type == "ACTIVE"
+        assert laps[1].lap_index == 2
+        assert laps[1].avg_hr == 73
+
+    def test_no_laps_yields_empty(self) -> None:
+        client = _FakeClient()
+        assert list(garmin.fetch_activity_laps(client, "999")) == []
+
+    def test_lap_missing_start_time_is_skipped_and_recorded(self) -> None:
+        client = _FakeClient()
+        client.splits["1"] = {"lapDTOs": [_raw_lap(startTimeGMT=None), _raw_lap(lapIndex=2)]}
+        errors: list[str] = []
+        laps = list(garmin.fetch_activity_laps(client, "1", errors=errors))
+        assert len(laps) == 1
+        assert laps[0].lap_index == 2
+        assert len(errors) == 1
+
+    def test_get_activity_splits_failure_is_recorded_not_raised(self) -> None:
+        client = _FakeClient()
+        client.raise_on_get_activity_splits = RuntimeError("network down")
+        errors: list[str] = []
+        laps = list(garmin.fetch_activity_laps(client, "1", errors=errors))
+        assert laps == []
+        assert len(errors) == 1
+        assert "network down" in errors[0]
+
+    def test_lap_avg_hr_missing_stays_none_not_invented(self) -> None:
+        client = _FakeClient()
+        client.splits["1"] = {"lapDTOs": [_raw_lap(averageHR=None, maxHR=None)]}
+        laps = list(garmin.fetch_activity_laps(client, "1"))
+        assert laps[0].avg_hr is None
+        assert laps[0].max_hr is None

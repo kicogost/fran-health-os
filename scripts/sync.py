@@ -4,8 +4,9 @@
     uv run python scripts/sync.py                 # trailing 3 days
     uv run python scripts/sync.py --days 7
 
-Covers Garmin (activities + daily wellness) and Health Auto Export (weight
-only). Live Strava sync is deliberately skipped: Strava introduced a paid
+Covers Garmin (activities + daily wellness + per-lap detail for BJJ
+activities) and Health Auto Export (weight only). Live Strava sync is
+deliberately skipped: Strava introduced a paid
 ($11.99/mo) developer API tier in June 2026, and Garmin already covers
 current activities — Strava's role in this project is purely historical
 backfill (already done, see `scripts/backfill.py`).
@@ -99,6 +100,19 @@ def sync_garmin(conn: sqlite3.Connection, start_date: date, end_date: date) -> b
                 f"{(activity.duration_s or 0) / 60:.0f}min "
                 f"{(activity.distance_m or 0) / 1000:.2f}km"
             )
+
+            # Lap detail is only fetched for BJJ activities (sub_sport=="bjj",
+            # see docs/bjj_recording_workflow.md) -- most other sports either
+            # have no meaningful laps (a single-lap run) or don't need
+            # round-by-round detail, and fetching it for every activity would
+            # be one extra API call per activity for no benefit.
+            if activity.sub_sport == "bjj":
+                lap_count = 0
+                for lap in garmin.fetch_activity_laps(client, activity.source_id, errors=errors):
+                    db.upsert(conn, "activity_laps", lap.to_row(), ["activity_id", "lap_index"])
+                    lap_count += 1
+                if lap_count:
+                    print(f"    laps: {lap_count} lap(s) upserted")
     except Exception as exc:  # noqa: BLE001 - reported to ingest_runs, not swallowed
         errors.append(str(exc))
         db.finish_ingest_run(

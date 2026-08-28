@@ -94,7 +94,7 @@ assumed):
   built-in "HR Zone Gauge" screen, turn off GPS/satellite search (pointless indoors,
   pure battery drain trying to acquire a lock it'll never get).
 
-### Francisco's lap-recording plan — real, thoughtful, not yet ingested
+### Francisco's lap-recording plan — built (2026-08-28)
 
 Francisco's actual workflow: start the watch at the beginning of class (lap 1 =
 drilling), then a new lap at the start of each sparring round (5 min work + 1 min
@@ -102,20 +102,43 @@ rest as one lap), and a new lap for a full rest round too (6 min) — the intent
 that HR level during a lap should make sparring-vs-rest laps distinguishable after
 the fact, and round-by-round HR visible directly.
 
-**This works today in the Garmin Connect app itself** (Garmin always shows lap
-splits for a lapped activity, zero new code needed for Francisco to see it there).
-**It does NOT flow into Health OS yet** — `ingest/garmin.py` only pulls whole-activity
-summaries (`get_activities_by_date`), never per-lap detail. The library exposes
-`get_activity_splits()` for this (confirmed present on the installed `garminconnect`
-client, not yet called anywhere in this codebase) — real, scoped, buildable next step
-if Francisco wants lap-level data (round HR, rest-round HR) inside Health OS itself
-rather than only visible in Garmin Connect. Would need: a new table (one row per
-lap — activity_id, lap_index, start_utc, duration_s, avg_hr, max_hr), new ingestion
-code calling `get_activity_splits()`, and some HR-threshold-based classification to
-label a lap as "sparring" vs "rest" (Garmin doesn't know this itself — Francisco's own
-plan is to infer it from HR level, which means our code would have to do that
-inference, not just store raw laps). Not started — flagged here so it isn't lost,
-same as every other "known next step, not yet built" note in this project.
+**Now flows into Health OS end to end**, verified against Francisco's real test
+recording (`activityId 24147743826`, `sport=other, sub_sport=bjj`), not just against
+fakes:
+- `core/migrations/0004_activity_laps.sql` — new `activity_laps` table, grain
+  `(activity_id, lap_index)`, FK to `activities.activity_id`.
+- `core/models.py: ActivityLap` — raw fields only (`start_utc`, `duration_s`,
+  `distance_m`, `avg_hr`, `max_hr`, `calories`, `intensity_type`).
+- `ingest/garmin.py: fetch_activity_laps()` — calls `get_activity_splits()`
+  (confirmed present on the installed client), reuses
+  `_parse_garmin_gmt_timestamp()` as-is (it already handled this endpoint's
+  'T'-separated fractional-second timestamp shape with zero changes needed).
+- `scripts/sync.py` calls it **only for activities with `sub_sport == "bjj"`** —
+  deliberately scoped, not fetched for every activity, since most other sports
+  have no meaningful laps and there's no benefit to the extra API call.
+- **Real, honest limitation, confirmed against the actual response, not assumed
+  away**: Garmin's `intensityType` came back `"ACTIVE"` for both real laps in the
+  test recording — it's built for Garmin's own structured-interval workout types,
+  not freeform manually-pressed laps, so it does **not** distinguish sparring from
+  rest for Francisco's recording style. The sparring-vs-rest read has to come from
+  our own code, not from Garmin's field.
+- `metrics/bjj_laps.py: classify_bjj_laps()` — the HR-based heuristic that
+  actually does this: lap 1 is always `warmup_or_drilling` (Francisco's own
+  stated workflow), every later lap is split against the **median HR of the other
+  round laps in the same activity** (self-relative, not a fixed BPM threshold —
+  same principle as the HRV/RHR baselines and TSB z-score elsewhere in this
+  project). Requires at least 2 round laps with real HR data to attempt a split;
+  returns `insufficient_data` rather than guessing below that (design principle
+  6) — which is exactly what the real test recording produced, since it was only
+  a 2-lap connectivity test, not a real class. This classification is a derived
+  heuristic, not stored fact — kept out of `activity_laps` on purpose, same
+  raw/derived split as `daily_metrics` vs `derived_daily`.
+
+**Not yet done**: no dashboard surface for lap data yet (only reachable by calling
+`classify_bjj_laps()` directly, same "computed but not yet displayed" state
+several Phase 4 metrics were in before the dashboard existed). Worth a
+Training-page addition once a real multi-round class gets recorded — the 2-lap
+test above is a mechanism check, not a first real classification.
 
 **Known accuracy caveat, unchanged from ADR 0002's original reasoning**: Francisco is
 recording with the watch's own optical wrist HR (chest strap not yet in regular BJJ

@@ -163,6 +163,49 @@ class Activity:
         )
 
 
+@dataclass(slots=True)
+class ActivityLap:
+    """One row of `activity_laps` (migration 0004) — grain: (activity_id,
+    lap_index). Raw per-lap detail from Garmin's `get_activity_splits()`, one
+    row per manually-pressed lap. Deliberately holds only what Garmin actually
+    reports (design principle 6) — `intensity_type` is stored verbatim as
+    Garmin's own field, NOT a sparring/rest classification; that's a heuristic
+    derived from `avg_hr` after the fact (see `metrics/bjj_laps.py`), kept out
+    of this raw table on purpose (raw vs. derived stays separate, same split
+    as `daily_metrics` vs. `derived_daily`).
+    """
+
+    activity_id: str
+    lap_index: int
+    start_utc: str
+    id: int | None = None
+    duration_s: float | None = None
+    distance_m: float | None = None
+    avg_hr: int | None = None
+    max_hr: int | None = None
+    calories: float | None = None
+    intensity_type: str | None = None
+
+    def to_row(self, *, include_none: bool = False) -> dict[str, Any]:
+        return _row_dict(self, include_none=include_none)
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> ActivityLap:
+        keys = row.keys()
+        return cls(
+            id=row["id"] if "id" in keys else None,
+            activity_id=row["activity_id"],
+            lap_index=row["lap_index"],
+            start_utc=row["start_utc"],
+            duration_s=row["duration_s"] if "duration_s" in keys else None,
+            distance_m=row["distance_m"] if "distance_m" in keys else None,
+            avg_hr=row["avg_hr"] if "avg_hr" in keys else None,
+            max_hr=row["max_hr"] if "max_hr" in keys else None,
+            calories=row["calories"] if "calories" in keys else None,
+            intensity_type=row["intensity_type"] if "intensity_type" in keys else None,
+        )
+
+
 SESSION_FEELINGS = ("dizzy", "gassed", "tired", "okay")  # worst to best
 
 
