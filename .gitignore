@@ -1,9 +1,13 @@
 # Secrets
 .env
 
-# Raw data (immutable, large, personal) and the canonical DB — never committed
+# Raw data (immutable, large, personal) and the canonical DB — never committed.
+# `data/health.db*` (not just the exact filename) so SQLite's WAL-mode sidecar
+# files (`-wal`, `-shm`, `-journal`) are covered too — a plain `data/health.db`
+# pattern missed these and one commit briefly included `data/health.db-wal`/
+# `-shm` before this was caught and fixed (2026-08-28).
 data/raw/
-data/health.db
+data/health.db*
 data/.garth_tokens/
 
 # Python

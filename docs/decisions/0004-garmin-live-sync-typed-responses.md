@@ -82,10 +82,25 @@ evidence the live endpoint carries them the same way.
   tests) exercises it against a fake `Garmin`/`typed` client — never the real API.
 - `hr_zone_*_s` and `perceived_rpe` are a known gap for live-synced activities until a
   real response can be inspected and the fields added properly (or confirmed absent).
-- The live-activity unit assumption (seconds/meters) should be spot-checked against
-  `scripts/sync.py`'s printed output on the first real run against Francisco's account,
-  and this ADR updated (or a follow-up ADR opened) if it turns out to be wrong — same
-  as `garmin_bulk.py`'s elevationGain correction.
+- **Live-activity unit assumption (seconds/meters) confirmed correct, 2026-08-28.**
+  The first sync window happened to catch zero activities (investigated and confirmed
+  as a real gap — Francisco's last Garmin activity was 4 days back, outside the
+  default 3-day window, not a bug — cross-checked via `get_last_activity()`). Running
+  a wider window pulled in 4 real activities with plausible numbers: a strength
+  session at 1902s (31.7 min), and three rides at 51.21km/50.16km/42.76km over
+  134-145 min (18.5-22.9 km/h). Elevation gain also checked out — 630m on one ride
+  matches the exact figure `garmin_bulk.py`'s elevationGain cross-check found for
+  what's very likely the same recurring route.
+- **New finding: `activity_training_load` is also permanently NULL, contradicting
+  this ADR's earlier expectation.** All 4 real activities above came back with
+  `training_load = NULL`, even though `aerobic_te`/`anaerobic_te` mapped correctly
+  from the same API object (ruling out a parsing bug). Almost certainly the same
+  Forerunner 165 device-tier gap as `training_readiness`, though not independently
+  re-verified against the raw API the same rigorous way — the pattern match
+  (Garmin gating composite/coaching metrics behind higher device tiers) is strong
+  enough to treat as the working explanation. `activities.training_load` will need
+  to come from BJJ's `computed_load` and Strava's sparse historical column, not
+  Garmin, on this hardware.
 - **`training_readiness` will stay permanently NULL for Francisco's account, confirmed
   2026-08-28.** First real run returned no snapshots for any date; investigated by
   calling the raw (untyped) `get_training_readiness` endpoint directly and

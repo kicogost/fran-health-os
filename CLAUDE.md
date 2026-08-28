@@ -458,11 +458,34 @@ kickoff doc's "computed alongside Garmin's Training Readiness so disagreement
 is visible" framing doesn't apply on this hardware; our own score is the only
 composite that will ever exist for Francisco unless the watch changes.
 
-The live-activity unit assumption (seconds/meters, `ingest/garmin.py`'s
-docstring) is **still unverified** — no activity was recorded in this first
-window, so there's nothing yet to spot-check the conversion against. Revisit
-once a live-synced activity actually appears in `scripts/sync.py`'s printed
-output.
+**Resolved, 2026-08-28**: the live-activity unit assumption (seconds/meters)
+is now confirmed correct against real data. The zero-activities result on the
+first sync turned out to be a real gap, not a bug — investigated directly
+(wide-range `get_activities_by_date` + `get_last_activity()` cross-check)
+rather than left as "probably fine": Francisco's last Garmin-recorded
+activity (a strength session, 2026-08-24) fell 4 days back, just outside
+`scripts/sync.py`'s default 3-day window. Running `--days 25` pulled in 4 real
+activities, all with plausible numbers: strength training 1902s (31.7 min,
+matches the printed "32min"), and three rides — 51.21km/134min, 50.16km/145min,
+42.76km/139min (18.5-22.9 km/h, consistent with the comp-prep plan's Saturday
+Z2 rides with his father). Elevation gain also checked out: 630m on the
+2026-08-22 ride matches the exact figure the bulk-export elevationGain
+cross-check found for what's very likely the same recurring route (see
+`garmin_bulk.py`'s docstring). Seconds/meters confirmed, no correction needed.
+
+**New finding, correcting an earlier claim**: `training_load` (`activity_
+training_load` on `typed.Activity`) came back **NULL on all 4 of these live
+activities**, contradicting this section's earlier claim that live sync would
+populate it going forward. Since `aerobic_te`/`anaerobic_te` mapped correctly
+from the exact same API object for the same activities, this isn't a parsing
+bug on our side — almost certainly the same Forerunner 165 device-tier gap as
+Training Readiness (not independently re-verified against the raw API the way
+Training Readiness was, but the pattern match is strong: Garmin gates several
+of its own composite/coaching metrics behind higher device tiers). Training
+load stays NULL for Garmin-sourced activities regardless of era (historical or
+live) on this hardware — `activities.training_load` will likely need to come
+from BJJ's own `computed_load` and Strava's sparse historical column, not
+Garmin, for the foreseeable future on this account.
 
 `pyproject.toml`: `garminconnect>=0.2.20` → `garminconnect[typed]>=0.3.11`,
 `pydantic>=2.0` added as a direct dependency (was already an installed
@@ -637,17 +660,16 @@ continuing; do not run ahead**:
 4. 🟡 Derived metrics (section "Derived metrics" below) — load/baselines/readiness all
    built and tested (see sections above), but none write to `derived_daily` yet.
 5. ⬜ Dashboard (Streamlit), read-only first, then logging forms.
-6. 🟡 Live sync — Garmin built and confirmed working against Francisco's real account
-   (`ingest/garmin.py`, `scripts/sync.py`, ADR 0004; see current-status section below
-   for the real first-run result). Health Auto Export weight sync also built and
-   confirmed working (`ingest/health_auto_export.py`, wired into the same
-   `scripts/sync.py`) — genuinely a different JSON format from the native XML
-   export, corrected once inspected, see current-status section below. Strava live
-   sync skipped by decision (paid API tier as of June 2026; Garmin already covers
-   current data). Marked 🟡 not ✅: live-activity
-   units are still unverified (no activity synced yet). `training_readiness` coming
-   back empty is resolved, not a bug — Francisco's Forerunner 165 doesn't support the
-   feature at all (device-tier limitation, confirmed against Garmin's own docs/forum).
+6. ✅ Live sync — Garmin (activities + wellness) and Health Auto Export (weight)
+   both built and confirmed working against Francisco's real account
+   (`ingest/garmin.py`, `ingest/health_auto_export.py`, `scripts/sync.py`, ADR 0004;
+   see current-status section below for real run results). Strava live sync skipped
+   by decision (paid API tier as of June 2026; Garmin already covers current data).
+   Two device-tier gaps, both confirmed real not bugs: `training_readiness` and
+   `training_load` come back permanently NULL on Francisco's Forerunner 165 (doesn't
+   support either feature) — see current-status section for the full investigation.
+   Live-activity units (seconds/meters) confirmed correct against real ride/strength
+   data, no longer an open question.
 7. ⬜ Coaching rules engine + briefing generator.
 8. ⬜ Scheduling (launchd/cron) + correlation analysis.
 
