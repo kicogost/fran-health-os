@@ -9,6 +9,7 @@ from health_os.core.models import (
     Activity,
     BjjSession,
     BodyMeasurement,
+    CalisthenicsSession,
     DailyMetric,
     DerivedMetric,
     IngestRun,
@@ -134,6 +135,48 @@ class TestBjjSession:
                 rounds_rolled=3,
                 rounds_gassed=5,
             )
+
+
+class TestCalisthenicsSession:
+    def test_rejects_invalid_session_type(self) -> None:
+        with pytest.raises(ValueError):
+            CalisthenicsSession(date="2026-08-24", session_type="strength_c")
+
+    def test_rejects_out_of_range_rpe(self) -> None:
+        with pytest.raises(ValueError):
+            CalisthenicsSession(date="2026-08-24", session_type="strength_a", session_rpe=11)
+
+    def test_session_rpe_and_exercises_are_optional(self) -> None:
+        s = CalisthenicsSession(date="2026-08-24", session_type="strength_a")
+        assert s.session_rpe is None
+        assert s.exercises is None
+
+    def test_round_trip_exercises_json(self, conn: sqlite3.Connection) -> None:
+        exercises = [
+            {"exercise": "pull-ups", "sets": 4, "reps": 5, "added_weight_kg": 5.0, "notes": None},
+            {"exercise": "push-ups", "sets": 3, "reps": 8, "added_weight_kg": None, "notes": None},
+        ]
+        s = CalisthenicsSession(
+            date="2026-08-24",
+            session_type="strength_a",
+            session_rpe=6,
+            exercises=exercises,
+            notes="felt strong",
+        )
+        db_module.upsert(conn, "calisthenics_sessions", s.to_row(), ["date", "session_type"])
+        row = conn.execute(
+            "SELECT * FROM calisthenics_sessions WHERE date = ? AND session_type = ?",
+            ("2026-08-24", "strength_a"),
+        ).fetchone()
+        reloaded = CalisthenicsSession.from_row(row)
+        assert reloaded.exercises == exercises
+        assert reloaded.session_rpe == 6
+        assert reloaded.notes == "felt strong"
+
+    def test_to_row_omits_none_exercises_by_default(self) -> None:
+        s = CalisthenicsSession(date="2026-08-24", session_type="strength_a")
+        row = s.to_row()
+        assert "exercises_json" not in row
 
 
 class TestSubjectiveLogEntry:

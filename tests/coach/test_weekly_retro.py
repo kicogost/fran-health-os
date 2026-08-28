@@ -11,6 +11,7 @@ from health_os.core.models import (
     Activity,
     BjjSession,
     BodyMeasurement,
+    CalisthenicsSession,
     DailyMetric,
     SubjectiveLogEntry,
 )
@@ -61,10 +62,21 @@ class TestSessionCompletion:
         assert by_date[("2026-08-24", "bjj")] == "completed"
         assert by_date[("2026-08-26", "bjj")] == "missed"
 
-    def test_calisthenics_is_not_trackable_not_missed(self, conn: sqlite3.Connection) -> None:
+    def test_calisthenics_missed_when_not_logged(self, conn: sqlite3.Connection) -> None:
         plan = compute_weekly_retro(conn, _CONFIG, WEEK_ENDING)
         by_date = {(s["date"], s["type"]): s["status"] for s in plan["sessions"]}
-        assert by_date[("2026-08-24", "calisthenics")] == "not_trackable"
+        assert by_date[("2026-08-24", "calisthenics")] == "missed"
+
+    def test_calisthenics_completed_when_logged(self, conn: sqlite3.Connection) -> None:
+        db.upsert(
+            conn,
+            "calisthenics_sessions",
+            CalisthenicsSession(date="2026-08-24", session_type="strength_a").to_row(),
+            ["date", "session_type"],
+        )
+        plan = compute_weekly_retro(conn, _CONFIG, WEEK_ENDING)
+        by_date = {(s["date"], s["type"]): s["status"] for s in plan["sessions"]}
+        assert by_date[("2026-08-24", "calisthenics")] == "completed"
 
     def test_bike_from_activities_table(self, conn: sqlite3.Connection) -> None:
         db.upsert(
@@ -186,5 +198,22 @@ class TestFormatWeeklyRetro:
         plan = compute_weekly_retro(conn, _CONFIG, WEEK_ENDING)
         text = format_weekly_retro(plan)
         assert "Weekly retro" in text
-        assert "Calisthenics progression: not trackable" in text
+        assert "Calisthenics:" in text
+        assert "Nothing logged this week." in text
         assert "Sessions:" in text
+
+    def test_shows_logged_exercise_detail(self, conn: sqlite3.Connection) -> None:
+        db.upsert(
+            conn,
+            "calisthenics_sessions",
+            CalisthenicsSession(
+                date="2026-08-24",
+                session_type="strength_a",
+                session_rpe=6,
+                exercises=[{"exercise": "pull-ups", "sets": 4, "reps": 5, "added_weight_kg": 5.0}],
+            ).to_row(),
+            ["date", "session_type"],
+        )
+        plan = compute_weekly_retro(conn, _CONFIG, WEEK_ENDING)
+        text = format_weekly_retro(plan)
+        assert "pull-ups: 4x5 @ +5.0kg" in text

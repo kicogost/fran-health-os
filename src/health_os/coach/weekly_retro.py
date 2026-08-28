@@ -5,13 +5,13 @@ calisthenics progression.
 
 Same "assemble real data, never invent" discipline as `coach/briefing.py`:
 every number here either comes from a real logged value or is explicitly
-marked as not trackable/insufficient data — never filled in with a guess.
-Two sections are honest gaps rather than computed values, and say so
-directly rather than silently omitting or faking something: calisthenics has
-no logging mechanism anywhere in this codebase (same gap
-`dashboard/views/training.py` already flags), so "sessions completed vs
-planned" can't verify calisthenics attendance, and "proposed calisthenics
-progression" has no data to base a proposal on.
+marked as insufficient data — never filled in with a guess.
+
+Calisthenics session completion and progression are checked against
+`calisthenics_sessions` (migration 0003, 2026-08-28) — this used to be an
+honest, explicitly-flagged gap ("no logging mechanism exists"), closed once
+Francisco asked directly how to track it. `dashboard/views/training.py`'s
+older gap note is now stale for the same reason.
 
 "Social-meal count vs. weight trend" is reported as two side-by-side facts,
 not a computed correlation — the kickoff doc's own Correlation engine (
@@ -23,6 +23,7 @@ statistical correlation, and this module doesn't pretend otherwise.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import date, timedelta
 from typing import Any
@@ -43,10 +44,9 @@ def _session_completion(
     conn: sqlite3.Connection, config: dict[str, Any], week_start: date, week_end: date
 ) -> list[dict[str, Any]]:
     """Scheduled vs. actually-logged, one entry per scheduled session in the
-    trailing week. Calisthenics is marked "not trackable" rather than
-    "missed" — there is no logging mechanism for it at all (a real,
-    documented gap), and claiming "missed" would be inventing a fact this
-    system has no way to know.
+    trailing week. Calisthenics is checked against `calisthenics_sessions`
+    (migration 0003) — this used to be marked "not trackable" (no logging
+    mechanism existed at all), a real, documented gap closed 2026-08-28.
     """
     bjj_dates = {r["date"] for r in conn.execute("SELECT date FROM bjj_sessions").fetchall()}
     bike_dates = {
@@ -54,6 +54,9 @@ def _session_completion(
         for r in conn.execute(
             "SELECT local_date FROM activities WHERE sport = 'cycling'"
         ).fetchall()
+    }
+    calisthenics_dates = {
+        r["date"] for r in conn.execute("SELECT date FROM calisthenics_sessions").fetchall()
     }
 
     entries = []
@@ -67,7 +70,7 @@ def _session_completion(
             elif session["type"] == "bike":
                 status = "completed" if iso in bike_dates else "missed"
             elif session["type"] == "calisthenics":
-                status = "not_trackable"
+                status = "completed" if iso in calisthenics_dates else "missed"
             else:  # rest
                 status = "n/a"
             entries.append(
@@ -160,6 +163,21 @@ def compute_weekly_retro(
     if len(waist_rows) >= 2:
         waist_delta = waist_rows[-1]["value_cm"] - waist_rows[-2]["value_cm"]
 
+    calisthenics_rows = conn.execute(
+        "SELECT date, session_type, session_rpe, exercises_json FROM calisthenics_sessions "
+        "WHERE date >= ? AND date <= ? ORDER BY date",
+        (week_start_iso, week_end_iso),
+    ).fetchall()
+    calisthenics_logs = [
+        {
+            "date": r["date"],
+            "session_type": r["session_type"],
+            "session_rpe": r["session_rpe"],
+            "exercises": json.loads(r["exercises_json"]) if r["exercises_json"] else None,
+        }
+        for r in calisthenics_rows
+    ]
+
     return {
         "week_start": week_start_iso,
         "week_end": week_end_iso,
@@ -173,6 +191,7 @@ def compute_weekly_retro(
         "protein_adherence_rate": protein_adherence,
         "protein_days_logged": len(protein_rows),
         "social_meal_count": social_meal_count,
+        "calisthenics_logs": calisthenics_logs,
         "waist_delta_cm": waist_delta,
         "waist_measurements_in_window": len(waist_rows),
     }
@@ -200,9 +219,8 @@ def format_weekly_retro(plan: dict[str, Any]) -> str:
         status_text = {
             "completed": "✓ completed",
             "missed": "✗ missed",
-            "not_trackable": "— not tracked (no calisthenics logging exists yet)",
             "n/a": "rest",
-        }[s["status"]]
+        }.get(s["status"], s["status"])
         lines.append(f"  {s['date']} {label}: {status_text}")
 
     lines.append("")
@@ -241,10 +259,27 @@ def format_weekly_retro(plan: dict[str, Any]) -> str:
         lines.append("Waist delta: insufficient data (needs 2+ measurements).")
 
     lines.append("")
-    lines.append(
-        "Calisthenics progression: not trackable — no logging mechanism exists for "
-        "calisthenics sets/reps/load anywhere in this system yet (a real gap, not "
-        "computed from nothing)."
-    )
+    lines.append("Calisthenics:")
+    if not plan["calisthenics_logs"]:
+        lines.append("  Nothing logged this week.")
+    else:
+        for log in plan["calisthenics_logs"]:
+            header = f"  {log['date']} {log['session_type']}"
+            if log["session_rpe"] is not None:
+                header += f" (RPE {log['session_rpe']})"
+            lines.append(header)
+            if not log["exercises"]:
+                lines.append("    (no per-exercise detail logged)")
+            else:
+                for ex in log["exercises"]:
+                    detail = f"    {ex['exercise']}: {ex['sets']}x{ex['reps']}"
+                    if ex.get("added_weight_kg"):
+                        detail += f" @ +{ex['added_weight_kg']}kg"
+                    lines.append(detail)
+        lines.append(
+            "  (proposing a progression — e.g. add a rep or a kg next time — needs "
+            "comparing against a prior week's log for the same exercise; not computed "
+            "yet, this just shows what was actually logged)"
+        )
 
     return "\n".join(lines)

@@ -83,6 +83,15 @@ def bjj_sessions_df() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=CACHE_TTL_S)
+def calisthenics_sessions_df() -> pd.DataFrame:
+    conn = db.init_db()
+    try:
+        return pd.read_sql_query("SELECT * FROM calisthenics_sessions ORDER BY date", conn)
+    finally:
+        conn.close()
+
+
+@st.cache_data(ttl=CACHE_TTL_S)
 def subjective_log_df() -> pd.DataFrame:
     conn = db.init_db()
     try:

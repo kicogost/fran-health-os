@@ -230,6 +230,51 @@ class BjjSession:
         )
 
 
+@dataclass(slots=True)
+class CalisthenicsSession:
+    """One row of `calisthenics_sessions` (migration 0003) — grain:
+    (date, session_type). Closes a real gap: recording calisthenics as a
+    Garmin "Strength Training" activity gives duration/HR/calories for free
+    (existing activities pipeline, no new code), but never exercise-level
+    detail — `exercises` is that missing piece: a list of
+    `{"exercise": ..., "sets": ..., "reps": ..., "added_weight_kg": ...,
+    "notes": ...}` dicts, one per exercise actually done, checked against
+    (but not required to exactly match) config/athlete.yaml:
+    comp_prep.strength_sessions's prescribed list.
+    """
+
+    date: str
+    session_type: str  # "strength_a" | "strength_b"
+    id: int | None = None
+    session_rpe: int | None = None
+    exercises: list[dict[str, Any]] | None = None
+    notes: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.session_type not in ("strength_a", "strength_b"):
+            raise ValueError(f"invalid session_type: {self.session_type!r}")
+        if self.session_rpe is not None and not 1 <= self.session_rpe <= 10:
+            raise ValueError(f"session_rpe must be 1-10, got {self.session_rpe!r}")
+
+    def to_row(self, *, include_none: bool = False) -> dict[str, Any]:
+        row = _row_dict(self, include_none=include_none)
+        if "exercises" in row:
+            row["exercises_json"] = row.pop("exercises")
+        return row
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> CalisthenicsSession:
+        keys = row.keys()
+        return cls(
+            id=row["id"] if "id" in keys else None,
+            date=row["date"],
+            session_type=row["session_type"],
+            session_rpe=row["session_rpe"] if "session_rpe" in keys else None,
+            exercises=_load_json(row["exercises_json"]) if "exercises_json" in keys else None,
+            notes=row["notes"] if "notes" in keys else None,
+        )
+
+
 _HOOPER_FIELDS = ("sleep_quality", "stress", "fatigue", "muscle_soreness")
 
 

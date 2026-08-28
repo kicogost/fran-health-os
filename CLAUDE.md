@@ -839,7 +839,7 @@ src/health_os/
   metrics/              body_comp.py (weight trend + comp countdown), load.py (monotony/strain, CTL/ATL/TSB — no ACWR, ADR 0003), baselines.py (HRV/RHR baselines, sleep debt), readiness.py (0-100 composite) — none of these write to derived_daily yet
   coach/                rules.py, briefing.py, weekly_retro.py
   dashboard/             app.py (Streamlit entrypoint, st.navigation), theme.py (dark theme + chart helpers), data.py (cached DB/config access), views/{today,trends,training,comp_prep,log,data_health}.py
-scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview), sync.py (Phase 6 daily live-sync entrypoint — Garmin + Health Auto Export), briefing.py (Phase 7 CLI), weekly_retro.py (Phase 7 CLI), morning_run.sh (Phase 8 — chains sync+briefing+retro, what launchd actually runs)
+scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_calisthenics.py (manual calisthenics logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview), sync.py (Phase 6 daily live-sync entrypoint — Garmin + Health Auto Export), briefing.py (Phase 7 CLI), weekly_retro.py (Phase 7 CLI), morning_run.sh (Phase 8 — chains sync+briefing+retro, what launchd actually runs)
 launchd/                com.healthos.morning.plist (Phase 8 — installed as a real LaunchAgent, 07:00 Europe/Madrid daily)
 tests/                  core/, ingest/, metrics/, coach/, scripts/, fixtures/ (synthetic — never real personal data, fixtures are committed to git)
 docs/decisions/          ADRs, one per non-obvious choice
@@ -1036,6 +1036,48 @@ visible again here.
 of data this account doesn't have yet; building it now would mean building against data
 too thin to trust, not a real capability yet). This is now the only unbuilt piece of
 Phase 7's original spec.
+
+## Calisthenics tracking closed, a real gap (2026-08-28)
+
+Francisco asked directly: should he track calisthenics, and how? This had been an
+honestly-flagged gap since the Training dashboard page and the weekly retro both said
+so explicitly rather than inventing data. Closed with a two-signal split — same pattern
+already established for BJJ (Garmin captures physiology, a manual log captures what
+Garmin can't see):
+
+- **Garmin side, zero new code**: recording calisthenics as a **"Strength Training"**
+  activity (a real, recognized Garmin type) already flows through the existing
+  `activities` ingestion pipeline automatically — duration, HR, calories, for free.
+  Recommended over a generic/"Other" type specifically because it's already a type
+  our `core/dedupe.py: _SPORT_FAMILIES` mapping and `ingest/common.py:
+  normalize_sport_name()` handle correctly.
+- **Manual log, new**: `calisthenics_sessions` (migration 0003) — `core/models.py:
+  CalisthenicsSession`, exercise-level detail (sets/reps/added weight) Garmin's
+  activity summary can't capture, checked against (not required to exactly match)
+  `config/athlete.yaml: comp_prep.strength_sessions`'s prescribed exercise list.
+  `exercises` is a JSON list of `{exercise, sets, reps, added_weight_kg, notes}` —
+  structured enough to chart per-exercise trends later, without a full normalized
+  child table for what's currently a short fixed list of ~5-6 exercises per type.
+- **`scripts/log_calisthenics.py`** — interactive mode walks every prescribed exercise
+  for the session type; flag mode covers just the session-level RPE/notes (no
+  per-exercise detail — interactive mode is where that lives). Upserts on
+  (date, session_type), warns before overwriting, same shape as every other logger.
+- **Dashboard**: new "Calisthenics" tab on the Log page (session type outside the
+  form so switching it reruns and shows the right exercise list, same pattern as the
+  BJJ tab's rolling-fields toggle). Training page's stale "not tracked" placeholder
+  replaced with the actual last 10 logged sessions.
+- **`coach/weekly_retro.py`** updated: calisthenics session completion now checked
+  against the real table instead of returning `"not_trackable"`; the "proposed
+  calisthenics progression" section shows what was actually logged that week.
+  Comparing against a *prior* week's log of the same exercise (a real progression
+  delta, e.g. "add a rep or a kg next time") is flagged as not computed yet — this
+  only shows what was logged, honestly, rather than inventing a trend from one data
+  point.
+
+17 new tests across `test_models.py`, `test_log_calisthenics.py`, and updated
+`test_weekly_retro.py` (the old "not trackable" assertions correctly now assert real
+completed/missed status). 291 tests total, ruff clean. `core/schema.sql` and the
+schema drift-guard test both updated for the new table (version 2 → 3).
 
 ## Scheduling built, Phase 8 (2026-08-28)
 

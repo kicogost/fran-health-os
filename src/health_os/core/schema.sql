@@ -7,8 +7,9 @@
 -- without reading every migration in sequence. tests/core/test_schema_sync.py fails
 -- if this drifts from the migrations.
 --
--- Current version: 2 (core/migrations/0001_initial_schema.sql,
--- core/migrations/0002_bjj_wellness_and_load.sql)
+-- Current version: 3 (core/migrations/0001_initial_schema.sql,
+-- core/migrations/0002_bjj_wellness_and_load.sql,
+-- core/migrations/0003_calisthenics_sessions.sql)
 --
 -- Note: this snapshot is semantically compared against the migrated schema
 -- (column name/type/notnull/pk/default per table), not byte-for-byte SQL text —
@@ -113,6 +114,24 @@ CREATE TABLE IF NOT EXISTS bjj_sessions (
     linked_activity_id TEXT REFERENCES activities (activity_id),
     created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE (date, session_type)
+);
+
+-- Manual calisthenics log — added migration 0003, closing a real gap: Garmin's
+-- "Strength Training" activity type (recording calisthenics that way needs no new
+-- ingestion code) gives duration/HR/calories, but never exercise-level detail.
+-- `exercises_json` is a JSON list of {exercise, sets, reps, added_weight_kg, notes},
+-- one entry per exercise actually done — checked against config/athlete.yaml:
+-- comp_prep.strength_sessions's prescribed list, but sessions may deviate from it.
+CREATE TABLE IF NOT EXISTS calisthenics_sessions (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    date           TEXT NOT NULL,
+    session_type   TEXT NOT NULL CHECK (session_type IN ('strength_a', 'strength_b')),
+    session_rpe    INTEGER CHECK (session_rpe BETWEEN 1 AND 10),
+    exercises_json TEXT,
+    notes          TEXT,
+    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     UNIQUE (date, session_type)
 );
 

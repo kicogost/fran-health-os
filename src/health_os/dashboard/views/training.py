@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -117,10 +120,30 @@ else:
                 st.write("No activities have a `training_load` value yet to break down by sport.")
 
 with st.container(border=True):
-    ui.eyebrow("Calisthenics progression")
-    st.info(
-        "Not tracked yet — there's no logging mechanism for calisthenics sets/reps/load "
-        "progression in the schema (only BJJ sessions and Garmin/Strava activities are "
-        "logged). A real gap, not a bug: this page won't invent a chart with nothing "
-        "behind it."
-    )
+    ui.eyebrow("Calisthenics")
+    cal_df = data.calisthenics_sessions_df()
+    if cal_df.empty:
+        st.info(
+            "Nothing logged yet — use the Log page's Calisthenics tab after your next "
+            "Monday/Wednesday session."
+        )
+    else:
+        for _, row in cal_df.sort_values("date", ascending=False).head(10).iterrows():
+            label = f"**{row['date']} — {row['session_type']}**"
+            if pd.notna(row.get("session_rpe")):
+                label += f" (RPE {int(row['session_rpe'])})"
+            st.write(label)
+            has_exercises = pd.notna(row.get("exercises_json"))
+            exercises = json.loads(row["exercises_json"]) if has_exercises else []
+            if not exercises:
+                st.caption("no per-exercise detail logged")
+            else:
+                for ex in exercises:
+                    detail = f"{ex['exercise']}: {ex['sets']}x{ex['reps']}"
+                    if ex.get("added_weight_kg"):
+                        detail += f" @ +{ex['added_weight_kg']}kg"
+                    st.caption(detail)
+        st.caption(
+            "Comparing against a prior log of the same exercise (a real progression "
+            "delta) isn't computed yet — this just shows what was actually logged."
+        )

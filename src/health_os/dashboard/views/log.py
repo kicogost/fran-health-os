@@ -17,7 +17,13 @@ from zoneinfo import ZoneInfo
 import streamlit as st
 
 from health_os.core import db
-from health_os.core.models import SESSION_FEELINGS, BjjSession, BodyMeasurement, SubjectiveLogEntry
+from health_os.core.models import (
+    SESSION_FEELINGS,
+    BjjSession,
+    BodyMeasurement,
+    CalisthenicsSession,
+    SubjectiveLogEntry,
+)
 from health_os.dashboard import data
 
 st.title("Log")
@@ -32,7 +38,9 @@ def _tri_state(label: str, key: str) -> bool | None:
     return {"Skip": None, "Yes": True, "No": False}[choice]
 
 
-tab_bjj, tab_wellness, tab_waist = st.tabs(["BJJ session", "Daily wellness", "Waist"])
+tab_bjj, tab_calisthenics, tab_wellness, tab_waist = st.tabs(
+    ["BJJ session", "Calisthenics", "Daily wellness", "Waist"]
+)
 
 with tab_bjj:
     session_type = st.selectbox(
@@ -100,6 +108,88 @@ with tab_bjj:
             )
             if session.session_feeling == "dizzy":
                 st.warning("Logged 'dizzy' — that's more than normal hard-training fatigue.")
+
+with tab_calisthenics:
+    cal_session_type = st.selectbox("Session type", ["strength_a", "strength_b"], key="cal_type")
+
+    conn = db.init_db()
+    try:
+        existing = conn.execute(
+            "SELECT session_rpe FROM calisthenics_sessions WHERE date = ? AND session_type = ?",
+            (_today(), cal_session_type),
+        ).fetchone()
+    finally:
+        conn.close()
+    if existing is not None:
+        st.warning(
+            f"Already logged today ({cal_session_type}). Submitting again will overwrite it."
+        )
+
+    prescribed = (
+        data.load_athlete_config()["comp_prep"]["strength_sessions"]
+        .get(cal_session_type, {})
+        .get("exercises", [])
+    )
+
+    with st.container(border=True), st.form("calisthenics_form"):
+        cal_date = st.date_input(
+            "Date", value=datetime.fromisoformat(_today()), key="cal_date"
+        ).isoformat()
+        exercise_inputs = []
+        for raw in prescribed:
+            name = raw.split(":")[0].strip()
+            st.caption(raw)
+            c1, c2, c3 = st.columns(3)
+            sets = c1.number_input(
+                "Sets", min_value=0, max_value=20, value=0, key=f"cal_sets_{name}"
+            )
+            reps = c2.number_input(
+                "Reps", min_value=0, max_value=100, value=0, key=f"cal_reps_{name}"
+            )
+            added_weight = c3.number_input(
+                "Added kg",
+                min_value=0.0,
+                max_value=100.0,
+                value=0.0,
+                step=0.5,
+                key=f"cal_wt_{name}",
+            )
+            exercise_inputs.append((name, sets, reps, added_weight))
+        cal_rpe = st.slider("Session RPE", 1, 10, 6, key="cal_rpe")
+        cal_notes = st.text_input("Notes", key="cal_notes")
+        submitted = st.form_submit_button("Log session")
+
+    if submitted:
+        exercises = [
+            {
+                "exercise": name,
+                "sets": int(sets),
+                "reps": int(reps) if reps else None,
+                "added_weight_kg": added_weight or None,
+                "notes": None,
+            }
+            for name, sets, reps, added_weight in exercise_inputs
+            if sets > 0
+        ]
+        try:
+            session = CalisthenicsSession(
+                date=cal_date,
+                session_type=cal_session_type,
+                session_rpe=cal_rpe,
+                exercises=exercises or None,
+                notes=cal_notes or None,
+            )
+        except ValueError as exc:
+            st.error(str(exc))
+        else:
+            conn = db.init_db()
+            try:
+                db.upsert(conn, "calisthenics_sessions", session.to_row(), ["date", "session_type"])
+            finally:
+                conn.close()
+            data.clear_all_caches()
+            suffix = f" — {len(exercises)} exercises logged" if exercises else ""
+            st.success(f"Logged: {session.date} {session.session_type}{suffix}")
 
 with tab_wellness:
     conn = db.init_db()
