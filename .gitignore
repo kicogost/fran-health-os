@@ -9,6 +9,7 @@
 data/raw/
 data/health.db*
 data/.garth_tokens/
+data/logs/
 
 # Python
 __pycache__/

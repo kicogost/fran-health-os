@@ -684,7 +684,10 @@ continuing; do not run ahead**:
    dashboard-only preview logic), `coach/weekly_retro.py` + `scripts/weekly_retro.py`.
    Only unbuilt piece: correlation engine (needs 90 days of real data, don't have it
    yet). See current-status section below.
-8. ⬜ Scheduling (launchd/cron) + correlation analysis.
+8. 🟡 Scheduling — `scripts/morning_run.sh` (sync + briefing + Sunday weekly retro,
+   chained) running daily via a real installed launchd LaunchAgent
+   (`launchd/com.healthos.morning.plist`, 07:00 Europe/Madrid). See current-status
+   section below. Correlation analysis not built (still blocked on 90 days of data).
 
 ## Athlete profile
 
@@ -836,8 +839,9 @@ src/health_os/
   metrics/              body_comp.py (weight trend + comp countdown), load.py (monotony/strain, CTL/ATL/TSB — no ACWR, ADR 0003), baselines.py (HRV/RHR baselines, sleep debt), readiness.py (0-100 composite) — none of these write to derived_daily yet
   coach/                rules.py, briefing.py, weekly_retro.py
   dashboard/             app.py (Streamlit entrypoint, st.navigation), theme.py (dark theme + chart helpers), data.py (cached DB/config access), views/{today,trends,training,comp_prep,log,data_health}.py
-scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview), sync.py (Phase 6 daily live-sync entrypoint — Garmin only, see below)
-tests/                  core/, ingest/, metrics/, scripts/, fixtures/ (synthetic — never real personal data, fixtures are committed to git)
+scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview), sync.py (Phase 6 daily live-sync entrypoint — Garmin + Health Auto Export), briefing.py (Phase 7 CLI), weekly_retro.py (Phase 7 CLI), morning_run.sh (Phase 8 — chains sync+briefing+retro, what launchd actually runs)
+launchd/                com.healthos.morning.plist (Phase 8 — installed as a real LaunchAgent, 07:00 Europe/Madrid daily)
+tests/                  core/, ingest/, metrics/, coach/, scripts/, fixtures/ (synthetic — never real personal data, fixtures are committed to git)
 docs/decisions/          ADRs, one per non-obvious choice
 ```
 
@@ -1032,6 +1036,45 @@ visible again here.
 of data this account doesn't have yet; building it now would mean building against data
 too thin to trust, not a real capability yet). This is now the only unbuilt piece of
 Phase 7's original spec.
+
+## Scheduling built, Phase 8 (2026-08-28)
+
+Francisco asked directly: is data actually fresh automatically, or does someone have to
+trigger it? Honest answer at the time: no — `scripts/sync.py` had no scheduler behind
+it at all (confirmed by checking: no crontab, no launchd agent existed on this
+machine). Built and **installed for real**, not just written:
+
+- **`scripts/morning_run.sh`** — the kickoff doc's "one command each morning" flow,
+  finally actually one command: runs `sync.py`, then `briefing.py`, then
+  `weekly_retro.py` too if it's a Sunday. Appends everything to
+  `data/logs/morning_run.log` (gitignored — real personal health numbers in plain
+  text) and fires a native macOS notification (`osascript`, already on every Mac, no
+  new dependency) with the readiness line, or a "sync had errors, check the log"
+  message if sync failed that day. Deliberately does not treat a sync failure as fatal
+  — `sync_garmin()` already degrades gracefully and logs to `ingest_runs` itself; the
+  wrapper just makes sure a bad sync day doesn't also block the briefing from running
+  against whatever data already exists.
+- **`launchd/com.healthos.morning.plist`** — a per-user LaunchAgent (not a
+  LaunchDaemon: never needs root, only needs to run while Francisco's logged in — a
+  briefing firing while the machine sits alone isn't useful anyway), `StartCalendarInterval`
+  07:00 Europe/Madrid daily. Checked into the repo for the record; actually taking
+  effect requires copying it to `~/Library/LaunchAgents/` and `launchctl load`ing it
+  (both done on this machine already — see the plist's own header comment for the
+  exact commands, including how to check status or remove it).
+
+**Real bug caught by actually testing through launchd, not just running the script by
+hand**: the first version failed with `uv: command not found` the moment it ran as a
+real scheduled job (confirmed via `launchctl start` to trigger it immediately rather
+than waiting for 07:00) — launchd's environment doesn't include `/opt/homebrew/bin` in
+`PATH` the way an interactive shell does. An interactive-shell test of the same script
+had passed cleanly right before this, which is exactly why it was tested again through
+the real mechanism rather than trusted from that first pass. Fixed by hardcoding the
+absolute `uv` path in the script. Confirmed clean after the fix: real `launchctl start`
+run produced a correct log (sync + briefing succeeded) and an empty stderr log.
+
+**07:00 is a default, not a measured one** — adjust `Hour`/`Minute` in the plist to
+match Francisco's actual wake time once that's known, and reload
+(`launchctl unload` then `launchctl load` again).
 
 ## Dashboard — built, Phase 5 (2026-08-28)
 

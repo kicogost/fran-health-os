@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Phase 8 scheduling (kickoff doc): runs scripts/morning_run.sh (sync +
+  briefing + Sunday weekly retro) automatically every morning, so Francisco
+  never has to trigger it by hand.
+
+  Checked into the repo for the record, but launchd itself only reads from
+  ~/Library/LaunchAgents/ -- installing this means copying it there (see
+  "Setup" below), not just having it present in git. A per-user LaunchAgent,
+  not a LaunchDaemon: this only needs to run as Francisco's own user (his
+  .env, his data directory), never needs root, and only needs to run while
+  he's logged in (a fresh morning briefing while the machine is asleep with
+  nobody there to read it isn't useful anyway).
+
+  Fires at 07:00 Europe/Madrid daily -- adjust the Hour/Minute below to match
+  actual wake time; 07:00 is a reasonable default, not a measured one.
+  StartCalendarInterval (not StartInterval): a fixed wall-clock time each
+  day, not "every N seconds since the machine booted."
+
+  Setup:
+      cp launchd/com.healthos.morning.plist ~/Library/LaunchAgents/
+      launchctl load ~/Library/LaunchAgents/com.healthos.morning.plist
+
+  Verify it's loaded:
+      launchctl list | grep healthos
+
+  Run it immediately (without waiting for 07:00), to test:
+      launchctl start com.healthos.morning
+
+  Remove it:
+      launchctl unload ~/Library/LaunchAgents/com.healthos.morning.plist
+      rm ~/Library/LaunchAgents/com.healthos.morning.plist
+
+  Output: data/logs/morning_run.log (sync + briefing + retro text) and
+  data/logs/launchd_stderr.log (anything launchd itself couldn't route
+  through the script, e.g. if bash fails to even start).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.healthos.morning</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/franciscogostscagliarini/fitness man/scripts/morning_run.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/franciscogostscagliarini/fitness man</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>7</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/franciscogostscagliarini/fitness man/data/logs/launchd_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/franciscogostscagliarini/fitness man/data/logs/launchd_stderr.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
