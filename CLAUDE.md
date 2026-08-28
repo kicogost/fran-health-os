@@ -1978,6 +1978,40 @@ against what's actually built, not guessed:
   put what actually happened; it still never pretends the plan happened when it
   didn't.
 
+## Phone access considered, declined for now (2026-08-28)
+
+Francisco asked directly about getting this on his phone for daily viewing/logging.
+Explored cloud hosting as an alternative to design principle 1's "local-first, no
+cloud services" (Tailscale-to-Mac and a small always-on home box were both raised
+first as local-only options that don't require reversing the principle at all).
+Real current pricing/fit was checked, not assumed, for four candidates:
+
+- **Supabase** — genuinely free tier ($0, 500MB Postgres, unlimited API requests),
+  but the wrong shape regardless of price: it hosts a Postgres DB + auto-generated
+  API + Edge Functions, not an arbitrary Python process. This project's actual value
+  (`metrics/`, `coach/rules.py`, the Garmin sync job) is Python business logic that
+  needs to run somewhere — Supabase doesn't host that, so using it would mean either
+  paying for a separate app host anyway or rewriting the coaching engine into SQL/
+  TypeScript. Ruled out on fit, not cost.
+- **Fly.io** — free tier discontinued for new signups as of 2026; realistically
+  ~$7-10/mo with persistent storage for a small always-on service. No longer the
+  cheap option an earlier (uncorrected) estimate in this conversation assumed.
+- **Railway** — $5/mo flat (Hobby plan, $5 usage credit included), runs the existing
+  FastAPI + SQLite + React build close to as-is, git-connected auto-deploy. The best
+  fit of the paid options if this gets revisited.
+- **Plain VPS (Hetzner-style)** — cheapest predictable cost (~€4-5/mo), most manual
+  setup (Docker/HTTPS/reverse-proxy by hand).
+
+**Decision: stay local-only, no cloud, no PWA/mobile work built.** Francisco was
+explicit he doesn't care about the health data itself being publicly reachable (so no
+auth was going to be required either way), but weighed the actual setup effort against
+the payoff and chose to keep running this on his laptop as-is. Nothing about the
+architecture changed — this is a considered-and-declined path, not a reversal of
+design principle 1, so no ADR (nothing was decided differently from what already
+existed). Worth 5 minutes of re-reading this section before re-proposing cloud hosting
+from scratch in a future session; the Railway-vs-VPS-vs-Supabase-fit reasoning above
+should still hold even if exact prices have drifted again by then.
+
 ## Definition of done for v1
 
 One command each morning: syncs Garmin + Strava, recomputes everything, prints a
