@@ -659,7 +659,9 @@ continuing; do not run ahead**:
    `scripts/backfill.py`; 5 real duplicate groups found and merged).
 4. 🟡 Derived metrics (section "Derived metrics" below) — load/baselines/readiness all
    built and tested (see sections above), but none write to `derived_daily` yet.
-5. ⬜ Dashboard (Streamlit), read-only first, then logging forms.
+5. 🟡 Dashboard (Streamlit) — all 6 pages built and smoke-tested via `AppTest` against
+   real data (see current-status section above). Not yet: manual browser QA,
+   calisthenics progression (no logging mechanism exists for it at all, a real gap).
 6. ✅ Live sync — Garmin (activities + wellness) and Health Auto Export (weight)
    both built and confirmed working against Francisco's real account
    (`ingest/garmin.py`, `ingest/health_auto_export.py`, `scripts/sync.py`, ADR 0004;
@@ -822,7 +824,7 @@ src/health_os/
   core/                 db.py, timezones.py, dedupe.py (activities cross-source dedup, live), schema.sql (snapshot, v2), migrations/000{1,2}_*.sql (source of truth), models.py
   metrics/              body_comp.py (weight trend + comp countdown), load.py (monotony/strain, CTL/ATL/TSB — no ACWR, ADR 0003), baselines.py (HRV/RHR baselines, sleep debt), readiness.py (0-100 composite) — none of these write to derived_daily yet
   coach/                rules.py, briefing.py, weekly_retro.py
-  dashboard/             app.py (Streamlit)
+  dashboard/             app.py (Streamlit entrypoint, st.navigation), theme.py (dark theme + chart helpers), data.py (cached DB/config access), views/{today,trends,training,comp_prep,log,data_health}.py
 scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview), sync.py (Phase 6 daily live-sync entrypoint — Garmin only, see below)
 tests/                  core/, ingest/, metrics/, scripts/, fixtures/ (synthetic — never real personal data, fixtures are committed to git)
 docs/decisions/          ADRs, one per non-obvious choice
@@ -924,15 +926,74 @@ candidate inputs (sleep, deep sleep, social meals, steps, BJJ load, gi/no-gi) an
 outcomes (next-day HRV/readiness, weekly weight slope, gassed rate). n<30 = provisional.
 Never present correlation as causal. Top 3 findings max.
 
-## Dashboard (target — lands in Phase 5)
+## Dashboard — built, Phase 5 (2026-08-28)
 
-Streamlit, Plotly, dark theme, raw points always shown behind smoothed lines (lighter
-shade). Pages: **Today** (readiness + breakdown, prescription, sleep, weight EWMA, comp
-countdown) · **Trends** (weight/HRV/RHR/sleep stages, 30/90/365-day windows) ·
-**Training** (load by day/sport, CTL/ATL/TSB chart, monotony, calisthenics progression) ·
-**Comp prep** (weight trajectory vs required line, projected finish + uncertainty) ·
-**Log** (BJJ/subjective/waist forms) · **Data health** (freshness, missing days, dedupe
-log, last ingest run — not optional, it's how pipeline breakage gets noticed).
+`src/health_os/dashboard/`: Streamlit + Plotly, dark theme, raw points always shown
+behind smoothed lines (lighter shade, `theme.add_raw_and_smoothed()`). One entrypoint
+(`app.py`, `uv run streamlit run src/health_os/dashboard/app.py`) using `st.navigation`/
+`st.Page` (modern multipage API, needs the `streamlit>=1.36` already pinned) rather than
+the classic `pages/`-folder convention — avoids any ambiguity with Streamlit's implicit
+folder-name auto-discovery, and keeps page metadata (title/icon/default) explicit in one
+place. All six pages shipped together, not staged as "read-only first" — the kickoff
+doc's phrasing turned out to describe a natural build order, not a real reason to ship
+Log later once every page was this close to done anyway:
+
+- **Today** — the readiness composite (reusing `metrics/readiness.py` unchanged, feeding
+  it live HRV/RHR baselines, sleep debt, TSB z-score, and the latest `hooper_index` —
+  each component only passed through when its own `confidence == "full"`, otherwise
+  `None` so it's dropped and renormalized exactly per the metrics layer's own contract),
+  a simplified **band-based guidance lookup** (Green/Amber/Red text lifted verbatim from
+  this file's own Coaching-layer section — deterministic, not invented, but explicitly
+  labeled as a preview since the real Phase 7 rules engine with its safety rails and
+  2-red/3-amber-day gating isn't built yet), sleep, weight EWMA, comp countdown.
+- **Trends** — weight/HRV/RHR/sleep stages, 30/90/365-day window selector. HRV/RHR
+  smoothing uses a new `dashboard/data.py: smooth_for_display()` — deliberately NOT a
+  reuse of `metrics/body_comp.py: compute_weight_ewma()` outside its documented domain
+  (weight trend analysis); same recursive-EWMA math, kept as a separate, analysis-free
+  charting helper instead.
+- **Training** — CTL/ATL/TSB chart, monotony/strain, load by day/sport. Surfaces the
+  already-known staleness problem directly rather than hiding it: with no BJJ sessions
+  logged yet and Garmin/Strava's `training_load` mostly absent (see the training-load
+  build-out section above), this page currently just shows a clear explanatory warning
+  instead of an empty or misleading chart. **Calisthenics progression is a real,
+  labeled gap** — there is no logging mechanism for calisthenics sets/reps/load
+  anywhere in the schema, so the page says exactly that rather than inventing a chart
+  with nothing behind it.
+- **Comp Prep** — weight trajectory (raw + EWMA) vs. a straight-line required path to
+  the division limit, plus a shaded projection band from the trend's own 95% CI (never
+  shown below `weight_trend_ols()`'s own `insufficient_data` threshold).
+- **Log** — BJJ session / daily wellness / waist, one `st.form()` each, in the same
+  file the CLI scripts already use for validation
+  (`BjjSession`/`SubjectiveLogEntry`/`BodyMeasurement`'s own `__post_init__`) rather
+  than re-implementing it — the dashboard form just constructs the dataclass and
+  surfaces the `ValueError` via `st.error()` if it fails. Boolean fields
+  (`protein_hit`/`gassed`/`social_meal`) use a tri-state Skip/Yes/No select instead of
+  a checkbox — a checkbox can't represent "not answered today," which several of these
+  genuinely need (design principle 6). Warns before overwriting an existing entry for
+  the day, same as the CLI. Mirrors `scripts/log_bjj.py`'s conditional-fields behavior
+  (rounds/feeling only for `class`/`open_mat`) by putting `session_type` outside the
+  `st.form` so choosing it triggers an immediate rerun.
+- **Data Health** — per-field freshness (days since last real value for
+  weight/HRV/RHR/sleep/training_readiness), missing days in the trailing 30, the
+  dedupe log (any `activities` row with a non-empty `merged_from`), and the last 100
+  `ingest_runs` rows (failed runs highlighted). Not optional per the kickoff doc's own
+  framing — this is deliberately the page that would make a silent pipeline break
+  visible.
+
+**Verification approach, worth noting**: rather than leaving dashboard code untested
+(the working agreement explicitly allows this — "dashboard can go untested"), all six
+pages were smoke-tested with Streamlit's own `AppTest` harness
+(`streamlit.testing.v1.AppTest.from_file(...).run()`) directly against the real
+database — catches real exceptions (bad column names, wrong function signatures, `None`
+arithmetic) without needing a browser. All six passed clean on the real data. Also
+caught and fixed a real deprecation: `st.plotly_chart(..., use_container_width=True)` is
+past its removal deadline (2025-12-31) in the installed Streamlit version — replaced
+with `width="stretch"` everywhere before this was called done.
+
+**Not yet done**: no manual visual QA in an actual browser (only `AppTest` + an HTTP
+200 check that the server boots) — the layout/spacing/colors haven't been eyeballed by
+a human yet. No scheduling (that's Phase 8). Readiness "guidance" text is a hardcoded
+lookup, not the real rules engine.
 
 ## Working agreement
 
