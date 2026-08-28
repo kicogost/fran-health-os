@@ -160,3 +160,50 @@ the verification of record for the write path instead.
   files, vs. always running two local dev processes — `npm run dev` +
   `scripts/run_api.py`) remains undecided. Fine for daily local use as-is; worth a
   decision before this is the ONLY way Francisco accesses his own data day to day.
+
+## Update, 2026-08-28 — production serving resolved
+
+Prompted by a practical need, not a scheduled follow-up: Francisco wanted to log a
+same-day BJJ session and asked how to open the visual "moving forward" — two dev
+processes every time was the wrong answer for daily use. `api/main.py` gained a
+catch-all route (registered after every `/api/*` route, so those always match first)
+serving `frontend/dist/` once `npm run build` has been run, with an index.html
+fallback for React Router's client-side paths (so a hard refresh or direct link to
+`/log` or `/trends` still works, not just in-app navigation) and a path-traversal
+guard (`_safe_dist_file()`, unit-tested directly — `httpx`/`TestClient` normalizes
+`..` out of a URL before it's sent, so a request-level test wouldn't actually
+exercise the guard).
+
+**Two workflows now, by design, not by accident**: `npm run build` once + `uv run
+python scripts/run_api.py` alone for daily use (one command, port 8000); pair with
+`npm run dev` only while actively editing the frontend, since the static-serve path
+serves whatever was last built, not live source. When `frontend/dist/` doesn't
+exist, the catch-all 404s with a message pointing at `npm run build` — the existing
+two-process dev workflow is unaffected either way.
+
+Verified against the real running server, not just tests: built the frontend for
+real, confirmed port 8000 alone (no Vite process) serves `/log`, real hashed asset
+files, and root-level files like `favicon.svg` correctly; screenshotted the result.
+6 new tests (`tests/api/test_main.py`), 416 total passing, ruff clean.
+
+## Update, 2026-08-28 — daily use needs zero commands
+
+Same conversation, one step further: even the one command above was too much
+friction for something meant to be opened every day. `launchd/com.healthos.api.plist`
+(new) runs `scripts/run_api.py --no-reload` permanently in the background —
+`RunAtLoad` + `KeepAlive`, the same per-user LaunchAgent pattern as
+`com.healthos.morning.plist` but a permanent service instead of a once-daily
+schedule. `http://localhost:8000` is now just always there whenever the laptop is
+on; nothing to type, no terminal window to keep open.
+
+Installed and verified for real: copied to `~/Library/LaunchAgents/`, loaded,
+confirmed `/api/today`, `/log`, and a real asset all return 200; killed the running
+process directly (`kill -9`) and confirmed launchd restarted it automatically within
+seconds — the same "verify through the real mechanism, not just the script by hand"
+discipline that caught the original morning-run LaunchAgent's `PATH` bug.
+
+One real tradeoff worth remembering: this holds port 8000 permanently, so active
+frontend development (`npm run dev`) needs `launchctl unload
+~/Library/LaunchAgents/com.healthos.api.plist` first to free it — documented in both
+the plist's own header comment and `run_api.py`'s docstring. Not a problem for normal
+daily use, only relevant the next time the frontend itself gets edited.

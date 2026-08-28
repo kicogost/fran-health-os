@@ -842,8 +842,8 @@ src/health_os/
   coach/                rules.py, briefing.py, weekly_retro.py
   dashboard/             app.py (Streamlit entrypoint, st.navigation), theme.py (dark theme + chart helpers), data.py (cached DB/config access), views/{today,trends,training,comp_prep,log,data_health}.py — stays in active use until the React migration (ADR 0005) is fully done
   api/                   main.py (FastAPI app, local-only, all 6 pages' routes), today.py/trends.py/training.py/comp_prep.py/data_health.py (one real read-only assembly fn per page), log.py (the one page with real POST mutation endpoints — reuses core/models.py's dataclasses for validation, never a second copy) — ADR 0005 frontend migration, 2026-08-28
-frontend/               Vite + React + TypeScript + Tailwind v4 + shadcn/ui (Radix base) + react-router-dom + recharts — ADR 0005, 2026-08-28, all 6 pages. src/pages/{Today,Trends,Training,CompPrep,Log,DataHealth}.tsx, components/{today,charts,log,layout}/*.tsx, index.css carries the same Carbon g100 dark tokens as dashboard/theme.py (ported, not re-picked). `npm run dev` (port 5173, proxies /api to FastAPI) + `uv run python scripts/run_api.py` (port 8000) to run locally.
-scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_calisthenics.py (manual calisthenics logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview), sync.py (Phase 6 daily live-sync entrypoint — Garmin + Health Auto Export, incl. per-lap detail for sub_sport=="bjj" activities), compute_derived.py (Phase 4 derived-metric persistence, trailing-3-day window like sync.py), briefing.py (Phase 7 CLI), weekly_retro.py (Phase 7 CLI), check_secrets.py (pre-commit secret-shaped-string guard, design principle 8), run_api.py (ADR 0005 — local FastAPI server, port 8000), morning_run.sh (Phase 8 — chains sync+compute_derived+briefing+retro, what launchd actually runs)
+frontend/               Vite + React + TypeScript + Tailwind v4 + shadcn/ui (Radix base) + react-router-dom + recharts — ADR 0005, 2026-08-28, all 6 pages. src/pages/{Today,Trends,Training,CompPrep,Log,DataHealth}.tsx, components/{today,charts,log,layout}/*.tsx, index.css carries the same Carbon g100 dark tokens as dashboard/theme.py (ported, not re-picked). Daily use: `npm run build` once, then `uv run python scripts/run_api.py` alone serves everything on port 8000. Active frontend dev: `npm run dev` (port 5173, hot reload, proxies /api to FastAPI) + `scripts/run_api.py` (port 8000) as two processes instead.
+scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_calisthenics.py (manual calisthenics logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview), sync.py (Phase 6 daily live-sync entrypoint — Garmin + Health Auto Export, incl. per-lap detail for sub_sport=="bjj" activities), compute_derived.py (Phase 4 derived-metric persistence, trailing-3-day window like sync.py), briefing.py (Phase 7 CLI), weekly_retro.py (Phase 7 CLI), check_secrets.py (pre-commit secret-shaped-string guard, design principle 8), run_api.py (ADR 0005 — local FastAPI server, port 8000; also serves the built frontend/dist/ for one-command daily use, see "One-command frontend serving built"), morning_run.sh (Phase 8 — chains sync+compute_derived+briefing+retro, what launchd actually runs)
 githooks/               pre-commit (calls check_secrets.py; activated once per clone via `git config core.hooksPath githooks`, since `.git/hooks/` itself can't be version-controlled)
 launchd/                com.healthos.morning.plist (Phase 8 — installed as a real LaunchAgent, 10:00 Europe/Madrid daily, moved from an initial 07:00 default per Francisco's request)
 tests/                  core/, ingest/, metrics/, coach/, scripts/, api/ (ADR 0005 backend), fixtures/ (synthetic — never real personal data, fixtures are committed to git)
@@ -2011,6 +2011,42 @@ design principle 1, so no ADR (nothing was decided differently from what already
 existed). Worth 5 minutes of re-reading this section before re-proposing cloud hosting
 from scratch in a future session; the Railway-vs-VPS-vs-Supabase-fit reasoning above
 should still hold even if exact prices have drifted again by then.
+
+## One-command frontend serving built (2026-08-28)
+
+Immediately practical trigger: Francisco did open mat BJJ with no HR strap yet
+(arriving Monday) and asked how to open the visual to log it, "and moving forward as
+well" — two dev processes (`npm run dev` + `scripts/run_api.py`) every time was the
+wrong answer for daily use, and this was the exact "production serving" question
+ADR 0005 had left open since the frontend migration finished. Resolved it directly
+rather than leaving it open further — see ADR 0005's "production serving resolved"
+update for full detail.
+
+`api/main.py` gained a catch-all route (registered after every `/api/*` route, so
+those always win) that serves `frontend/dist/` once `npm run build` has been run,
+with an index.html fallback so React Router's client-side paths (`/log`, `/trends`,
+...) survive a hard refresh or direct link, and a path-traversal guard
+(`_safe_dist_file()`). 6 new tests (`tests/api/test_main.py`), 416 total passing,
+ruff clean. Verified against the real running server, not just tests: built for real,
+confirmed port 8000 alone serves `/log` and real asset files, screenshotted.
+
+**Then, same conversation**: Francisco found even "run one command in a terminal"
+too much friction for something meant to be opened daily. Closed the gap the rest of
+the way — `launchd/com.healthos.api.plist` (new), same per-user LaunchAgent pattern
+as `com.healthos.morning.plist`, but `RunAtLoad` + `KeepAlive` (a permanent
+background service, not a once-daily scheduled task) instead of a calendar trigger.
+`scripts/run_api.py` gained a `--no-reload` flag — the background instance doesn't
+need uvicorn's file-watcher, that's for active development only. **Result: nothing
+to run, ever, day to day** — `http://localhost:8000` is just always there whenever
+the laptop is on. Installed and verified for real, not just written: copied to
+`~/Library/LaunchAgents/`, loaded, confirmed `/api/today`/`/log`/a real asset all
+return 200; killed the process directly (`kill -9`) and confirmed launchd restarted
+it automatically within seconds, same "trust the real mechanism, not just the happy
+path" discipline as the original morning-run LaunchAgent's launchd-env bug. One real
+tradeoff, documented in both the plist and `run_api.py`'s own docstring: this holds
+port 8000 permanently, so active frontend development (`npm run dev`) needs
+`launchctl unload` first to free it — not a conflict during normal daily use, only
+worth knowing before an eventual frontend-editing session.
 
 ## Definition of done for v1
 
