@@ -51,7 +51,7 @@ export function TodayPage() {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-background p-8">
+      <div className="p-8">
         <div className="max-w-lg mx-auto">
           <div className="rounded-xl border border-[var(--band-red)]/30 bg-[var(--band-red)]/10 p-5 text-foreground">
             <p className="font-medium mb-1">Couldn&apos;t load today&apos;s data</p>
@@ -72,7 +72,7 @@ export function TodayPage() {
 
   return (
     <div
-      className="min-h-screen bg-background"
+      className="min-h-full"
       style={{
         backgroundImage: `radial-gradient(ellipse 900px 500px at 50% -10%, ${bandColor}14, transparent)`,
       }}

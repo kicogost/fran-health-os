@@ -1,8 +1,11 @@
 # 5. Migrate the dashboard off Streamlit, after Phase 7
 
 Date: 2026-08-28
-Status: Accepted — migration started 2026-08-28 (Today page, phase 1 of 6; see
-CLAUDE.md's "Frontend migration started" entry for the real, running result)
+Status: Accepted — migration complete 2026-08-28, all 6 pages (Today, Trends,
+Training, Comp Prep, Log, Data Health) rebuilt and verified against the real
+database; see CLAUDE.md's "Frontend migration started" / "All 6 pages built"
+entries for the full detail. The Streamlit dashboard has NOT been removed —
+see "Consequences" below.
 
 ## Context
 
@@ -103,4 +106,57 @@ building it:
   `@/*` → `./src/*` alias into `src/components/ui/` — confirmed by checking the actual
   file tree, not assumed. Fixed by moving the files to their correct location by hand;
   the alias itself (in `vite.config.ts` and `tsconfig.app.json`) was already correct
-  and resolves fine now that the files live where it points.
+  and resolves fine now that the files live where it points. Recurred on every
+  subsequent `shadcn add` call in this project (tabs, input, textarea, label, select,
+  slider) — same fix each time, not a one-off.
+
+## Update, 2026-08-28 — all 6 pages complete
+
+Francisco: "you can go ahead with the rest of the front end!" after approving the
+Today page's second design pass. Remaining stack decisions this ADR still hadn't
+settled:
+
+- **`react-router-dom`** for client-side routing (a real second dependency addition,
+  named here per the "ask before adding a dependency" rule) — `BrowserRouter` +
+  a shared `AppShell` layout route (persistent left sidebar, 240px — the exact width
+  `ui-ux-pro-max-skill`'s own Data-Dense Dashboard checklist names for this style of
+  nav) wrapping an `<Outlet/>`, rather than each page reimplementing navigation chrome.
+- **`recharts`** for charts (Trends/Training/Comp Prep) — named as one of three
+  compatible libraries (`recharts|chartjs|d3`) in the same design dataset's own
+  Data-Dense Dashboard row; picked as the most idiomatic-React, least-boilerplate of
+  the three. Route-level code-splitting (`React.lazy` + `Suspense` per page) keeps
+  this out of the initial bundle for the Today page, which doesn't need it — caught by
+  Vite's own "chunk larger than 500kB" build warning, not chased proactively.
+- **The Log page's mutation endpoints** are the one place this migration added NEW
+  backend surface beyond what Streamlit already had: `POST /api/log/{bjj,wellness,
+  waist,calisthenics}`, each a thin wrapper over the SAME dataclasses (`core/models.py`)
+  the CLI scripts and Streamlit already validated through — no second validation
+  layer, a `ValueError` from a constructor becomes a 422 with the same message
+  `st.error()` would have shown. `merge_subjective_log_entry()` (the hooper_index
+  cross-call fix from earlier this session) is reused here too, not re-solved.
+- Every page's date-based "already logged, overwrite?" check fetches fresh on every
+  date/type change via a plain `useEffect` — the Streamlit-specific bug this session
+  found and fixed (`st.form` batching hiding the real selected date from the check)
+  has no equivalent failure mode in React, since component state is always live; noted
+  here so the ORIGINAL bug's lesson isn't lost just because the new stack can't
+  reproduce it.
+
+All 6 pages verified against the real database via the same Chrome-headless-
+screenshot discipline as the Today page rounds — real charts (weight/HRV/RHR trends,
+CTL/ATL/TSB, load-by-sport, the weight-trajectory-vs-required-path band), real tables
+(dedupe log, ingest runs), real forms rendering with today's actual date pre-filled.
+Deliberately did NOT submit real data through the Log page's forms during verification
+— that would write fake entries into Francisco's actual health database; the 36
+backend tests covering `api/log.py` (save/get/validation/upsert/merge behavior) are
+the verification of record for the write path instead.
+
+## Consequences (updated)
+
+- The Streamlit dashboard (`src/health_os/dashboard/`) has NOT been deleted and is
+  not scheduled for removal as part of this migration — it stays available as a
+  fallback / comparison reference. Deciding whether to retire it is a separate,
+  future call, not bundled into "the migration is done."
+- Production serving story (FastAPI serving the built `frontend/dist/` as static
+  files, vs. always running two local dev processes — `npm run dev` +
+  `scripts/run_api.py`) remains undecided. Fine for daily local use as-is; worth a
+  decision before this is the ONLY way Francisco accesses his own data day to day.

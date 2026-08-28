@@ -661,12 +661,12 @@ continuing; do not run ahead**:
    built and tested (see sections above), and now persisted to `derived_daily` via
    `scripts/compute_derived.py` (built 2026-08-28, see "Derived-daily persistence
    built" below), wired into the daily `morning_run.sh` pipeline.
-5. 🟡 Dashboard — Streamlit version (all 6 pages, smoke-tested via `AppTest` against
-   real data) stays in active use while the React/Tailwind migration (ADR 0005) is
-   underway. **Migration started 2026-08-28**: Today page rebuilt and running for
-   real (FastAPI + React/Tailwind/shadcn-Radix, `src/health_os/api/` + `frontend/`,
-   see "Frontend migration started" below) — 1 of 6 pages done, phased deliberately
-   (Francisco's own choice: see something running before committing to all 6).
+5. ✅ Dashboard — **React/Tailwind migration (ADR 0005) complete 2026-08-28**: all 6
+   pages (Today, Trends, Training, Comp Prep, Log, Data Health) rebuilt on FastAPI +
+   React/Tailwind/shadcn-Radix (`src/health_os/api/` + `frontend/`) and verified
+   against the real database — see "All 6 pages built" below for the full detail.
+   The Streamlit version (`src/health_os/dashboard/`) is NOT deleted — kept as a
+   fallback/reference, not scheduled for removal as part of this milestone.
    Calisthenics progression still has no logging mechanism at all — a real gap,
    not yet built regardless of frontend.
 6. ✅ Live sync — Garmin (activities + wellness) and Health Auto Export (weight)
@@ -841,8 +841,8 @@ src/health_os/
   metrics/              body_comp.py (weight trend + comp countdown), load.py (monotony/strain, CTL/ATL/TSB — no ACWR, ADR 0003), baselines.py (HRV/RHR baselines, sleep debt), readiness.py (0-100 composite), bjj_laps.py (HR-based sparring/rest lap classification), derived_daily.py (Phase 4 persistence — writes all of the above into `derived_daily`, with an honest "stale" confidence for CTL/ATL/TSB/weight when the underlying series doesn't reach today)
   coach/                rules.py, briefing.py, weekly_retro.py
   dashboard/             app.py (Streamlit entrypoint, st.navigation), theme.py (dark theme + chart helpers), data.py (cached DB/config access), views/{today,trends,training,comp_prep,log,data_health}.py — stays in active use until the React migration (ADR 0005) is fully done
-  api/                   main.py (FastAPI app, local-only), today.py (build_today_payload() — the one real assembly fn behind GET /api/today) — new, ADR 0005 frontend migration, 2026-08-28
-frontend/               Vite + React + TypeScript + Tailwind v4 + shadcn/ui (Radix base) — new, ADR 0005, 2026-08-28. src/pages/Today.tsx + components/today/*.tsx (1 of 6 pages so far); index.css carries the same Carbon g100 dark tokens as dashboard/theme.py, ported not re-picked. `npm run dev` (port 5173, proxies /api to FastAPI) + `uv run python scripts/run_api.py` (port 8000) to run locally.
+  api/                   main.py (FastAPI app, local-only, all 6 pages' routes), today.py/trends.py/training.py/comp_prep.py/data_health.py (one real read-only assembly fn per page), log.py (the one page with real POST mutation endpoints — reuses core/models.py's dataclasses for validation, never a second copy) — ADR 0005 frontend migration, 2026-08-28
+frontend/               Vite + React + TypeScript + Tailwind v4 + shadcn/ui (Radix base) + react-router-dom + recharts — ADR 0005, 2026-08-28, all 6 pages. src/pages/{Today,Trends,Training,CompPrep,Log,DataHealth}.tsx, components/{today,charts,log,layout}/*.tsx, index.css carries the same Carbon g100 dark tokens as dashboard/theme.py (ported, not re-picked). `npm run dev` (port 5173, proxies /api to FastAPI) + `uv run python scripts/run_api.py` (port 8000) to run locally.
 scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_calisthenics.py (manual calisthenics logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview), sync.py (Phase 6 daily live-sync entrypoint — Garmin + Health Auto Export, incl. per-lap detail for sub_sport=="bjj" activities), compute_derived.py (Phase 4 derived-metric persistence, trailing-3-day window like sync.py), briefing.py (Phase 7 CLI), weekly_retro.py (Phase 7 CLI), check_secrets.py (pre-commit secret-shaped-string guard, design principle 8), run_api.py (ADR 0005 — local FastAPI server, port 8000), morning_run.sh (Phase 8 — chains sync+compute_derived+briefing+retro, what launchd actually runs)
 githooks/               pre-commit (calls check_secrets.py; activated once per clone via `git config core.hooksPath githooks`, since `.git/hooks/` itself can't be version-controlled)
 launchd/                com.healthos.morning.plist (Phase 8 — installed as a real LaunchAgent, 10:00 Europe/Madrid daily, moved from an initial 07:00 default per Francisco's request)
@@ -1848,6 +1848,72 @@ not just technically, different: an amber glow behind the ring, a warm-tinted ca
 icons throughout. Round 1's lesson, stated plainly rather than glossed over: reading
 real design data is necessary but not sufficient — it also has to be checked against
 what a human actually sees in a static view, not just what the reasoning says to do.
+
+## All 6 pages built — frontend migration complete (2026-08-28)
+
+Francisco, after approving the Today page's second design pass: "you can go ahead
+with the rest of the front end!" Built the remaining 5 pages (Trends, Training, Comp
+Prep, Log, Data Health) in one pass, reusing everything established on Today
+(`CARD_CLASS`, `lib/band.ts`'s color mapping, the gradient-ring/glow treatment, Lucide
+icons throughout) rather than each page reinventing its own visual language. Full
+detail in ADR 0005's "all 6 pages complete" update; summary here.
+
+**New backend, one module per page** (`src/health_os/api/`): `trends.py`,
+`training.py`, `comp_prep.py`, `data_health.py`, `log.py` — each mirrors its
+Streamlit `dashboard/views/*.py` counterpart's exact computation, same "one real
+assembly function per page" discipline as `today.py`. `log.py` is the one genuinely
+new backend surface (Streamlit only ever read+wrote through Python function calls
+directly; a real HTTP API needs actual request/response endpoints) — `POST /api/log/
+{bjj,wellness,waist,calisthenics}`, each a thin wrapper over the SAME dataclasses
+(`core/models.py`) already validated by the CLI scripts and Streamlit, a `ValueError`
+becoming a 422 with the same message `st.error()` would show. `merge_subjective_log_
+entry()` (the hooper_index cross-call fix from earlier this session) is reused here,
+not re-solved. 36 new backend tests (`tests/api/test_{trends,training,comp_prep,
+data_health,log}.py`) — 405 total passing, ruff clean.
+
+**New frontend infrastructure**: `react-router-dom` (a persistent left `Sidebar` +
+`AppShell` layout, 240px wide — the exact width `ui-ux-pro-max-skill`'s own
+Data-Dense Dashboard checklist names for this nav style) and `recharts` (named
+alongside chartjs/d3 as compatible with that same style in the same dataset — picked
+as the most idiomatic-React option). Both new dependencies named explicitly per the
+"ask before adding a dependency" rule. Route-level code-splitting
+(`React.lazy`/`Suspense` per page) keeps `recharts` out of the Today page's bundle —
+caught by Vite's own "chunk larger than 500kB" warning during the build, not chased
+speculatively; initial bundle dropped from 835KB to 236KB after.
+
+**Real tooling gotcha, recurring**: `npx shadcn@latest add` (tabs, input, textarea,
+label, select, slider — every component added for the Log page's forms) repeated the
+exact same "writes to a literal `./@/` folder instead of `src/components/ui/`" bug
+found on the Today page. Same fix each time (move the files by hand), now confirmed
+as a real, repeatable characteristic of this tool in this project's setup, not a
+one-off fluke.
+
+**Verified against the real database, all 6 pages, via the same Chrome-headless
+screenshot discipline used throughout this migration**: Trends' three time-series
+charts (weight/HRV/RHR) correctly show raw points behind smoothed lines with real
+data back to June 2026; Training's CTL/ATL/TSB chart renders the same stale
+pre-June-2026 load series already documented elsewhere in this file; Comp Prep's
+weight-trajectory chart correctly renders the required-path line, the amber
+projection-CI band, and the red division-limit reference line; Data Health's tables
+show the real 5-group dedupe log and real recent `ingest_runs` rows (including that
+day's own `compute_derived`/`health_auto_export`/`garmin_live` runs); Log's four tabs
+render with today's real date pre-filled and correctly-styled shadcn form controls.
+
+**Deliberately not verified by submitting real data**: the Log page's actual POST
+behavior was NOT exercised by clicking through the real UI against Francisco's real
+database — doing so would write fake BJJ/wellness/waist/calisthenics entries into his
+actual health data as a side effect of a design review, which he never asked for. The
+36 backend tests covering `api/log.py` directly (save/get/validation/upsert/merge
+behavior, run against a throwaway in-memory DB via the existing `conn` fixture) are
+the verification of record for the write path instead — a deliberate choice, not an
+oversight, consistent with this project's own "raw data is immutable" and "hard to
+reverse actions get confirmed first" discipline.
+
+**Not yet done**: no production serving decision (FastAPI serving the built
+`frontend/dist/` as static files, vs. the current two-local-process dev workflow);
+Streamlit dashboard stays in place, not scheduled for removal; the Log page's actual
+write path hasn't been exercised end-to-end through the real browser UI (only via the
+backend test suite) — worth doing once Francisco actually uses it for a real entry.
 
 - Python 3.12+, `uv` for deps, `ruff` for lint/format, `pytest` for tests, type hints on
   every public function.
