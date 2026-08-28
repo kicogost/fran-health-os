@@ -4,15 +4,14 @@
     uv run python scripts/backfill.py                    # all sources
     uv run python scripts/backfill.py --source strava     # one source
 
-Looks for each source's export under `data/raw/<source>/`, either directly or one
-level down in a single named subdirectory (matches how the real exports land —
-e.g. `data/raw/strava/strava_export/activities.csv`). Every run is idempotent
-(`db.upsert()` on natural keys) and logged to `ingest_runs`, so re-running this
-against the same files is always safe and produces the same result.
-
-Garmin's bulk-export parser isn't built yet — Francisco's Garmin export hadn't
-arrived as of 2026-08-27 (it takes the platform days to generate). `--source
-garmin` / `--source all` will say so rather than fail confusingly.
+Looks for each source's export under `data/raw/<source>/`. Strava/Apple Health
+sit directly in (or one level down from) that folder; Garmin's export nests
+everything under a UUID-named directory that changes on every fresh export
+(`ingest/garmin_bulk.py` finds its files via `rglob()` regardless of depth, so
+no special-casing needed here — just checking the top-level folder isn't
+empty). Every run is idempotent (`db.upsert()` on natural keys) and logged to
+`ingest_runs`, so re-running this against the same files is always safe and
+produces the same result.
 """
 
 from __future__ import annotations
@@ -27,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from health_os.core import db  # noqa: E402
 from health_os.core.dedupe import dedupe_activities  # noqa: E402
-from health_os.ingest import apple_health, strava_bulk  # noqa: E402
+from health_os.ingest import apple_health, garmin_bulk, strava_bulk  # noqa: E402
 
 DATA_RAW = Path("data/raw")
 
@@ -126,10 +125,35 @@ def backfill_garmin(
     if not base_dir.exists() or not any(base_dir.iterdir()):
         print(f"garmin: no export under {base_dir} yet (takes days to generate) — skipping")
         return True
-    print(
-        f"garmin: files found under {base_dir}, but ingest/garmin_bulk.py isn't written yet — "
-        "inspect the real structure before writing it (see CLAUDE.md Phase 2 status). Skipping."
+
+    run_id = db.start_ingest_run(conn, "garmin")
+    rows_in = rows_upserted = 0
+    try:
+        for activity in garmin_bulk.parse_activities(base_dir):
+            rows_in += 1
+            db.upsert(conn, "activities", activity.to_row(), ["source", "source_id"])
+            rows_upserted += 1
+        for metric in garmin_bulk.parse_daily_metrics(base_dir):
+            rows_in += 1
+            db.upsert(conn, "daily_metrics", metric.to_row(), ["date"])
+            rows_upserted += 1
+    except Exception as exc:  # noqa: BLE001 - reported to ingest_runs, not swallowed
+        db.finish_ingest_run(
+            conn,
+            run_id,
+            status="failed",
+            rows_in=rows_in,
+            rows_upserted=rows_upserted,
+            errors=[str(exc)],
+        )
+        print(f"garmin: FAILED after {rows_upserted} rows — {exc}")
+        traceback.print_exc()
+        return False
+
+    db.finish_ingest_run(
+        conn, run_id, status="success", rows_in=rows_in, rows_upserted=rows_upserted, rows_skipped=0
     )
+    print(f"garmin: {rows_upserted} rows upserted from {base_dir}")
     return True
 
 

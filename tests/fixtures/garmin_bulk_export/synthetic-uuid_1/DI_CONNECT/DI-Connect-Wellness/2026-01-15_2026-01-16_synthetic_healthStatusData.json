@@ -1,0 +1,17 @@
+[
+  {
+    "calendarDate": "2026-01-15",
+    "metrics": [
+      {"type": "HRV", "value": 95.0, "status": "IN_RANGE"},
+      {"type": "SPO2", "value": 97.0, "status": "IN_RANGE"},
+      {"type": "SKIN_TEMP_C", "value": -0.2, "status": "IN_RANGE"}
+    ]
+  },
+  {
+    "calendarDate": "2026-01-16",
+    "metrics": [
+      {"type": "HRV", "value": 70.0, "status": "LOW"},
+      {"type": "SPO2", "status": "UNKNOWN"}
+    ]
+  }
+]

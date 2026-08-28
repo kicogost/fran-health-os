@@ -1,0 +1,44 @@
+[
+  {
+    "summarizedActivitiesExport": [
+      {
+        "activityId": 90000000001,
+        "name": "Synthetic Ride",
+        "activityType": "cycling",
+        "startTimeGmt": 1768519800000.0,
+        "duration": 3600000.0,
+        "distance": 2000000.0,
+        "elevationGain": 30000.0,
+        "avgHr": 140.0,
+        "maxHr": 165.0,
+        "aerobicTrainingEffect": 3.2,
+        "anaerobicTrainingEffect": 1.1,
+        "avgPower": 180.0,
+        "hrTimeInZone_0": 60000.0,
+        "hrTimeInZone_1": 600000.0,
+        "hrTimeInZone_2": 1200000.0,
+        "hrTimeInZone_3": 900000.0,
+        "hrTimeInZone_4": 600000.0,
+        "hrTimeInZone_5": 180000.0,
+        "hrTimeInZone_6": 60000.0
+      },
+      {
+        "activityId": 90000000002,
+        "name": "Synthetic Run",
+        "activityType": "running",
+        "startTimeGmt": 1768471200000.0,
+        "duration": 1800000.0,
+        "distance": 500000.0,
+        "avgHr": 155.0,
+        "maxHr": 172.0,
+        "aerobicTrainingEffect": 2.8,
+        "anaerobicTrainingEffect": 0.5
+      },
+      {
+        "name": "Broken entry, no activityId -- must be skipped",
+        "startTimeGmt": 1768471200000.0,
+        "activityType": "running"
+      }
+    ]
+  }
+]

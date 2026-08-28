@@ -1,0 +1,32 @@
+[
+  {
+    "calendarDate": "2026-01-15",
+    "totalSteps": 8500,
+    "activeKilocalories": 450.0,
+    "totalKilocalories": 2400.0,
+    "restingHeartRate": 50,
+    "currentDayRestingHeartRate": 49,
+    "bodyBattery": {
+      "bodyBatteryStatList": [
+        {"bodyBatteryStatType": "HIGHEST", "statsValue": 85},
+        {"bodyBatteryStatType": "LOWEST", "statsValue": 20},
+        {"bodyBatteryStatType": "MOSTRECENT", "statsValue": 40}
+      ]
+    },
+    "allDayStress": {
+      "aggregatorList": [
+        {"type": "TOTAL", "averageStressLevel": 28},
+        {"type": "AWAKE", "averageStressLevel": 35}
+      ]
+    },
+    "respiration": {
+      "avgWakingRespirationValue": 14.5
+    }
+  },
+  {
+    "calendarDate": "2026-01-16",
+    "totalSteps": 3000,
+    "activeKilocalories": 120.0,
+    "totalKilocalories": 1900.0
+  }
+]

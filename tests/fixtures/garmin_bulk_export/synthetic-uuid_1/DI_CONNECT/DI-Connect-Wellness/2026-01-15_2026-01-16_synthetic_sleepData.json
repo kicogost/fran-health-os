@@ -1,0 +1,16 @@
+[
+  {
+    "calendarDate": "2026-01-15",
+    "deepSleepSeconds": 3600,
+    "lightSleepSeconds": 14400,
+    "remSleepSeconds": 5400,
+    "awakeSleepSeconds": 600,
+    "sleepScores": {"overallScore": 82}
+  },
+  {
+    "calendarDate": "2026-01-16",
+    "deepSleepSeconds": 3000,
+    "lightSleepSeconds": 12000,
+    "awakeSleepSeconds": 300
+  }
+]
