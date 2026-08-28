@@ -681,8 +681,9 @@ continuing; do not run ahead**:
 7. 🟡 Coaching rules engine + briefing generator — `coach/rules.py` (deterministic
    decisions), `coach/briefing.py` (assembles real data, narrates via rules.py,
    shared by both `scripts/briefing.py` and the dashboard's Today page — no more
-   dashboard-only preview logic). Not yet: weekly retro, correlation engine (needs
-   90 days of real data, don't have it yet). See current-status section below.
+   dashboard-only preview logic), `coach/weekly_retro.py` + `scripts/weekly_retro.py`.
+   Only unbuilt piece: correlation engine (needs 90 days of real data, don't have it
+   yet). See current-status section below.
 8. ⬜ Scheduling (launchd/cron) + correlation analysis.
 
 ## Athlete profile
@@ -1001,12 +1002,36 @@ Nutrition: Hit 180g protein today — the one hard number that matters most.
 35 new tests (`tests/coach/test_rules.py`) — every rule function individually, including
 the monotony/strain lookback bug caught above. 262 tests total, all passing.
 
-**Not yet done**: **weekly retro** (Sunday summary — 7-day weight trend, sessions vs
-planned, protein adherence, waist delta) and the **correlation engine** (explicitly
-deferred — the kickoff doc itself says it needs 90 days of data, and this account's
-actual multi-source overlap doesn't have that yet, per the training-load staleness
-notes above; building it now would mean building against data too thin to trust,
-not a real capability yet).
+**Weekly retro — built same day, 2026-08-28.** Francisco asked directly: how/where is
+this stored, and flagged it as important. `coach/weekly_retro.py: compute_weekly_retro()`
++ `format_weekly_retro()`, CLI entrypoint `scripts/weekly_retro.py [--week-ending
+YYYY-MM-DD]`. Every number is either a real logged value or explicitly marked
+insufficient/not-trackable — same discipline as `briefing.py`. Two honest gaps, not
+silently glossed over:
+- **Sessions completed vs. planned**: BJJ checked against `bjj_sessions`, bike against
+  `activities.sport = 'cycling'` — but **calisthenics has no logging mechanism
+  anywhere in this codebase** (same gap the Training dashboard page already flags), so
+  it's marked `not_trackable`, never guessed as "missed."
+- **"Proposed calisthenics progression"** (kickoff doc spec) has no data to base a
+  proposal on for the same reason — says so directly rather than fabricating one.
+- **Social-meal count is reported as a plain count next to the weight trend, not a
+  computed correlation** — the kickoff doc's own Correlation engine (Spearman rho with
+  n/p) is a separate, deliberately deferred piece (needs 90 days of data this account
+  doesn't have yet), and this module doesn't pretend two numbers next to each other is
+  the same claim.
+
+13 new tests (`tests/coach/test_weekly_retro.py`). **Real output against the actual
+database (2026-08-28, week 2026-08-22 to 2026-08-28)**: correctly shows the real
+2026-08-22 cycling ride as completed, all 4 scheduled BJJ sessions as "missed" (accurate
+— Francisco hasn't started logging BJJ sessions yet), weight trend `insufficient_data`
+(sparse weigh-ins that week), sleep 8.3h avg (6/7 nights). TSB/monotony numbers inherit
+the same training-load staleness already documented above — not a new issue, just
+visible again here.
+
+**Not yet done**: the **correlation engine** — still explicitly deferred (needs 90 days
+of data this account doesn't have yet; building it now would mean building against data
+too thin to trust, not a real capability yet). This is now the only unbuilt piece of
+Phase 7's original spec.
 
 ## Dashboard — built, Phase 5 (2026-08-28)
 
