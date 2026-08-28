@@ -660,8 +660,14 @@ continuing; do not run ahead**:
 4. 🟡 Derived metrics (section "Derived metrics" below) — load/baselines/readiness all
    built and tested (see sections above), but none write to `derived_daily` yet.
 5. 🟡 Dashboard (Streamlit) — all 6 pages built and smoke-tested via `AppTest` against
-   real data (see current-status section above). Not yet: manual browser QA,
-   calisthenics progression (no logging mechanism exists for it at all, a real gap).
+   real data (see current-status section above). Functionally complete but visually
+   capped by the framework itself, confirmed via real screenshots across 3 iteration
+   rounds — **ADR 0005: migrating to a React/Tailwind frontend after Phase 7**, not
+   before (Phase 7 is backend-only, no reason to block it on a frontend rewrite; the
+   new frontend should be built once against Phase 7's real coaching-output shape, not
+   the current placeholder guidance lookup). Streamlit dashboard stays in active use
+   until that migration happens. Calisthenics progression still has no logging
+   mechanism at all — a real gap, not yet built regardless of frontend.
 6. ✅ Live sync — Garmin (activities + wellness) and Health Auto Export (weight)
    both built and confirmed working against Francisco's real account
    (`ingest/garmin.py`, `ingest/health_auto_export.py`, `scripts/sync.py`, ADR 0004;
@@ -1104,6 +1110,21 @@ Re-screenshotted after the fix (real 1440×900 viewport, not the artificially ta
 window the first screenshot used) — confirms the fix: proper card spacing, sidebar
 matches, Friday's open-mat-specific guidance renders correctly and legibly. All 6
 pages re-run through `AppTest` + the full suite (227 passing) after the change.
+
+**Even after this — still not "slick."** Francisco pointed at a fourth reference
+(`alexpate/awesome-design-systems`, then a "100k-star" AI design skill repo, verified
+at 122,302 real stars via the GitHub API but built for React/Tailwind/shadcn with an
+`npx`-based installer — not run, same risk category as the earlier WHOOP tool, and not
+portable to Streamlit regardless). Four legitimate design references in one session,
+still not landing, stopped looking like a reference-material problem and started
+looking like a real Streamlit ceiling — its native widgets render through fixed
+internal HTML/CSS that injected CSS can restyle but not rebuild. **Decision: migrate
+to a real React/Tailwind frontend, scheduled after Phase 7, not before — see
+[ADR 0005](docs/decisions/0005-frontend-migration-off-streamlit.md)** for the full
+reasoning (Phase 7 is backend-only and frontend-agnostic; building the new frontend's
+coaching UI once against Phase 7's real output shape beats building it now against a
+placeholder that's about to be replaced). The Streamlit dashboard stays in active use,
+as-is, until that migration happens.
 
 - Python 3.12+, `uv` for deps, `ruff` for lint/format, `pytest` for tests, type hints on
   every public function.
