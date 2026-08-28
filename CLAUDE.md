@@ -1037,6 +1037,27 @@ of data this account doesn't have yet; building it now would mean building again
 too thin to trust, not a real capability yet). This is now the only unbuilt piece of
 Phase 7's original spec.
 
+## Custom "BJJ" Garmin profile verified against a real recording (2026-08-28)
+
+Francisco recorded a real test session on a custom "Otros"→"BJJ" Garmin profile
+(deviates from `docs/bjj_recording_workflow.md`'s original Cardio/HIIT
+recommendation — turns out to be arguably better, see that doc's 2026-08-28 update
+for the full reasoning). Verified by inspecting the real synced data directly:
+`activityType.typeKey` is `"other"` regardless of the on-device rename, but the
+custom name **does** sync through as `activityName: "BJJ"`. `ingest/garmin.py` now
+captures this in `activities.sub_sport` (lowercased directly — `normalize_sport_name()`
+mangles a free-typed acronym like "BJJ" into `"b_j_j"`, verified, not assumed; that
+function is for CamelCase API constants, not user-typed names) whenever
+`sport == "other"` and a name is present, so `sport="other", sub_sport="bjj"` is now
+a real, filterable signal. 2 new tests, 293 total passing.
+
+Francisco's lap-recording plan (lap per round, rest rounds lapped separately, HR
+level distinguishing sparring from rest after the fact) works today directly in
+Garmin Connect but **does not flow into Health OS yet** — `ingest/garmin.py` only
+pulls whole-activity summaries. `get_activity_splits()` exists on the installed
+client for this; not yet called anywhere. Real, scoped, flagged next step if wanted
+— not started.
+
 ## Calisthenics tracking closed, a real gap (2026-08-28)
 
 Francisco asked directly: should he track calisthenics, and how? This had been an

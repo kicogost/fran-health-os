@@ -251,6 +251,21 @@ def _activity_to_model(a: Any) -> Activity | None:
         else None
     )
 
+    # Garmin's own `activityType` never changes for a custom-renamed "Other"
+    # profile (a watch-side rename of "Otros" to e.g. "BJJ" still reports
+    # sport="other" — confirmed 2026-08-28 against a real recording), but the
+    # custom name itself DOES sync through as `activityName`. Storing it in
+    # `sub_sport` for exactly this case (sport=="other" only — a properly
+    # typed activity's name is just a title, not a sport classification, and
+    # shouldn't be reinterpreted as one) is what makes these filterable later
+    # despite Garmin's generic type. A plain `.lower()`, not
+    # `normalize_sport_name()`: that function is built for CamelCase API
+    # constants ("HKWorkoutActivityTypeMartialArts") and mangles a free-typed
+    # acronym like "BJJ" into "b_j_j" — verified directly, not assumed.
+    sub_sport = None
+    if sport == "other" and a.activity_name:
+        sub_sport = a.activity_name.strip().lower() or None
+
     # hr_zone_*_s / perceived_rpe intentionally omitted — see module
     # docstring's "Known gaps" section.
     return Activity(
@@ -260,6 +275,7 @@ def _activity_to_model(a: Any) -> Activity | None:
         start_utc=start_utc,
         local_date=to_local_date(start_utc),
         sport=sport,
+        sub_sport=sub_sport,
         duration_s=round(a.duration) if a.duration is not None else None,
         distance_m=a.distance,
         avg_hr=round(a.average_hr) if a.average_hr is not None else None,

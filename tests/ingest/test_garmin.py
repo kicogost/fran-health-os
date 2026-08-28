@@ -271,6 +271,29 @@ class TestFetchActivities:
         assert a.aerobic_te == pytest.approx(3.1)
         assert a.anaerobic_te == pytest.approx(0.8)
         assert a.training_load == pytest.approx(85.0)
+        assert a.sub_sport is None  # properly-typed activity -- name is just a title
+
+    def test_custom_other_profile_name_becomes_sub_sport(self) -> None:
+        # Real case, verified 2026-08-28: a custom "Otros" Garmin profile
+        # renamed "BJJ" on the watch reports activityType.typeKey="other"
+        # (Garmin's own type never changes), but activityName="BJJ" syncs
+        # through -- that's what makes these filterable later despite the
+        # generic sport.
+        client = _FakeClient()
+        client.activities = [
+            _raw_activity(activityName="BJJ", activityType={"typeId": 4, "typeKey": "other"})
+        ]
+        activities = list(garmin.fetch_activities(client, *_one_day()))
+        assert activities[0].sport == "other"
+        assert activities[0].sub_sport == "bjj"
+
+    def test_custom_name_not_reinterpreted_as_sub_sport_for_typed_activities(self) -> None:
+        # "Morning Run" is just a title for a properly-typed "running"
+        # activity -- must not become sub_sport="morning run".
+        client = _FakeClient()
+        client.activities = [_raw_activity(activityName="Morning Run")]
+        activities = list(garmin.fetch_activities(client, *_one_day()))
+        assert activities[0].sub_sport is None
 
     def test_hr_zones_and_rpe_stay_null_known_gap(self) -> None:
         # See module docstring's "Known gaps": typed.Activity doesn't model
