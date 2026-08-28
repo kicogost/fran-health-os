@@ -125,6 +125,18 @@ def compute_readiness_score(
         return {"score": None, "components": {}, "coverage": 0.0, "confidence": "insufficient_data"}
 
     covered_weight = sum(weights[name] for name in components)
+    if covered_weight <= 0.0:
+        # Every component that actually has data today was configured with
+        # weight 0.0 (e.g. `weight_tsb: 0.0` while its inputs are known stale)
+        # -- renormalizing a real weight against zero total weight is
+        # undefined, not almost-zero, so this is "no usable score" the same
+        # as the empty-components case above, not a crash.
+        return {
+            "score": None,
+            "components": components,
+            "coverage": 0.0,
+            "confidence": "insufficient_data",
+        }
     total = 0.0
     for name, comp in components.items():
         normalized_weight = weights[name] / covered_weight

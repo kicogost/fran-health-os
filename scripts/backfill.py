@@ -96,7 +96,9 @@ def backfill_apple_health(
             rows_upserted += 1
         for metric in apple_health.parse_daily_weight(export_dir, config):
             rows_in += 1
-            db.upsert(conn, "daily_metrics", metric.to_row(), ["date"])
+            db.upsert(
+                conn, "daily_metrics", metric.to_row(), ["date"], merge_json_columns=["sources"]
+            )
             rows_upserted += 1
     except Exception as exc:  # noqa: BLE001 - reported to ingest_runs, not swallowed
         db.finish_ingest_run(
@@ -135,7 +137,9 @@ def backfill_garmin(
             rows_upserted += 1
         for metric in garmin_bulk.parse_daily_metrics(base_dir):
             rows_in += 1
-            db.upsert(conn, "daily_metrics", metric.to_row(), ["date"])
+            db.upsert(
+                conn, "daily_metrics", metric.to_row(), ["date"], merge_json_columns=["sources"]
+            )
             rows_upserted += 1
     except Exception as exc:  # noqa: BLE001 - reported to ingest_runs, not swallowed
         db.finish_ingest_run(
@@ -187,6 +191,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             print("dedupe: no duplicates found")
+        if dedupe_result.fk_conflicts:
+            print(
+                f"dedupe: {len(dedupe_result.fk_conflicts)} loser row(s) left unmerged — "
+                f"referenced by bjj_sessions.linked_activity_id or activity_laps.activity_id: "
+                f"{dedupe_result.fk_conflicts}"
+            )
     finally:
         conn.close()
 

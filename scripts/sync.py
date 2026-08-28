@@ -82,7 +82,9 @@ def sync_garmin(conn: sqlite3.Connection, start_date: date, end_date: date) -> b
     try:
         for metric in garmin.fetch_daily_metrics(client, start_date, end_date, errors=errors):
             rows_in += 1
-            db.upsert(conn, "daily_metrics", metric.to_row(), ["date"])
+            db.upsert(
+                conn, "daily_metrics", metric.to_row(), ["date"], merge_json_columns=["sources"]
+            )
             rows_upserted += 1
 
         for activity in garmin.fetch_activities(client, start_date, end_date, errors=errors):
@@ -152,28 +154,43 @@ def sync_health_auto_export(conn: sqlite3.Connection) -> bool:
 
     run_id = db.start_ingest_run(conn, "health_auto_export")
     rows_in = rows_upserted = 0
+    errors: list[str] = []
     try:
-        for metric in health_auto_export.parse_weight(export_dir):
+        for metric in health_auto_export.parse_weight(export_dir, errors=errors):
             rows_in += 1
-            db.upsert(conn, "daily_metrics", metric.to_row(), ["date"])
+            db.upsert(
+                conn, "daily_metrics", metric.to_row(), ["date"], merge_json_columns=["sources"]
+            )
             rows_upserted += 1
     except Exception as exc:  # noqa: BLE001 - reported to ingest_runs, not swallowed
+        errors.append(str(exc))
         db.finish_ingest_run(
             conn,
             run_id,
             status="failed",
             rows_in=rows_in,
             rows_upserted=rows_upserted,
-            errors=[str(exc)],
+            errors=errors,
         )
         print(f"health_auto_export: FAILED after {rows_upserted} rows — {exc}")
         traceback.print_exc()
         return False
 
+    # `errors` here are per-record parse failures parse_weight() already
+    # skipped past gracefully (bad unit, unparseable date) -- non-fatal, but
+    # recorded rather than silently dropped.
     db.finish_ingest_run(
-        conn, run_id, status="success", rows_in=rows_in, rows_upserted=rows_upserted, rows_skipped=0
+        conn,
+        run_id,
+        status="success",
+        rows_in=rows_in,
+        rows_upserted=rows_upserted,
+        rows_skipped=0,
+        errors=errors or None,
     )
     print(f"health_auto_export: {rows_upserted} rows upserted from {export_dir}")
+    if errors:
+        print(f"health_auto_export: {len(errors)} non-fatal warning(s) — see ingest_runs.errors")
     return True
 
 
@@ -208,6 +225,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             print("dedupe: no duplicates found")
+        if dedupe_result.fk_conflicts:
+            print(
+                f"dedupe: {len(dedupe_result.fk_conflicts)} loser row(s) left unmerged — "
+                f"referenced by bjj_sessions.linked_activity_id or activity_laps.activity_id: "
+                f"{dedupe_result.fk_conflicts}"
+            )
     finally:
         conn.close()
 

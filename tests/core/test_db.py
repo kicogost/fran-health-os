@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 
@@ -92,6 +93,88 @@ class TestUpsert:
         row = conn.execute("SELECT * FROM daily_metrics WHERE date = ?", ("2026-08-27",)).fetchone()
         assert row["resting_hr"] == 52.0
         assert row["weight_kg"] == 78.45
+
+    def test_partial_upsert_without_merge_clobbers_sources_real_bug(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # Documents the bug this fixes (found 2026-08-28, confirmed by two
+        # independent reviewers): without merge_json_columns, a second
+        # ingestion run's `sources` dict REPLACES the first's wholesale, even
+        # though the underlying VALUE columns are correctly preserved above.
+        db_module.upsert(
+            conn,
+            "daily_metrics",
+            {"date": "2026-08-27", "resting_hr": 52.0, "sources": {"resting_hr": "garmin"}},
+            ["date"],
+        )
+        db_module.upsert(
+            conn,
+            "daily_metrics",
+            {"date": "2026-08-27", "weight_kg": 78.45, "sources": {"weight_kg": "apple_health"}},
+            ["date"],
+        )
+        row = conn.execute("SELECT * FROM daily_metrics WHERE date = ?", ("2026-08-27",)).fetchone()
+        assert row["resting_hr"] == 52.0  # value survives
+        assert json.loads(row["sources"]) == {"weight_kg": "apple_health"}  # provenance lost
+
+    def test_merge_json_columns_preserves_provenance_across_partial_upserts(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        db_module.upsert(
+            conn,
+            "daily_metrics",
+            {"date": "2026-08-27", "resting_hr": 52.0, "sources": {"resting_hr": "garmin"}},
+            ["date"],
+            merge_json_columns=["sources"],
+        )
+        db_module.upsert(
+            conn,
+            "daily_metrics",
+            {"date": "2026-08-27", "weight_kg": 78.45, "sources": {"weight_kg": "apple_health"}},
+            ["date"],
+            merge_json_columns=["sources"],
+        )
+        row = conn.execute("SELECT * FROM daily_metrics WHERE date = ?", ("2026-08-27",)).fetchone()
+        assert row["resting_hr"] == 52.0
+        assert row["weight_kg"] == 78.45
+        assert json.loads(row["sources"]) == {"resting_hr": "garmin", "weight_kg": "apple_health"}
+
+    def test_merge_json_columns_new_value_wins_on_key_conflict(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        db_module.upsert(
+            conn,
+            "daily_metrics",
+            {"date": "2026-08-27", "sources": {"resting_hr": "garmin"}},
+            ["date"],
+            merge_json_columns=["sources"],
+        )
+        db_module.upsert(
+            conn,
+            "daily_metrics",
+            {"date": "2026-08-27", "sources": {"resting_hr": "corrected_manually"}},
+            ["date"],
+            merge_json_columns=["sources"],
+        )
+        row = conn.execute(
+            "SELECT sources FROM daily_metrics WHERE date = ?", ("2026-08-27",)
+        ).fetchone()
+        assert json.loads(row["sources"]) == {"resting_hr": "corrected_manually"}
+
+    def test_merge_json_columns_on_fresh_insert_needs_no_existing_row(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        db_module.upsert(
+            conn,
+            "daily_metrics",
+            {"date": "2026-08-27", "sources": {"resting_hr": "garmin"}},
+            ["date"],
+            merge_json_columns=["sources"],
+        )
+        row = conn.execute(
+            "SELECT sources FROM daily_metrics WHERE date = ?", ("2026-08-27",)
+        ).fetchone()
+        assert json.loads(row["sources"]) == {"resting_hr": "garmin"}
 
     def test_conflict_bumps_updated_at_but_not_created_at(self, conn: sqlite3.Connection) -> None:
         db_module.upsert(

@@ -127,6 +127,7 @@ def upsert(
     conflict_columns: Sequence[str],
     *,
     touch_column: str | None = "updated_at",
+    merge_json_columns: Sequence[str] = (),
 ) -> None:
     """Idempotent insert-or-update on a natural key (design principle 4).
 
@@ -139,6 +140,20 @@ def upsert(
     is bumped to the current UTC timestamp on both insert and update. Pass
     `touch_column=None` for tables with no such bookkeeping column (e.g.
     `ingest_runs`, which uses its own start/finish helpers instead).
+
+    `merge_json_columns` — column names that are dict-valued in `row` and whose
+    EXISTING stored value (if any) should be merged into, not replaced by, this
+    call's value. Without this, a plain overwrite is real, occurring data loss
+    for a provenance column like `daily_metrics.sources`: a Garmin sync writing
+    `{"resting_hr": "garmin"}` followed by an Apple-Health/Renpho sync writing
+    `{"weight_kg": "apple_health:renpho"}` for the SAME date would otherwise
+    leave `sources` as just the second call's dict, silently losing the first
+    call's provenance entirely — exactly the design-principle-9 traceability
+    this column exists for. New keys win over the existing stored value's keys
+    on conflict. Only applies to columns actually present and dict-valued in
+    `row`; list-valued JSON columns (e.g. `activities.merged_from`) already have
+    their own read-merge-write handling at the call site (`core/dedupe.py`) and
+    aren't a fit for a naive dict-merge here.
     """
     if not row:
         raise ValueError("upsert() called with an empty row")
@@ -147,6 +162,22 @@ def upsert(
         _check_identifier(col, what="column")
     for col in conflict_columns:
         _check_identifier(col, what="conflict column")
+    for col in merge_json_columns:
+        _check_identifier(col, what="merge_json column")
+
+    row = dict(row)
+    for col in merge_json_columns:
+        if col not in row or not isinstance(row[col], dict):
+            continue
+        where_clause = " AND ".join(f"{c} = :{c}" for c in conflict_columns)
+        existing = conn.execute(
+            f"SELECT {col} FROM {table} WHERE {where_clause}",  # noqa: S608 - identifiers checked above
+            {c: row[c] for c in conflict_columns},
+        ).fetchone()
+        if existing is not None and existing[0]:
+            existing_value = json.loads(existing[0])
+            if isinstance(existing_value, dict):
+                row[col] = {**existing_value, **row[col]}
 
     encoded: dict[str, Any] = {
         col: json.dumps(val) if isinstance(val, (dict, list)) else val for col, val in row.items()

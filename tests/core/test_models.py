@@ -15,6 +15,7 @@ from health_os.core.models import (
     DerivedMetric,
     IngestRun,
     SubjectiveLogEntry,
+    merge_subjective_log_entry,
 )
 
 
@@ -290,6 +291,45 @@ class TestSubjectiveLogEntry:
         reloaded = SubjectiveLogEntry.from_row(row)
         assert reloaded.sleep_quality == 2
         assert reloaded.hooper_index == 11
+
+
+class TestMergeSubjectiveLogEntry:
+    def test_hooper_index_computed_when_four_scores_logged_across_separate_calls(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # Real bug found 2026-08-28: log_wellness.py's own documented usage
+        # pattern is logging different subsets on different calls -- without
+        # merging first, hooper_index stays permanently NULL even though all
+        # 4 sub-scores end up correctly stored in the DB.
+        first = SubjectiveLogEntry(date="2026-08-27", sleep_quality=3, stress=2)
+        assert first.hooper_index is None
+        db_module.upsert(conn, "subjective_log", first.to_row(), ["date"])
+
+        second = SubjectiveLogEntry(date="2026-08-27", fatigue=4, muscle_soreness=5)
+        assert second.hooper_index is None  # correct in isolation -- 2 of 4 known
+        merged = merge_subjective_log_entry(conn, second)
+        assert merged.hooper_index == 14  # 3+2+4+5, computed over the FULL set
+        assert merged.sleep_quality == 3  # carried over from the existing row
+        assert merged.stress == 2
+
+        db_module.upsert(conn, "subjective_log", merged.to_row(), ["date"])
+        row = conn.execute(
+            "SELECT * FROM subjective_log WHERE date = ?", ("2026-08-27",)
+        ).fetchone()
+        assert row["hooper_index"] == 14
+
+    def test_new_value_overrides_existing_on_same_field(self, conn: sqlite3.Connection) -> None:
+        first = SubjectiveLogEntry(date="2026-08-27", protein_hit=False)
+        db_module.upsert(conn, "subjective_log", first.to_row(), ["date"])
+
+        second = SubjectiveLogEntry(date="2026-08-27", protein_hit=True)
+        merged = merge_subjective_log_entry(conn, second)
+        assert merged.protein_hit is True
+
+    def test_no_existing_row_returns_entry_unchanged(self, conn: sqlite3.Connection) -> None:
+        entry = SubjectiveLogEntry(date="2026-08-27", sleep_quality=3)
+        merged = merge_subjective_log_entry(conn, entry)
+        assert merged is entry
 
 
 class TestBodyMeasurement:

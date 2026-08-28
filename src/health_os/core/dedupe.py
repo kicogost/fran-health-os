@@ -196,6 +196,7 @@ class DedupeResult:
     groups_merged: int
     rows_deleted: int
     winners: list[str]  # activity_ids that absorbed at least one duplicate
+    fk_conflicts: list[str]  # loser activity_ids that could NOT be deleted (see below)
 
 
 def dedupe_activities(
@@ -204,24 +205,45 @@ def dedupe_activities(
     """Find and merge cross-source duplicate activities. Idempotent — running
     this twice with no new ingestion in between finds nothing the second time,
     since the loser rows are gone after the first pass.
+
+    A loser row can be referenced by `bjj_sessions.linked_activity_id` or
+    `activity_laps.activity_id` (neither FK declares `ON DELETE CASCADE`), so
+    deleting it would violate a foreign key with `PRAGMA foreign_keys = ON`.
+    Not reachable via the two real call sites today (default precedence always
+    ranks Garmin highest, and laps only ever attach to Garmin rows) — but
+    latent, and a bare `DELETE` here would otherwise raise mid-loop and abort
+    every cluster in the same pass, including ones already merged, with no
+    `ingest_runs` record of any of it (this function isn't itself wrapped in
+    start/finish_ingest_run). Each loser's delete is caught individually
+    instead: a conflicting loser is skipped (left unmerged, NOT recorded as
+    absorbed) rather than crashing the rest of the run, and its id is
+    collected in `fk_conflicts` — never silently dropped, design principle 6.
     """
     rows = _load_rows(conn)
     clusters = _cluster(rows)
 
     winners: list[str] = []
     rows_deleted = 0
+    fk_conflicts: list[str] = []
     with conn:
         for cluster in clusters:
             winner, losers = _pick_winner(cluster, precedence)
             new_merged = list(winner.merged_from)
             for loser in losers:
+                try:
+                    conn.execute(
+                        "DELETE FROM activities WHERE activity_id = ?", (loser.activity_id,)
+                    )
+                except sqlite3.IntegrityError:
+                    fk_conflicts.append(loser.activity_id)
+                    continue
                 # Record the loser's own identity, plus anything IT had already
                 # absorbed in an earlier merge pass (transitive: e.g. Garmin
                 # later out-ranking a row that already absorbed an Apple Health
-                # duplicate before Garmin was loaded).
+                # duplicate before Garmin was loaded). Only recorded once the
+                # delete above actually succeeded.
                 new_merged.append({"source": loser.source, "source_id": loser.source_id})
                 new_merged.extend(loser.merged_from)
-                conn.execute("DELETE FROM activities WHERE activity_id = ?", (loser.activity_id,))
                 rows_deleted += 1
             new_merged = _dedupe_merged_from(new_merged)
             conn.execute(
@@ -231,4 +253,9 @@ def dedupe_activities(
             )
             winners.append(winner.activity_id)
 
-    return DedupeResult(groups_merged=len(clusters), rows_deleted=rows_deleted, winners=winners)
+    return DedupeResult(
+        groups_merged=len(clusters),
+        rows_deleted=rows_deleted,
+        winners=winners,
+        fk_conflicts=fk_conflicts,
+    )

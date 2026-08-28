@@ -23,6 +23,7 @@ from health_os.core.models import (
     BodyMeasurement,
     CalisthenicsSession,
     SubjectiveLogEntry,
+    merge_subjective_log_entry,
 )
 from health_os.dashboard import data
 
@@ -47,24 +48,32 @@ with tab_bjj:
         "Session type", ["class", "open_mat", "gi_drilling"], key="bjj_type"
     )
     rolling = session_type in ("class", "open_mat")
+    # Outside the form (same reason as session_type above): a date_input INSIDE
+    # an st.form doesn't rerun until submit, so the "already logged" check
+    # below could otherwise only ever see today's date, never a backdated one
+    # being entered -- a real bug (found 2026-08-28) that let a backdated
+    # submission silently overwrite an existing day's entry with no warning.
+    bjj_date = st.date_input(
+        "Date", value=datetime.fromisoformat(_today()), key="bjj_date"
+    ).isoformat()
 
     conn = db.init_db()
     try:
         existing = conn.execute(
             "SELECT duration_min, session_rpe, computed_load FROM bjj_sessions "
             "WHERE date = ? AND session_type = ?",
-            (_today(), session_type),
+            (bjj_date, session_type),
         ).fetchone()
     finally:
         conn.close()
     if existing is not None:
         st.warning(
-            f"Already logged today: {existing['duration_min']}min @ RPE {existing['session_rpe']} "
-            f"(load {existing['computed_load']:.0f}). Submitting again will overwrite it."
+            f"Already logged for {bjj_date}: {existing['duration_min']}min "
+            f"@ RPE {existing['session_rpe']} (load {existing['computed_load']:.0f}). "
+            "Submitting again will overwrite it."
         )
 
     with st.container(border=True), st.form("bjj_form"):
-        bjj_date = st.date_input("Date", value=datetime.fromisoformat(_today())).isoformat()
         duration_min = st.number_input("Duration (min)", min_value=1, max_value=600, value=90)
         session_rpe = st.slider("Session RPE", 1, 10, 7)
         rounds_rolled = rounds_gassed = None
@@ -111,18 +120,25 @@ with tab_bjj:
 
 with tab_calisthenics:
     cal_session_type = st.selectbox("Session type", ["strength_a", "strength_b"], key="cal_type")
+    # Outside the form -- see the BJJ tab's comment above for why (real bug,
+    # found 2026-08-28: an in-form date_input can't be seen by a pre-form
+    # overwrite check until submit).
+    cal_date = st.date_input(
+        "Date", value=datetime.fromisoformat(_today()), key="cal_date"
+    ).isoformat()
 
     conn = db.init_db()
     try:
         existing = conn.execute(
             "SELECT session_rpe FROM calisthenics_sessions WHERE date = ? AND session_type = ?",
-            (_today(), cal_session_type),
+            (cal_date, cal_session_type),
         ).fetchone()
     finally:
         conn.close()
     if existing is not None:
         st.warning(
-            f"Already logged today ({cal_session_type}). Submitting again will overwrite it."
+            f"Already logged for {cal_date} ({cal_session_type}). "
+            "Submitting again will overwrite it."
         )
 
     prescribed = (
@@ -132,9 +148,6 @@ with tab_calisthenics:
     )
 
     with st.container(border=True), st.form("calisthenics_form"):
-        cal_date = st.date_input(
-            "Date", value=datetime.fromisoformat(_today()), key="cal_date"
-        ).isoformat()
         exercise_inputs = []
         for raw in prescribed:
             name = raw.split(":")[0].strip()
@@ -192,25 +205,29 @@ with tab_calisthenics:
             st.success(f"Logged: {session.date} {session.session_type}{suffix}")
 
 with tab_wellness:
+    # Outside the form -- see the BJJ tab's comment above for why (real bug,
+    # found 2026-08-28: an in-form date_input can't be seen by a pre-form
+    # overwrite check until submit).
+    wellness_date = st.date_input(
+        "Date", value=datetime.fromisoformat(_today()), key="wellness_date"
+    ).isoformat()
+
     conn = db.init_db()
     try:
         existing = conn.execute(
-            "SELECT hooper_index FROM subjective_log WHERE date = ?", (_today(),)
+            "SELECT hooper_index FROM subjective_log WHERE date = ?", (wellness_date,)
         ).fetchone()
     finally:
         conn.close()
     if existing is not None:
         st.warning(
-            f"Already logged today (hooper_index={existing['hooper_index']}). "
+            f"Already logged for {wellness_date} (hooper_index={existing['hooper_index']}). "
             "Submitting again will overwrite it."
         )
 
     log_wellness_scores = st.checkbox("Log the 4 wellness scores today", value=True)
 
     with st.container(border=True), st.form("wellness_form"):
-        wellness_date = st.date_input(
-            "Date", value=datetime.fromisoformat(_today()), key="wellness_date"
-        ).isoformat()
         sleep_quality = stress = fatigue = muscle_soreness = None
         if log_wellness_scores:
             st.caption("1 = best, 10 = worst")
@@ -244,6 +261,11 @@ with tab_wellness:
         else:
             conn = db.init_db()
             try:
+                # Merge with any existing row for this date FIRST -- see
+                # merge_subjective_log_entry's docstring: hooper_index needs
+                # all 4 sub-scores, which may have been logged in an earlier,
+                # separate submission (a real bug otherwise, found 2026-08-28).
+                entry = merge_subjective_log_entry(conn, entry)
                 db.upsert(conn, "subjective_log", entry.to_row(), ["date"])
             finally:
                 conn.close()
@@ -254,23 +276,28 @@ with tab_wellness:
             st.success(msg)
 
 with tab_waist:
+    # Outside the form -- see the BJJ tab's comment above for why (real bug,
+    # found 2026-08-28: an in-form date_input can't be seen by a pre-form
+    # overwrite check until submit).
+    waist_date = st.date_input(
+        "Date", value=datetime.fromisoformat(_today()), key="waist_date"
+    ).isoformat()
+
     conn = db.init_db()
     try:
         existing = conn.execute(
             "SELECT value_cm FROM body_measurements WHERE date = ? AND measurement_type = 'waist'",
-            (_today(),),
+            (waist_date,),
         ).fetchone()
     finally:
         conn.close()
     if existing is not None:
         st.warning(
-            f"Already logged today ({existing['value_cm']} cm). Submitting again will overwrite it."
+            f"Already logged for {waist_date} ({existing['value_cm']} cm). "
+            "Submitting again will overwrite it."
         )
 
     with st.container(border=True), st.form("waist_form"):
-        waist_date = st.date_input(
-            "Date", value=datetime.fromisoformat(_today()), key="waist_date"
-        ).isoformat()
         value_cm = st.number_input(
             "Waist (cm)", min_value=40.0, max_value=200.0, value=86.0, step=0.1
         )

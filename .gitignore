@@ -31,3 +31,6 @@ htmlcov/
 # Editors
 .vscode/
 .idea/
+
+# Claude Code local tooling config (agent personas, etc.) — not project source.
+.claude/

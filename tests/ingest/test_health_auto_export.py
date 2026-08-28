@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -51,3 +52,62 @@ class TestParseWeight:
     def test_non_matching_files_in_directory_are_ignored(self, tmp_path: Path) -> None:
         (tmp_path / "not_a_health_export.json").write_text("{}")
         assert list(parse_weight(tmp_path)) == []
+
+    def test_one_malformed_entry_does_not_discard_other_valid_readings(
+        self, tmp_path: Path
+    ) -> None:
+        # Real bug found 2026-08-28: parse_weight() built its whole result
+        # dict in one pass with no per-record isolation, so a single bad
+        # record ANYWHERE (an unrecognized unit, an unparseable date) raised
+        # uncaught before a single DailyMetric was ever yielded -- discarding
+        # every good reading in every file, not just the bad one.
+        (tmp_path / "HealthAutoExport-good.json").write_text(
+            json.dumps(
+                {
+                    "data": {
+                        "metrics": [
+                            {
+                                "name": "weight_body_mass",
+                                "units": "kg",
+                                "data": [
+                                    {
+                                        "qty": 78.45,
+                                        "date": "2026-08-21 00:00:00 +0200",
+                                        "source": "RENPHO Health",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            )
+        )
+        (tmp_path / "HealthAutoExport-bad.json").write_text(
+            json.dumps(
+                {
+                    "data": {
+                        "metrics": [
+                            {
+                                "name": "weight_body_mass",
+                                "units": "st",  # unrecognized unit -- real trigger
+                                "data": [
+                                    {
+                                        "qty": 12.0,
+                                        "date": "2026-08-22 00:00:00 +0200",
+                                        "source": "RENPHO Health",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            )
+        )
+
+        errors: list[str] = []
+        by_date = {m.date: m for m in parse_weight(tmp_path, errors=errors)}
+
+        assert by_date["2026-08-21"].weight_kg == pytest.approx(78.45)
+        assert "2026-08-22" not in by_date
+        assert len(errors) == 1
+        assert "st" in errors[0]

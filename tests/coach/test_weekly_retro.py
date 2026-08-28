@@ -78,6 +78,31 @@ class TestSessionCompletion:
         by_date = {(s["date"], s["type"]): s["status"] for s in plan["sessions"]}
         assert by_date[("2026-08-24", "calisthenics")] == "completed"
 
+    def test_calisthenics_completed_from_garmin_activity_alone(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # Real gap found 2026-08-28: a session actually recorded on the watch
+        # as a Garmin "Strength Training" activity, with NO manual
+        # calisthenics_sessions log entry that day, must still count as
+        # completed -- CLAUDE.md's own design for this table is explicitly
+        # two-signal (Garmin activity OR manual log), not manual-log-only.
+        db.upsert(
+            conn,
+            "activities",
+            Activity(
+                activity_id="garmin:2",
+                source="garmin",
+                source_id="2",
+                start_utc="2026-08-24T18:00:00Z",
+                local_date="2026-08-24",
+                sport="strength_training",
+            ).to_row(),
+            ["source", "source_id"],
+        )
+        plan = compute_weekly_retro(conn, _CONFIG, WEEK_ENDING)
+        by_date = {(s["date"], s["type"]): s["status"] for s in plan["sessions"]}
+        assert by_date[("2026-08-24", "calisthenics")] == "completed"
+
     def test_bike_from_activities_table(self, conn: sqlite3.Connection) -> None:
         db.upsert(
             conn,

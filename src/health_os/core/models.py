@@ -390,6 +390,41 @@ class SubjectiveLogEntry:
         )
 
 
+def merge_subjective_log_entry(
+    conn: sqlite3.Connection, entry: SubjectiveLogEntry
+) -> SubjectiveLogEntry:
+    """Merge `entry` with any existing `subjective_log` row for the same date
+    before upserting: a field left `None` on `entry` falls back to whatever's
+    already stored, and `hooper_index` is recomputed over the FULL merged set
+    of the 4 Hooper-Mackinnon sub-scores rather than only whichever subset was
+    passed to this one constructor call.
+
+    Real bug this fixes (found 2026-08-28): `SubjectiveLogEntry.__post_init__`
+    only ever sees the fields present on that one call. `log_wellness.py`'s
+    own docstring documents logging different subsets across separate calls
+    ("log just the wellness scores some days, just protein/social-meal on
+    others") — a real day where all 4 sub-scores end up correctly stored in
+    the DB, just never together in the SAME call, would otherwise leave
+    `hooper_index` permanently NULL, silently degrading the readiness score's
+    subjective component (dropped as missing rather than computed from data
+    that genuinely exists).
+    """
+    existing_row = conn.execute(
+        "SELECT * FROM subjective_log WHERE date = ?", (entry.date,)
+    ).fetchone()
+    if existing_row is None:
+        return entry
+
+    existing = SubjectiveLogEntry.from_row(existing_row)
+    merged_fields: dict[str, Any] = {}
+    for f in dataclasses.fields(SubjectiveLogEntry):
+        if f.name == "hooper_index":
+            continue  # recomputed fresh in __post_init__, never carried over stale
+        new_value = getattr(entry, f.name)
+        merged_fields[f.name] = new_value if new_value is not None else getattr(existing, f.name)
+    return SubjectiveLogEntry(**merged_fields)
+
+
 @dataclass(slots=True)
 class BodyMeasurement:
     """One row of `body_measurements` — grain: (date, measurement_type)."""

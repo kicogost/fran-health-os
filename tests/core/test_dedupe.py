@@ -205,3 +205,41 @@ class TestDedupeActivities:
         remaining = conn.execute("SELECT * FROM activities").fetchall()
         assert remaining[0]["source"] == "apple_health"
         assert result.rows_deleted == 1
+
+    def test_loser_referenced_by_activity_laps_is_skipped_not_crashed(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # Real, latent gap found 2026-08-28: neither
+        # bjj_sessions.linked_activity_id nor activity_laps.activity_id
+        # declares ON DELETE CASCADE, so deleting a loser row that one of
+        # them still references would violate a FK with foreign_keys=ON.
+        # Forcing this via a custom precedence that makes the Apple Health
+        # row (which has an attached lap here, an artificial setup purely to
+        # exercise the FK path) the loser.
+        garmin = _insert(conn, source="garmin", source_id="g1")
+        apple = _insert(conn, source="apple_health", source_id="a1")
+        # The lap is attached to the row that will be the LOSER under this
+        # precedence (garmin outranked by apple_health here) -- that's what
+        # makes the loser's DELETE hit the FK.
+        conn.execute(
+            "INSERT INTO activity_laps (activity_id, lap_index, start_utc) VALUES (?, 1, ?)",
+            (garmin.activity_id, "2026-08-27T17:00:00Z"),
+        )
+
+        result = dedupe_activities(conn, precedence=("apple_health", "garmin"))
+
+        # garmin (the loser under this precedence) should have been skipped,
+        # not deleted -- both rows still present, and the skip is recorded,
+        # not silently dropped.
+        remaining_ids = {
+            r["activity_id"] for r in conn.execute("SELECT activity_id FROM activities")
+        }
+        assert remaining_ids == {garmin.activity_id, apple.activity_id}
+        assert result.rows_deleted == 0
+        assert result.fk_conflicts == [garmin.activity_id]
+
+    def test_fk_conflicts_empty_when_no_conflict(self, conn: sqlite3.Connection) -> None:
+        _insert(conn, source="strava", source_id="s1")
+        _insert(conn, source="apple_health", source_id="a1")
+        result = dedupe_activities(conn)
+        assert result.fk_conflicts == []

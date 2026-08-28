@@ -222,6 +222,30 @@ class TestFetchDailyMetrics:
         assert len(errors) == 1
         assert "get_hrv_data" in errors[0]
 
+    def test_generic_exception_on_one_endpoint_does_not_block_others_or_later_dates(self) -> None:
+        # Real bug found 2026-08-28: only GarminConnectResponseValidationError
+        # was caught per-endpoint -- a transient error (timeout, 429 rate
+        # limit, both observed for real against this account) on ANY other
+        # exception type propagated uncaught, aborting the rest of the date
+        # range (and the activities/laps fetch that follows in the same sync
+        # run). Using a plain RuntimeError here specifically because it is
+        # NOT a GarminConnectResponseValidationError.
+        typed = _FakeTyped()
+        typed.stats["2026-08-01"] = DailyStats(resting_heart_rate=50)
+        typed.raises[("get_stats", "2026-08-02")] = RuntimeError("429 rate limited")
+        typed.stats["2026-08-03"] = DailyStats(resting_heart_rate=52)
+        client = _FakeClient(typed)
+        errors: list[str] = []
+
+        metrics = {
+            m.date: m
+            for m in garmin.fetch_daily_metrics(
+                client, date(2026, 8, 1), date(2026, 8, 3), errors=errors
+            )
+        }
+        assert set(metrics) == {"2026-08-01", "2026-08-03"}
+        assert any("429 rate limited" in e for e in errors)
+
     def test_covers_every_date_in_inclusive_range(self) -> None:
         typed = _FakeTyped()
         typed.stats["2026-08-01"] = DailyStats(resting_heart_rate=50)
@@ -336,6 +360,35 @@ class TestFetchActivities:
         assert activities == []
         assert len(errors) == 1
         assert "network down" in errors[0]
+
+    def test_unparseable_timestamp_is_skipped_and_does_not_drop_later_activities(self) -> None:
+        # Real bug found 2026-08-28: _activity_to_model() was called
+        # unguarded, so an activity that passes pydantic validation but has a
+        # startTimeGMT shape _parse_garmin_gmt_timestamp() can't parse raised
+        # uncaught, silently dropping every activity after it in the batch.
+        client = _FakeClient()
+        client.activities = [
+            _raw_activity(activityId=1, startTimeGMT="not-a-real-timestamp"),
+            _raw_activity(activityId=2),
+        ]
+        errors: list[str] = []
+        activities = list(garmin.fetch_activities(client, *_one_day(), errors=errors))
+        assert [a.source_id for a in activities] == ["2"]
+        assert len(errors) == 1
+        assert "1" in errors[0]
+
+    def test_non_dict_activity_entry_does_not_mask_error_or_drop_batch(self) -> None:
+        # Real bug found 2026-08-28: the error-label expression itself
+        # (`raw.get(...)`) assumed `raw` was always a dict, so a malformed
+        # non-dict entry raised AttributeError from inside the except block,
+        # masking the real validation error and aborting the rest of the
+        # batch.
+        client = _FakeClient()
+        client.activities = [None, _raw_activity(activityId=2)]
+        errors: list[str] = []
+        activities = list(garmin.fetch_activities(client, *_one_day(), errors=errors))
+        assert [a.source_id for a in activities] == ["2"]
+        assert len(errors) == 1
 
     def test_naive_gmt_timestamp_treated_as_utc(self) -> None:
         # No 'T', no offset -- the documented real-world shape for startTimeGMT.

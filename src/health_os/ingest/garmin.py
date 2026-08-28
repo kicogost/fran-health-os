@@ -20,10 +20,16 @@ installed library source (`garminconnect/typed.py`):
 models' field names are self-documenting about units (`total_distance_meters`,
 `sleeping_seconds`, ...) in a way the bulk export's raw JSON never was — see
 ADR 0004 for the full reasoning, including why this is a deliberate deviation
-from "hand-parse everything ourselves." A per-endpoint validation failure
-(`GarminConnectResponseValidationError`, e.g. Garmin adds/renames a field
-upstream) is caught and skipped rather than crashing the whole day's sync —
-logged into `ingest_runs.errors` by the caller, never silently swallowed.
+from "hand-parse everything ourselves." A per-endpoint failure on any one
+date — a `GarminConnectResponseValidationError` (Garmin adds/renames a field
+upstream), or any other exception (a timeout, a 429 rate-limit — both
+observed for real against this account, see CLAUDE.md's "Real first run"
+notes) — is caught and skipped rather than crashing the rest of the date
+range and the activities/laps fetch that follows in the same sync run
+(broadened 2026-08-28 from catching only the validation-error subtype, a real
+bug: a transient network error on day 2 of a 3-day window used to silently
+lose day 3 and abort the whole run). Recorded into `ingest_runs.errors` by
+the caller, never silently swallowed.
 
 Live-activity units are NOT self-documented the same way (`typed.Activity`
 fields are just `distance`/`duration`/`elevation_gain`, no unit suffix) — this
@@ -69,7 +75,6 @@ from typing import Any
 
 from garminconnect import Garmin
 from garminconnect.typed import Activity as TypedActivity
-from garminconnect.typed import GarminConnectResponseValidationError
 
 from health_os.core.models import Activity, ActivityLap, DailyMetric
 from health_os.core.timezones import to_local_date, to_utc_iso
@@ -178,9 +183,9 @@ def _fetch_one_day_metrics(
         _record("stress_avg", stats.average_stress_level)
         _record("body_battery_max", stats.body_battery_highest_value)
         _record("body_battery_min", stats.body_battery_lowest_value)
-    except GarminConnectResponseValidationError as exc:
+    except Exception as exc:  # noqa: BLE001 - one bad endpoint/day must not crash the whole sync
         if errors is not None:
-            errors.append(f"get_stats({cdate}) validation failed: {exc}")
+            errors.append(f"get_stats({cdate}) failed: {exc}")
 
     try:
         sleep = client.typed.get_sleep_data(cdate)
@@ -202,26 +207,26 @@ def _fetch_one_day_metrics(
                 _record("sleep_awake_min", round(dto.awake_sleep_seconds * _SECONDS_TO_MINUTES))
             if dto.sleep_scores and dto.sleep_scores.overall:
                 _record("sleep_score", dto.sleep_scores.overall.value)
-    except GarminConnectResponseValidationError as exc:
+    except Exception as exc:  # noqa: BLE001 - one bad endpoint/day must not crash the whole sync
         if errors is not None:
-            errors.append(f"get_sleep_data({cdate}) validation failed: {exc}")
+            errors.append(f"get_sleep_data({cdate}) failed: {exc}")
 
     try:
         hrv = client.typed.get_hrv_data(cdate)  # None is a valid "no data" response
         if hrv is not None and hrv.hrv_summary is not None:
             _record("hrv_overnight_ms", hrv.hrv_summary.last_night_avg)
             _record("hrv_status", hrv.hrv_summary.status)
-    except GarminConnectResponseValidationError as exc:
+    except Exception as exc:  # noqa: BLE001 - one bad endpoint/day must not crash the whole sync
         if errors is not None:
-            errors.append(f"get_hrv_data({cdate}) validation failed: {exc}")
+            errors.append(f"get_hrv_data({cdate}) failed: {exc}")
 
     try:
         readiness = _pick_morning_readiness(client.typed.get_training_readiness(cdate))
         if readiness is not None:
             _record("training_readiness", readiness.score)
-    except GarminConnectResponseValidationError as exc:
+    except Exception as exc:  # noqa: BLE001 - one bad endpoint/day must not crash the whole sync
         if errors is not None:
-            errors.append(f"get_training_readiness({cdate}) validation failed: {exc}")
+            errors.append(f"get_training_readiness({cdate}) failed: {exc}")
 
     if not fields:
         return None
@@ -301,7 +306,11 @@ def fetch_activities(
     """One `Activity` per record from `get_activities_by_date` in
     `[start_date, end_date]` (inclusive). See module docstring for the
     seconds/meters unit assumption. A single malformed activity is skipped
-    (appended to `errors`) rather than failing the whole batch.
+    (appended to `errors`) rather than failing the whole batch — this covers
+    both a pydantic validation failure AND a subsequent mapping failure (e.g.
+    an unparseable `startTimeGMT`; found as a real bug 2026-08-28 that
+    `_activity_to_model()` was called unguarded here, so one bad timestamp
+    used to abort every activity after it in the same sync run).
     """
     try:
         raw_activities = client.get_activities_by_date(start_date.isoformat(), end_date.isoformat())
@@ -311,14 +320,24 @@ def fetch_activities(
         return
 
     for raw in raw_activities:
+        # `raw` is assumed dict-shaped for error-labeling purposes only, and
+        # defensively so: a malformed non-dict entry must still be reported
+        # (below) rather than masking the real error with an AttributeError
+        # from `.get()` itself.
+        raw_id = raw.get("activityId", "?") if isinstance(raw, dict) else "?"
         try:
             typed_activity = TypedActivity.model_validate(raw)
         except Exception as exc:  # noqa: BLE001 - one bad activity shouldn't drop the batch
             if errors is not None:
-                errors.append(f"activity {raw.get('activityId', '?')} validation failed: {exc}")
+                errors.append(f"activity {raw_id} validation failed: {exc}")
             continue
 
-        activity = _activity_to_model(typed_activity)
+        try:
+            activity = _activity_to_model(typed_activity)
+        except Exception as exc:  # noqa: BLE001 - one bad activity shouldn't drop the batch
+            if errors is not None:
+                errors.append(f"activity {raw_id} mapping failed: {exc}")
+            continue
         if activity is not None:
             yield activity
 

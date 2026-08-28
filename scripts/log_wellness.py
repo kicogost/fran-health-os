@@ -24,7 +24,7 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from health_os.core import db  # noqa: E402
-from health_os.core.models import SubjectiveLogEntry  # noqa: E402
+from health_os.core.models import SubjectiveLogEntry, merge_subjective_log_entry  # noqa: E402
 
 _WELLNESS_LABELS = {
     "sleep_quality": "Sleep quality",
@@ -180,6 +180,11 @@ def main(argv: list[str] | None = None) -> int:
     conn = db.init_db(args.db_path)
     try:
         _warn_if_overwriting(conn, entry)
+        # Merge with any existing row for this date FIRST -- hooper_index can
+        # only be computed once all 4 sub-scores are known, which may have
+        # been logged across separate calls (see merge_subjective_log_entry's
+        # docstring for the real bug this fixes).
+        entry = merge_subjective_log_entry(conn, entry)
         db.upsert(conn, "subjective_log", entry.to_row(), ["date"])
     finally:
         conn.close()

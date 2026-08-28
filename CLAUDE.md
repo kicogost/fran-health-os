@@ -686,8 +686,9 @@ continuing; do not run ahead**:
    yet). See current-status section below.
 8. 🟡 Scheduling — `scripts/morning_run.sh` (sync + briefing + Sunday weekly retro,
    chained) running daily via a real installed launchd LaunchAgent
-   (`launchd/com.healthos.morning.plist`, 07:00 Europe/Madrid). See current-status
-   section below. Correlation analysis not built (still blocked on 90 days of data).
+   (`launchd/com.healthos.morning.plist`, 10:00 Europe/Madrid, moved from an initial
+   07:00 default per Francisco's request). See current-status section below.
+   Correlation analysis not built (still blocked on 90 days of data).
 
 ## Athlete profile
 
@@ -1126,6 +1127,173 @@ reachable by calling `classify_bjj_laps()` directly right now, same
 the dashboard existed. Worth a Training-page addition once a real multi-round
 class gets recorded, since the 2-lap test above only checks the mechanism
 works, not what a real sparring session's round-by-round data looks like.
+
+## Deep review pass across the whole session's build, real bugs fixed (2026-08-28)
+
+Francisco asked for a genuine adversarial review of everything built this
+session, not a self-check — 5 parallel review agents (coaching/rules logic;
+ingestion/live-sync; schema/migrations/models; dashboard/manual loggers;
+security/secrets/scheduling), each told to actually run the tests, run the
+real code against constructed inputs, and cross-check every CLAUDE.md claim
+against what the code actually does rather than trust the prose. Two findings
+were independently confirmed by two different reviewers with no shared
+context — a strong signal they're real, not review noise. Fixed the following
+(all verified with new regression tests + a real re-run of `scripts/sync.py`
+against Francisco's actual account and database):
+
+- **`daily_metrics.sources` was silently losing provenance, not accumulating
+  it** — confirmed independently by both the schema and ingestion reviewers.
+  `db.upsert()`'s plain `ON CONFLICT DO UPDATE` replaced the whole `sources`
+  JSON blob on every write, so a Garmin sync's `{"resting_hr": "garmin"}`
+  followed by a same-day Apple Health/Renpho sync's `{"weight_kg":
+  "apple_health:renpho"}` left `sources` as only the second call's dict —
+  the *values* were always correctly preserved (the thing the one existing
+  partial-upsert test checked), but the provenance column whose entire job
+  is design-principle-9 traceability was quietly losing history every day
+  both syncs touched the same date, which is the normal case. Fixed with a
+  new `db.upsert(..., merge_json_columns=[...])` option — reads the existing
+  stored value first and merges new keys in (new wins on conflict) rather
+  than overwriting — wired into all four `daily_metrics` upsert call sites
+  (`scripts/sync.py` ×2, `scripts/backfill.py` ×2). **Note**: this only fixes
+  it going forward — any `sources` history already lost to this bug on
+  earlier real syncs isn't recoverable, though the underlying VALUE columns
+  were never affected.
+- **`compute_readiness_score()` crashed with `ZeroDivisionError`** if every
+  component that had real data that day was configured with weight `0.0`
+  (e.g. setting `weight_tsb: 0.0` in `athlete.yaml` while TSB's stale-load
+  problem is unresolved — a realistic near-term config change, not
+  far-fetched). Now returns `insufficient_data` in that case, same as having
+  no components at all.
+- **Dashboard Log page could silently overwrite a backdated entry with no
+  warning**, all four tabs (BJJ/calisthenics/wellness/waist): the
+  "already logged" check queried `_today()` while the actual date came from
+  an `st.date_input` *inside* the `st.form`, which — since Streamlit forms
+  don't rerun until submit — the pre-form check could never see. Backdating
+  an entry (e.g. logging Tuesday's forgotten BJJ session on Wednesday) gave
+  no overwrite warning even if Tuesday already had a different entry. Fixed
+  by moving each tab's date picker outside its form, mirroring the pattern
+  `session_type` already used in the same file.
+- **`coach/weekly_retro.py`'s calisthenics completion only checked the
+  manual log**, contradicting CLAUDE.md's own documented two-signal design
+  (Garmin "Strength Training" activity OR manual log). A session actually
+  recorded on the watch with no manual log entry that day was reported as
+  "missed." Fixed to also check `activities` for the real sport strings
+  found in Francisco's own database (`strength_training`,
+  `traditional_strength_training`, `weight_training`,
+  `functional_strength_training`).
+- **`SubjectiveLogEntry.hooper_index` never computed when the 4 wellness
+  sub-scores were logged across separate calls** — exactly
+  `log_wellness.py`'s own documented usage pattern ("log just the wellness
+  scores some days, just protein/social-meal on others"). All 4 sub-scores
+  could end up correctly stored in the DB and `hooper_index` would still be
+  permanently `NULL`, silently degrading the readiness score's subjective
+  component. Fixed with a new `core/models.py: merge_subjective_log_entry()`
+  — merges with any existing row for that date before constructing the final
+  entry, so `hooper_index` is recomputed over the full accumulated set.
+  Wired into both `log_wellness.py` and the dashboard's wellness tab.
+- **`core/dedupe.py`'s activity delete had no FK-safety** — neither
+  `bjj_sessions.linked_activity_id` nor `activity_laps.activity_id` declares
+  `ON DELETE CASCADE`, so deleting a loser row either still references would
+  raise `sqlite3.IntegrityError`, uncaught, aborting every cluster in the
+  same dedupe pass (with no `ingest_runs` record of any of it, since dedupe
+  isn't wrapped in start/finish_ingest_run). Not reachable today — default
+  precedence always ranks Garmin highest and laps only attach to Garmin rows
+  — but latent, and one precedence-order change or `linked_activity_id` use
+  away from a real crash. Fixed: each loser's delete is now individually
+  try/excepted — a conflicting loser is skipped (left unmerged, not recorded
+  as absorbed) rather than crashing the run, and collected in a new
+  `DedupeResult.fk_conflicts` field so it's visible, never silently dropped.
+- **`ingest/garmin.py` had three batch-killing exception gaps**: (1)
+  `_fetch_one_day_metrics()` only caught `GarminConnectResponseValidationError`
+  per endpoint — any other exception (a timeout, a 429 rate-limit, both
+  observed for real against this account per the live-sync notes above)
+  propagated uncaught, aborting the rest of the date range AND the
+  activities/laps fetch that follows in the same sync run; (2)
+  `_activity_to_model()` was called unguarded in `fetch_activities()`, so one
+  activity with an unparseable timestamp silently dropped every activity
+  after it in the batch; (3) the error-label expression itself assumed the
+  raw API entry was always a dict, so a malformed non-dict entry raised
+  `AttributeError` from inside the except block, masking the real error.
+  Broadened the endpoint-level catches to `Exception`, wrapped
+  `_activity_to_model()` in its own try/except, and made the error label
+  defensive against non-dict entries.
+- **`ingest/health_auto_export.py: parse_weight()` was all-or-nothing across
+  every file**, not per-record isolated: a single malformed reading anywhere
+  (an unrecognized unit, an unparseable date) raised before a single
+  `DailyMetric` was ever yielded, discarding every valid reading from every
+  file in the directory for that run — not just the bad one. `sync.py` did
+  catch this at the top level (marks the run `failed`, doesn't crash the
+  whole script), so it wasn't silent, but it contradicted the per-item-skip
+  resilience pattern the rest of the ingestion layer uses. Fixed with a new
+  `errors` parameter, wired through `sync_health_auto_export()` the same way
+  `ingest/garmin.py`'s functions already work.
+- **File permissions**: `.env` and `data/health.db` were world-readable
+  (`644`) despite holding a live Garmin password and personal health data;
+  `data/.garth_tokens/` was already correctly `600`. `chmod 600` applied to
+  both — filesystem-only, not a code change.
+
+**Verified, not just fixed-and-hoped**: 14 new regression tests across
+`test_db.py`, `test_dedupe.py`, `test_garmin.py`, `test_health_auto_export.py`,
+`test_models.py`, `test_weekly_retro.py` — 323 tests total, all passing, ruff
+clean. Re-ran `scripts/sync.py` for real against Francisco's actual account
+after all fixes: clean run, no errors, no crash, `sources` provenance now
+correctly accumulating on real data.
+
+**Deliberately NOT fixed this pass** — real findings, lower urgency or higher
+risk-to-fix-hastily, flagged rather than silently dropped:
+- `core/db.py: apply_migrations()` is not actually atomic per-migration
+  despite its own docstring's claim — `conn.executescript()` doesn't run a
+  multi-statement migration file as one rollback-able transaction under
+  Python's sqlite3 module, confirmed by reproduction. A migration author's
+  ordinary typo in a later statement of a 2+-statement file would permanently
+  wedge the DB (the earlier statements persist, the failure is never
+  recorded in `schema_migrations`, so every future run retries and fails
+  identically). No migration has hit this yet. Needs a careful redesign (real
+  per-statement transaction control, not a quick patch) rather than a rushed
+  fix under review-pass time pressure — next session's first task if another
+  migration is coming.
+- `coach/briefing.py: compute_daily_plan()` can leak future data into its
+  structural flags (`hrv_sustained_low`, `tsb_persistently_negative`,
+  `monotony_strain`) when called with a historical `--date` for backtesting —
+  those three series are fetched unbounded by `today`, unlike the readiness
+  score itself (which correctly truncates via `_readiness_result_as_of()`).
+  Only matters for `scripts/briefing.py --date <past date>`, not today's real
+  daily briefing (where `today` == the latest data anyway). Flagged, not
+  fixed — needs the same truncation-per-date treatment already applied to
+  the score path.
+- `metrics/baselines.py: compute_rhr_baseline()`'s `sustained_rise_flag`
+  silently needs `n>=23` days of history, not the `n>=21` the function's own
+  `confidence="full"` threshold advertises — a real 3-day sustained
+  elevation is invisible to this flag for exactly 2 days after RHR history
+  crosses 21 days. Narrow edge case, not fixed this pass.
+- No pre-commit hook blocking credential-shaped strings exists anywhere
+  (design principle 8 says one "should" exist) — confirmed never built, not
+  aspirational-but-forgotten. Worth a small bespoke grep-based hook (no new
+  dependency needed) as a follow-up.
+- `derived_daily.computed_at` would never update on recompute
+  (`touch_column=None` for that table) — latent, since nothing writes to
+  `derived_daily` yet (same gap Phase 4 already has).
+- `tests/core/test_schema_sync.py` only compares columns — it cannot catch
+  index, multi-column UNIQUE, or FOREIGN KEY drift between `schema.sql` and
+  the real migrations at all (narrower than its own docstring admits). No
+  live drift found, but the guard is weaker than it looks.
+- Several CHECK constraints (`subjective_log`'s four 1-10 ranges,
+  `calisthenics_sessions`, `bjj_sessions.session_feeling`) are only tested at
+  the Python `__post_init__` level, never against the real DB constraint —
+  a typo'd CHECK expression would pass every test today.
+- `osascript` in `scripts/morning_run.sh` has no escaping of the interpolated
+  notification text — not exploitable today (the only value that reaches it
+  is one of 4 fixed readiness-band strings, traced end to end), but latent if
+  that line's source ever changes to include free text.
+- Minor nitpicks not worth individual fixes this pass: dead code
+  (`dashboard/data.py: readiness_weights()`, unused after `today.py` was
+  rewired to call `briefing.py` directly), `dashboard/views/data_health.py`
+  using naive `date.today()` instead of the project's explicit
+  Europe/Madrid pattern, `BodyMeasurement` missing the range validation its
+  sibling dataclasses all have, `training.py`'s "load by day/sport" chart
+  silently dropping activities with a real load but `NULL` sport
+  (pandas' `groupby(dropna=True)` default), `finish_ingest_run()` silently
+  no-op'ing on an unrecognized `run_id`.
 
 ## Calisthenics tracking closed, a real gap (2026-08-28)
 

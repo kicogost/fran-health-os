@@ -40,13 +40,30 @@ def _rows_to_tuples(rows: list[sqlite3.Row], value_col: str) -> list[tuple[str, 
     return [(r["date"], r[value_col]) for r in rows if r[value_col] is not None]
 
 
+# Every real sport string seen in Francisco's actual database for a Garmin
+# "Strength Training" recording, plus Apple Health's equivalent labels
+# (core/dedupe.py's own `_SPORT_FAMILIES` "strength" cluster) -- CLAUDE.md's
+# own design for calisthenics is explicitly two-signal (Garmin activity OR
+# manual log), but this completion check only ever queried the manual table
+# until this fix (found 2026-08-28: a real session recorded on the watch with
+# no manual log entry that day was reported as "missed").
+_CALISTHENICS_SPORTS = (
+    "strength_training",
+    "traditional_strength_training",
+    "weight_training",
+    "functional_strength_training",
+)
+
+
 def _session_completion(
     conn: sqlite3.Connection, config: dict[str, Any], week_start: date, week_end: date
 ) -> list[dict[str, Any]]:
     """Scheduled vs. actually-logged, one entry per scheduled session in the
-    trailing week. Calisthenics is checked against `calisthenics_sessions`
-    (migration 0003) — this used to be marked "not trackable" (no logging
-    mechanism existed at all), a real, documented gap closed 2026-08-28.
+    trailing week. Calisthenics counts as completed if EITHER a manual
+    `calisthenics_sessions` row exists for that date OR a Garmin/Apple-sourced
+    "strength training" activity was recorded that date (`_CALISTHENICS_SPORTS`)
+    — the two-signal design CLAUDE.md documents for this table, not the manual
+    log alone.
     """
     bjj_dates = {r["date"] for r in conn.execute("SELECT date FROM bjj_sessions").fetchall()}
     bike_dates = {
@@ -55,8 +72,15 @@ def _session_completion(
             "SELECT local_date FROM activities WHERE sport = 'cycling'"
         ).fetchall()
     }
+    calisthenics_placeholders = ", ".join("?" for _ in _CALISTHENICS_SPORTS)
     calisthenics_dates = {
         r["date"] for r in conn.execute("SELECT date FROM calisthenics_sessions").fetchall()
+    } | {
+        r["local_date"]
+        for r in conn.execute(
+            f"SELECT local_date FROM activities WHERE sport IN ({calisthenics_placeholders})",
+            _CALISTHENICS_SPORTS,
+        ).fetchall()
     }
 
     entries = []

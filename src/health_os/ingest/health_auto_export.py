@@ -92,7 +92,10 @@ def _convert_weight_to_kg(value: float, unit: str) -> float:
 
 
 def parse_weight(
-    export_dir: Path, config: AppleHealthSourceConfig | None = None
+    export_dir: Path,
+    config: AppleHealthSourceConfig | None = None,
+    *,
+    errors: list[str] | None = None,
 ) -> Iterator[DailyMetric]:
     """Yield one `DailyMetric` per local date with a `weight_body_mass`
     reading from a known scale, across every `HealthAutoExport-*.json` file
@@ -104,6 +107,12 @@ def parse_weight(
     latest-wins rule is applied across the combined set exactly as if it were
     one file, so overlap is harmless rather than something that has to be
     pre-filtered by the caller.
+
+    One malformed reading (an unrecognized weight unit, an unparseable date)
+    is skipped and appended to `errors` rather than aborting the whole run —
+    fixed as a real bug 2026-08-28: this used to raise uncaught on the first
+    bad entry anywhere in any file, discarding every OTHER already-parsed
+    valid reading from every file in the directory, not just the bad one.
     """
     config = config or AppleHealthSourceConfig.from_yaml()
     latest_by_date: dict[str, tuple[datetime, float, str]] = {}
@@ -124,8 +133,13 @@ def parse_weight(
                 if qty is None or not date_raw:
                     continue
 
-                dt = _parse_datetime(date_raw)
-                weight_kg = _convert_weight_to_kg(float(qty), unit)
+                try:
+                    dt = _parse_datetime(date_raw)
+                    weight_kg = _convert_weight_to_kg(float(qty), unit)
+                except (ValueError, TypeError) as exc:
+                    if errors is not None:
+                        errors.append(f"{path.name}: bad weight entry {entry!r} — {exc}")
+                    continue
                 local_date = to_local_date(to_utc_iso(dt))
 
                 existing = latest_by_date.get(local_date)
