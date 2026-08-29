@@ -837,7 +837,7 @@ data/
   health.db             the one canonical store (gitignored)
 src/health_os/
   ingest/               strava_bulk.py, apple_health.py (historical XML), garmin_bulk.py (historical), garmin.py (Phase 6 live sync, ADR 0004), health_auto_export.py (Phase 6 live weight sync — different JSON format from apple_health.py, not the same pipeline), common.py (shared helpers) — bjj_manual.py not needed (log_bjj.py writes directly)
-  core/                 db.py, timezones.py, dedupe.py (activities cross-source dedup, live), schema.sql (snapshot, v4), migrations/000{1,2,3,4}_*.sql (source of truth), models.py
+  core/                 db.py, timezones.py, dedupe.py (activities cross-source dedup, live), schema.sql (snapshot, v5), migrations/000{1,2,3,4,5}_*.sql (source of truth), models.py
   metrics/              body_comp.py (weight trend + comp countdown), load.py (monotony/strain, CTL/ATL/TSB — no ACWR, ADR 0003), baselines.py (HRV/RHR baselines, sleep debt), readiness.py (0-100 composite), bjj_laps.py (HR-based sparring/rest lap classification), derived_daily.py (Phase 4 persistence — writes all of the above into `derived_daily`, with an honest "stale" confidence for CTL/ATL/TSB/weight when the underlying series doesn't reach today)
   coach/                rules.py, briefing.py, weekly_retro.py
   dashboard/             app.py (Streamlit entrypoint, st.navigation), theme.py (dark theme + chart helpers), data.py (cached DB/config access), views/{today,trends,training,comp_prep,log,data_health}.py — stays in active use until the React migration (ADR 0005) is fully done
@@ -2086,6 +2086,72 @@ has a complete picture of the previous day. Both times are defaults, adjustable 
 lived with for a few days, same as the original morning job's own 07:00→10:00 history.
 Tested `quiet_sync.sh` by hand before installing; both LaunchAgents installed and
 loaded for real, not just written.
+
+**Same day, follow-up**: Francisco asked what happens on a *normal* day when he
+wakes at 8:30-9:00 rather than early for a ride — real gap: Garmin only finalizes
+overnight sleep/HRV once the person actually wakes, so a 07:00-only schedule would
+read stale/incomplete data on those days. `com.healthos.morning.plist`'s
+`StartCalendarInterval` is now an array of two fixed times — 07:00 (ride-day early
+check) and 09:30 (new, ~30-60min buffer after a normal wake) — rather than adding a
+new plist, since launchd natively supports multiple fixed times for one job. Two
+notifications on a normal morning is an accepted tradeoff, not an oversight.
+
+**Also same conversation — a real bug in the Health Auto Export pipeline, found and
+fixed**: checking whether that day's bike ride and weight had synced surfaced that
+`HEALTH_AUTO_EXPORT_DIR` was **never actually set in the real `.env`** — it silently
+fell back to `data/raw/health_auto_export`, a one-time manual copy of 3 files made
+2026-08-28 while building the feature, which nothing ever refreshed. Weight had been
+stale for over a week with zero errors — `scripts/sync.py` happily reported success
+every day reading the same static files. Found the real live folder with `mdfind
+-name HealthAutoExport` (Spotlight search bypasses the `Operation not permitted`
+restriction on listing `~/Library/Mobile Documents/` directly) — it had a newer file
+the stale copy never got, containing real current weigh-ins (79.15kg 2026-08-27,
+79.05kg 2026-08-28) confirming the automation had been working correctly on
+Francisco's end the whole time; the gap was entirely in how this project read from
+it. Fixed by pointing `HEALTH_AUTO_EXPORT_DIR` at the real path;
+`.env.example`'s existing guidance was already correct, just never applied to the
+real `.env` — added a note there on finding the real path via `mdfind` for next time.
+Re-ran `scripts/sync.py`: 3 rows upserted, both dates confirmed landing immediately.
+
+**Real, still-open finding, needs a change on Francisco's phone, not in this
+codebase**: 2026-08-29's own weigh-in still hadn't synced by early afternoon.
+Checked the Health Auto Export app's own automation settings screen (screenshot) —
+**"Sync Frequency: Every 7 Days"**, last fired 2026-08-28, so the next automatic
+export won't happen until ~2026-09-04 regardless of how often `scripts/sync.py`
+itself runs. Confirmed no new file appeared in the live iCloud folder between the
+first and second check that afternoon, consistent with this reading. Told Francisco
+directly to change it to "Every 1 Day" in the app — a phone-side setting this
+project's code can't reach or fix from here.
+
+## Renpho body composition ingested — lean mass + BMI (migration 0005, 2026-08-29)
+
+Francisco asked directly whether Apple Health surfaces Renpho's body-composition
+metrics beyond weight, and whether they could be taken into account. Checked against
+the real live export (every metric name in every real file, not assumed):
+`lean_body_mass` and `body_mass_index` are both present in the same "Body Mass"
+bundle weight already comes from — a gap already flagged (not silently dropped) when
+`ingest/health_auto_export.py` was first built, kept for exactly this moment.
+`body_fat_percentage` is **not** present anywhere in the real export — Renpho likely
+computes it in its own app but doesn't push it to HealthKit on this scale/account, so
+it genuinely can't be ingested from here; documented as a real, checked absence, not
+a gap left open by oversight.
+
+`daily_metrics` gains `lean_body_mass_kg` and `bmi` (migration 0005). Lean mass is
+genuinely useful for Francisco's actual goals (comp weight cut + "visible muscle
+definition" secondary goal) — tells apart losing fat from losing muscle, which raw
+weight alone can't; a natural `metrics/body_comp.py` addition (fat mass = weight −
+lean mass) if useful later, not built yet since it wasn't asked for directly.
+`ingest/health_auto_export.py: parse_weight()` renamed to `parse_body_composition()`
+(same function, wider scope) — extracts all three metrics via a name→field map,
+applying the same source allowlist to all of them (a wrong source is just as much a
+problem for lean mass as for weight, same physical scale reading), tracked
+independently per field per date since the three metrics aren't always all present
+together (verified: a real date can have weight + BMI but no lean mass reading).
+
+11 new/updated tests, 420 total passing, ruff clean. Verified against the real
+database: 2026-08-27 landed with weight+BMI only (no lean-mass reading that date, as
+expected), 2026-08-28 landed with all three; `compute_derived.py` still runs clean
+against the wider table.
 
 ## Definition of done for v1
 
