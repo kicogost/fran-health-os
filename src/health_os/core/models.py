@@ -43,6 +43,8 @@ class DailyMetric:
 
     date: str
     weight_kg: float | None = None
+    lean_body_mass_kg: float | None = None
+    bmi: float | None = None
     resting_hr: float | None = None
     hrv_overnight_ms: float | None = None
     hrv_status: str | None = None
@@ -74,6 +76,8 @@ class DailyMetric:
         return cls(
             date=row["date"],
             weight_kg=row["weight_kg"] if "weight_kg" in keys else None,
+            lean_body_mass_kg=row["lean_body_mass_kg"] if "lean_body_mass_kg" in keys else None,
+            bmi=row["bmi"] if "bmi" in keys else None,
             resting_hr=row["resting_hr"] if "resting_hr" in keys else None,
             hrv_overnight_ms=row["hrv_overnight_ms"] if "hrv_overnight_ms" in keys else None,
             hrv_status=row["hrv_status"] if "hrv_status" in keys else None,

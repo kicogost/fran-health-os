@@ -5,7 +5,7 @@
     uv run python scripts/sync.py --days 7
 
 Covers Garmin (activities + daily wellness + per-lap detail for BJJ
-activities) and Health Auto Export (weight only). Live Strava sync is
+activities) and Health Auto Export (weight, lean body mass, BMI). Live Strava sync is
 deliberately skipped: Strava introduced a paid
 ($11.99/mo) developer API tier in June 2026, and Garmin already covers
 current activities — Strava's role in this project is purely historical
@@ -162,7 +162,7 @@ def sync_health_auto_export(conn: sqlite3.Connection) -> bool:
     rows_in = rows_upserted = 0
     errors: list[str] = []
     try:
-        for metric in health_auto_export.parse_weight(export_dir, errors=errors):
+        for metric in health_auto_export.parse_body_composition(export_dir, errors=errors):
             rows_in += 1
             db.upsert(
                 conn, "daily_metrics", metric.to_row(), ["date"], merge_json_columns=["sources"]

@@ -7,10 +7,11 @@
 -- without reading every migration in sequence. tests/core/test_schema_sync.py fails
 -- if this drifts from the migrations.
 --
--- Current version: 4 (core/migrations/0001_initial_schema.sql,
+-- Current version: 5 (core/migrations/0001_initial_schema.sql,
 -- core/migrations/0002_bjj_wellness_and_load.sql,
 -- core/migrations/0003_calisthenics_sessions.sql,
--- core/migrations/0004_activity_laps.sql)
+-- core/migrations/0004_activity_laps.sql,
+-- core/migrations/0005_body_composition.sql)
 --
 -- Note: this snapshot is semantically compared against the migrated schema
 -- (column name/type/notnull/pk/default per table), not byte-for-byte SQL text —
@@ -32,6 +33,8 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS daily_metrics (
     date                TEXT PRIMARY KEY,      -- ISO 'YYYY-MM-DD', Europe/Madrid local date
     weight_kg           REAL,
+    lean_body_mass_kg   REAL,                  -- migration 0005, from Renpho via Health Auto Export
+    bmi                 REAL,                  -- migration 0005, same source bundle as weight_kg
     resting_hr          REAL,
     hrv_overnight_ms    REAL,
     hrv_status          TEXT,                  -- Garmin's own status label, verbatim

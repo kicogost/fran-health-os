@@ -1,0 +1,22 @@
+-- Migration 0005: body composition (lean mass, BMI) from Renpho via Health
+-- Auto Export.
+--
+-- Francisco asked directly (2026-08-29) whether Apple Health surfaces
+-- Renpho's body-composition metrics beyond weight. Checked against his real
+-- live export rather than assumed: `lean_body_mass` and `body_mass_index`
+-- are both present in the same "Body Mass" bundle weight already comes
+-- from -- a gap already flagged (not silently dropped) when
+-- ingest/health_auto_export.py was first built. `body_fat_percentage` is
+-- NOT present anywhere in the real export -- checked every metric name in
+-- every real file, not assumed absent -- so it can't be ingested directly;
+-- Renpho's own app likely computes it but doesn't push it to HealthKit on
+-- this scale/account.
+--
+-- lean_body_mass_kg is genuinely useful for Francisco's actual goals (comp
+-- weight cut + "visible muscle definition" secondary goal) -- tells apart
+-- losing fat from losing muscle, which raw weight alone can't. bmi is
+-- lower-value on its own (a crude ratio, already derivable from
+-- weight + height in athlete.yaml) but stored anyway since it rides along
+-- in the exact same source bundle at zero extra ingestion cost.
+ALTER TABLE daily_metrics ADD COLUMN lean_body_mass_kg REAL;
+ALTER TABLE daily_metrics ADD COLUMN bmi REAL;
