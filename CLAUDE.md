@@ -843,7 +843,7 @@ src/health_os/
   dashboard/             app.py (Streamlit entrypoint, st.navigation), theme.py (dark theme + chart helpers), data.py (cached DB/config access), views/{today,trends,training,comp_prep,log,data_health}.py — stays in active use until the React migration (ADR 0005) is fully done
   api/                   main.py (FastAPI app, local-only, all 6 pages' routes), today.py/trends.py/training.py/comp_prep.py/data_health.py (one real read-only assembly fn per page), log.py (the one page with real POST mutation endpoints — reuses core/models.py's dataclasses for validation, never a second copy) — ADR 0005 frontend migration, 2026-08-28
 frontend/               Vite + React + TypeScript + Tailwind v4 + shadcn/ui (Radix base) + react-router-dom + recharts — ADR 0005, 2026-08-28, all 6 pages. src/pages/{Today,Trends,Training,CompPrep,Log,DataHealth}.tsx, components/{today,charts,log,layout}/*.tsx, index.css carries the same Carbon g100 dark tokens as dashboard/theme.py (ported, not re-picked). Daily use: `npm run build` once, then `uv run python scripts/run_api.py` alone serves everything on port 8000. Active frontend dev: `npm run dev` (port 5173, hot reload, proxies /api to FastAPI) + `scripts/run_api.py` (port 8000) as two processes instead.
-scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_calisthenics.py (manual calisthenics logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview), sync.py (Phase 6 daily live-sync entrypoint — Garmin + Health Auto Export, incl. per-lap detail for sub_sport=="bjj" activities), compute_derived.py (Phase 4 derived-metric persistence, trailing-3-day window like sync.py), briefing.py (Phase 7 CLI), weekly_retro.py (Phase 7 CLI), check_secrets.py (pre-commit secret-shaped-string guard, design principle 8), run_api.py (ADR 0005 — local FastAPI server, port 8000; also serves the built frontend/dist/ for one-command daily use, see "One-command frontend serving built"), morning_run.sh (Phase 8 — chains sync+compute_derived+briefing+retro, what launchd actually runs)
+scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_calisthenics.py (manual calisthenics logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview), sync.py (Phase 6 daily live-sync entrypoint — Garmin + Health Auto Export, incl. per-lap detail for sub_sport=="bjj" activities), compute_derived.py (Phase 4 derived-metric persistence, trailing-3-day window like sync.py), briefing.py (Phase 7 CLI), weekly_retro.py (Phase 7 CLI), check_secrets.py (pre-commit secret-shaped-string guard, design principle 8), run_api.py (ADR 0005 — local FastAPI server, port 8000; also serves the built frontend/dist/ for one-command daily use, see "One-command frontend serving built"), morning_run.sh (Phase 8 — chains sync+compute_derived+briefing+retro, what launchd's 07:00 com.healthos.morning runs), quiet_sync.sh (Phase 8 — sync+compute_derived only, no briefing, what launchd's 21:30 com.healthos.quicksync runs, see "Real bug found: weight had been silently stale" for why)
 githooks/               pre-commit (calls check_secrets.py; activated once per clone via `git config core.hooksPath githooks`, since `.git/hooks/` itself can't be version-controlled)
 launchd/                com.healthos.morning.plist (Phase 8 — installed as a real LaunchAgent, 10:00 Europe/Madrid daily, moved from an initial 07:00 default per Francisco's request)
 tests/                  core/, ingest/, metrics/, coach/, scripts/, api/ (ADR 0005 backend), fixtures/ (synthetic — never real personal data, fixtures are committed to git)
@@ -2047,6 +2047,45 @@ tradeoff, documented in both the plist and `run_api.py`'s own docstring: this ho
 port 8000 permanently, so active frontend development (`npm run dev`) needs
 `launchctl unload` first to free it — not a conflict during normal daily use, only
 worth knowing before an eventual frontend-editing session.
+
+## Real bug found: weight had been silently stale for over a week (2026-08-29)
+
+Francisco asked whether his bike ride and "everything" had come in, which surfaced a
+real gap while checking: `HEALTH_AUTO_EXPORT_DIR` was **never actually set in the real
+`.env`** — `.env.example` already documented it correctly, but the real file just
+fell back to its default, `data/raw/health_auto_export`, which was a one-time manual
+copy of 3 files made on 2026-08-28 while building the feature (see that section
+above). Nothing was ever wired to refresh that folder, so it silently stopped
+reflecting reality the moment it was created — nothing errored, `scripts/sync.py`
+happily reported success every day reading the same stale files.
+
+Found by actually locating the real live folder rather than assuming: `mdfind -name
+HealthAutoExport` (Spotlight search bypasses the `Operation not permitted` restriction
+on listing `~/Library/Mobile Documents/` directly) surfaced the real path —
+`~/Library/Mobile Documents/iCloud~com~ifunography~HealthExport/Documents/HealthOS/`
+— which had a **newer file the stale local copy never got** (`HealthAutoExport-
+2026-35.json`, this week's export) containing real, current weigh-ins: 79.15kg
+(2026-08-27), 79.05kg (2026-08-28) — the automation had been working correctly on
+Francisco's end the whole time; the gap was entirely in how this project was reading
+from it. Fixed by setting `HEALTH_AUTO_EXPORT_DIR` in the real `.env` to that live
+path (`.env.example`'s existing guidance was already correct — added a note there on
+finding the real path via `mdfind`, since the exact iCloud container path isn't
+guessable and varies by app install). Re-ran `scripts/sync.py`: 3 rows upserted,
+2026-08-27/28 weight confirmed landing in `daily_metrics` immediately.
+
+**Same conversation, a related-but-separate fix**: the daily automatic sync
+(`com.healthos.morning.plist`) fired at 10:00 Europe/Madrid — too late for Francisco's
+actual need (knowing his readiness before an 8:15am bike ride) and also structurally
+unable to see that day's own activities or weigh-in, since they hadn't happened yet
+at 10:00 either. Not a "sync more often" fix (Garmin's own wellness data only updates
+a handful of times a day regardless of how often it's polled) — moved the morning job
+to 07:00 and added a second, quiet evening pass (`scripts/quiet_sync.sh` +
+`com.healthos.quicksync.plist`, new, 21:30) that syncs and recomputes derived metrics
+with no briefing/notification on success, so the next morning's real briefing always
+has a complete picture of the previous day. Both times are defaults, adjustable once
+lived with for a few days, same as the original morning job's own 07:00→10:00 history.
+Tested `quiet_sync.sh` by hand before installing; both LaunchAgents installed and
+loaded for real, not just written.
 
 ## Definition of done for v1
 

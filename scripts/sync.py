@@ -12,8 +12,14 @@ current activities — Strava's role in this project is purely historical
 backfill (already done, see `scripts/backfill.py`).
 
 Health Auto Export (the iOS app, Premium tier) folder-drops JSON files into
-`HEALTH_AUTO_EXPORT_DIR` (default `data/raw/health_auto_export`, synced there
-from iCloud Drive) on its own schedule — this is a genuinely different JSON
+`HEALTH_AUTO_EXPORT_DIR` on its own schedule -- **must be set in `.env` to the
+app's actual live iCloud Drive folder** (find it with `mdfind -name
+"<automation name>"`, never guessable/assumable), not left on the
+`data/raw/health_auto_export` default, which is just a one-time manual test
+copy from 2026-08-28 that nothing refreshes. Real bug found 2026-08-29: this
+was left unset for over a week with zero errors, silently serving stale
+weight the whole time — see CLAUDE.md's "Real bug found: weight had been
+silently stale" for the full story. This is a genuinely different JSON
 schema from the native Health app's `export.xml`
 (`ingest/apple_health.py`/`scripts/backfill.py --source apple_health`), not a
 re-run of that same path (an earlier draft of this docstring assumed it would
