@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Built 2026-08-29, alongside moving com.healthos.morning.plist earlier:
+  Francisco wanted the morning readiness/sleep picture ready before an
+  8:15am ride-planning decision, and also wanted same-day activities
+  (a midday bike ride, an evening BJJ session) and same-day Renpho weigh-ins
+  to show up without asking. One early morning run can't see either of
+  those, since they haven't happened yet when it fires.
+
+  Runs scripts/quiet_sync.sh (sync + recompute derived metrics only -- no
+  briefing, no notification unless something's actually wrong) once in the
+  evening, so tomorrow's early morning briefing already has a complete
+  picture of today, and today's weight shows up same-day rather than
+  needing a manual sync.
+
+  Not "sync more often" -- Garmin's own wellness data only updates a
+  handful of times a day at most (overnight sleep/HRV computed once,
+  activities appear once uploaded); polling every few minutes would add
+  nothing but overhead. Two well-timed passes (this evening one +
+  com.healthos.morning's early one) cover everything asked for.
+
+  21:30 Europe/Madrid is a default, not a measured one -- same spirit as
+  com.healthos.morning's own history (07:00 -> 10:00 -> back earlier again
+  for this exact reason). Adjust Hour/Minute below and reload if a
+  different time fits better (e.g. right before bed, so a late-evening
+  session still gets caught).
+
+  Setup:
+      cp launchd/com.healthos.quicksync.plist ~/Library/LaunchAgents/
+      launchctl load ~/Library/LaunchAgents/com.healthos.quicksync.plist
+
+  Verify / run now / remove: same commands as com.healthos.morning.plist,
+  substituting this Label (com.healthos.quicksync).
+
+  Output: data/logs/quiet_sync.log.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.healthos.quicksync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/franciscogostscagliarini/fitness man/scripts/quiet_sync.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/franciscogostscagliarini/fitness man</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>21</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/franciscogostscagliarini/fitness man/data/logs/launchd_quicksync_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/franciscogostscagliarini/fitness man/data/logs/launchd_quicksync_stderr.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

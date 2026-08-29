@@ -13,11 +13,19 @@
   he's logged in (a fresh morning briefing while the machine is asleep with
   nobody there to read it isn't useful anyway).
 
-  Fires at 10:00 Europe/Madrid daily (set 2026-08-28, Francisco's own choice
-  -- gives time to wake up and have the day's Garmin/HRV data actually
-  synced before the briefing runs). StartCalendarInterval (not
-  StartInterval): a fixed wall-clock time each day, not "every N seconds
-  since the machine booted."
+  Fires at 07:00 Europe/Madrid daily (moved earlier 2026-08-29 -- Francisco
+  wanted the readiness/sleep/HRV picture ready before an 8:15am ride-
+  planning decision; the original 10:00 default, set 2026-08-28, was too
+  late for that). Garmin computes overnight sleep/HRV independent of when
+  the person actually wakes, so 07:00 should already have real data most
+  mornings -- adjust Hour/Minute below and reload if it's ever too early to
+  find anything. StartCalendarInterval (not StartInterval): a fixed
+  wall-clock time each day, not "every N seconds since the machine booted."
+
+  Paired with com.healthos.quicksync.plist (evening, same directory) --
+  this run alone can't see that day's own activities/weigh-in since they
+  haven't happened yet; the evening pass catches those quietly so this
+  morning run always has a complete picture of yesterday.
 
   Setup:
       cp launchd/com.healthos.morning.plist ~/Library/LaunchAgents/
@@ -54,7 +62,7 @@
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
-        <integer>10</integer>
+        <integer>7</integer>
         <key>Minute</key>
         <integer>0</integer>
     </dict>
