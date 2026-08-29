@@ -13,14 +13,19 @@
   he's logged in (a fresh morning briefing while the machine is asleep with
   nobody there to read it isn't useful anyway).
 
-  Fires at 07:00 Europe/Madrid daily (moved earlier 2026-08-29 -- Francisco
-  wanted the readiness/sleep/HRV picture ready before an 8:15am ride-
-  planning decision; the original 10:00 default, set 2026-08-28, was too
-  late for that). Garmin computes overnight sleep/HRV independent of when
-  the person actually wakes, so 07:00 should already have real data most
-  mornings -- adjust Hour/Minute below and reload if it's ever too early to
-  find anything. StartCalendarInterval (not StartInterval): a fixed
-  wall-clock time each day, not "every N seconds since the machine booted."
+  Fires TWICE daily, Europe/Madrid: 07:00 and 09:30 (09:30 added 2026-08-29).
+  07:00 alone (set the same day) covers ride-day early wake-ups, but Garmin
+  only finalizes overnight sleep/HRV once the person actually wakes -- on a
+  normal day Francisco wakes 8:30-9:00, so a 07:00-only schedule would just
+  read stale/incomplete data on those days. 09:30 gives ~30-60min buffer
+  after a normal wake for Garmin to finalize and sync that data, so a normal
+  day still gets one genuinely fresh, complete briefing (the 07:00 run on
+  those days may show a partial/last-night-not-fully-ready picture -- two
+  notifications on those mornings is a real, accepted tradeoff for never
+  missing either wake pattern, not an oversight). Adjust the Hour/Minute
+  pairs below and reload if either time turns out wrong once lived with.
+  StartCalendarInterval accepts an array of dicts for exactly this --
+  multiple fixed wall-clock times, not "every N seconds since boot."
 
   Paired with com.healthos.quicksync.plist (evening, same directory) --
   this run alone can't see that day's own activities/weigh-in since they
@@ -60,12 +65,20 @@
     <string>/Users/franciscogostscagliarini/fitness man</string>
 
     <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>7</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
+    <array>
+        <dict>
+            <key>Hour</key>
+            <integer>7</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>30</integer>
+        </dict>
+    </array>
 
     <key>StandardOutPath</key>
     <string>/Users/franciscogostscagliarini/fitness man/data/logs/launchd_stdout.log</string>
