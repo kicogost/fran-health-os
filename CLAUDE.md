@@ -839,7 +839,7 @@ src/health_os/
   ingest/               strava_bulk.py, apple_health.py (historical XML), garmin_bulk.py (historical), garmin.py (Phase 6 live sync, ADR 0004), health_auto_export.py (Phase 6 live weight sync — different JSON format from apple_health.py, not the same pipeline), common.py (shared helpers) — bjj_manual.py not needed (log_bjj.py writes directly)
   core/                 db.py, timezones.py, dedupe.py (activities cross-source dedup, live), schema.sql (snapshot, v5), migrations/000{1,2,3,4,5}_*.sql (source of truth), models.py
   metrics/              body_comp.py (weight trend + comp countdown), load.py (monotony/strain, CTL/ATL/TSB — no ACWR, ADR 0003), baselines.py (HRV/RHR baselines, sleep debt), readiness.py (0-100 composite), correlations.py (Spearman correlation engine, MIN_N=30 + Bonferroni-corrected), strain.py (WHOOP-inspired 0-21 Daily Strain — TRIMP + Foster, saturating scale), bjj_laps.py (HR-based sparring/rest lap classification), derived_daily.py (Phase 4 persistence — writes all of the above into `derived_daily`, with an honest "stale" confidence for CTL/ATL/TSB/weight when the underlying series doesn't reach today)
-  coach/                rules.py, briefing.py, weekly_retro.py
+  coach/                rules.py (readiness bands, session guidance, structural triggers, taper + deload — see "Taper + deload system"), briefing.py, weekly_retro.py
   dashboard/             app.py (Streamlit entrypoint, st.navigation), theme.py (dark theme + chart helpers), data.py (cached DB/config access), views/{today,trends,training,comp_prep,log,data_health}.py — stays in active use until the React migration (ADR 0005) is fully done
   api/                   main.py (FastAPI app, local-only, all 6 pages' routes), today.py/trends.py/training.py/comp_prep.py/data_health.py (one real read-only assembly fn per page), log.py (the one page with real POST mutation endpoints — reuses core/models.py's dataclasses for validation, never a second copy) — ADR 0005 frontend migration, 2026-08-28
 frontend/               Vite + React + TypeScript + Tailwind v4 + shadcn/ui (Radix base) + react-router-dom + recharts — ADR 0005, 2026-08-28, all 6 pages. src/pages/{Today,Trends,Training,CompPrep,Log,DataHealth}.tsx, components/{today,charts,log,layout}/*.tsx, index.css carries the same Carbon g100 dark tokens as dashboard/theme.py (ported, not re-picked). Daily use: `npm run build` once, then `uv run python scripts/run_api.py` alone serves everything on port 8000. Active frontend dev: `npm run dev` (port 5173, hot reload, proxies /api to FastAPI) + `scripts/run_api.py` (port 8000) as two processes instead.
@@ -2428,6 +2428,120 @@ confusion without adding value at a glance. Sleep and Freshness stay.
 `sleep_score` actually reaches both independent call sites, not just the pure
 formula in isolation. 478 tests total, ruff clean. Verified visually — the
 Readiness components row now shows only Sleep and Freshness.
+
+## Taper + deload system, evidence-researched (2026-08-30)
+
+Francisco asked directly: let me know when I need a deload, and plan it out for me —
+when stress or recovery starts failing, or when a competition is coming up.
+Researched the actual sports-science literature first, not built from assumption —
+a general-purpose agent carrying the research-synthesist methodology directly (the
+custom `research-synthesist` agent type Francisco had just added to `.claude/agents/`
+wasn't recognized in this session — the harness's available-agent list is set at
+session start, so it needs a restart to pick up newly-added agent files; the
+methodology itself — evidence-tier grading, tracing claims to primary sources,
+flagging circular citation, calibrating confidence to the weakest link — was written
+directly into the research brief instead of lost).
+
+**Evidence synthesis, condensed** (full source table and citations in the research
+task's own output, not reproduced here in full):
+
+- **Deload ≠ taper — genuinely settled, not a judgment call.** A deload is a planned,
+  event-independent, mid-block fatigue-management reduction; a taper is a
+  progressive, non-linear reduction specifically timed to peak for a known
+  competition date (Mujika & Padilla 2003, the field's canonical taper synthesis,
+  corroborated by a real judo-specific taper study). Francisco's own phrasing ("one
+  week before competition, we need a deload") was describing a taper.
+- **HRV's overreaching signal is genuinely contested as unidirectional** — a real
+  finding that changes how this project treats HRV going forward, not just for this
+  feature. Two independent meta-analyses (Bellenger et al. 2016, 27 studies;
+  Manresa-Rocamora et al. 2021) found overreached athletes' HRV is often unaffected
+  or even INCREASED, not suppressed. A wrestling-specific study found both patterns
+  associated with non-functional overreaching. A trigger — or a mental model — that
+  only watches for low HRV is using a simplified, partially-contradicted picture.
+- **Subjective wellness questionnaires (Hooper-Mackinnon) have real, independently-
+  confirmed validity, arguably stronger than objective markers** — a systematic
+  review found subjective self-report more sensitive and consistent than commonly-
+  used objective measures for training-load effects, corroborated by real MMA data
+  where subjective fatigue kept rising even as some biochemical markers partially
+  recovered. This is a strong, real reason the Hooper index deserves real weight in
+  this system, not a secondary/tiebreaker role — flagged as a candidate for revisiting
+  the readiness score's own weighting (currently 35% HRV / 10% subjective) in a
+  future session, not changed as a side effect of this feature.
+- **TSB's absolute-magnitude thresholds have no peer-reviewed validation** — directly
+  confirms this project's own ADR 0003 suspicion; the −30/±25 conventions trace to
+  cycling-coaching convention, not validated research, for any sport.
+- **No BJJ-specific deload or taper research exists at all** — confirmed by direct
+  search, not assumed. The closest real evidence is judo (taper), wrestling (HRV),
+  and MMA (load distribution, fatigue-marker dissociation) — extrapolation from these
+  is reasonable and is what this feature does, labeled as such, not presented as
+  BJJ-validated.
+- **No literature-validated "require M of N markers" composite trigger rule exists
+  anywhere found** — the one Delphi expert-consensus panel that looked at this
+  explicitly did not reach agreement on specific biomarker triggers.
+- **A scheduled, non-fatigue-triggered deload showed no benefit in the one RCT that
+  tested it** (neutral-to-slightly-negative for strength, in a population that wasn't
+  already run down) — real evidence against ever firing a deload off a fixed calendar
+  regardless of actual state, which is why this feature is fatigue-triggered only.
+- **A citation-chain risk worth remembering**: the most-quotable specific deload
+  numbers (frequency, duration, volume-reduction %) across the web all trace to ONE
+  converging research program (overlapping investigators, powerlifting/physique
+  populations, 2022-2025) — a real, well-executed program, but one estimate, not five
+  independent studies, and not combat-sport data. Used as the documented default
+  anyway (no better number exists), but never presented as broad consensus.
+
+**Built, matching what the evidence actually supports — two distinct mechanisms:**
+
+1. **Taper** (`coach/rules.py: taper_day_override()`, `taper_status()`) — calendar-
+   anchored to the real competition date (2026-10-18), never fatigue-triggered. **Real
+   gap closed, found by checking rather than assuming**: `config/athlete.yaml`'s
+   hand-planned taper week (`comp_prep.blocks[].daily_schedule`, written 2026-08-27 —
+   a full day-by-day plan for the final week before competing) had **never been read
+   by any code** — confirmed by grepping the whole codebase before writing a line of
+   new code. The coaching engine would have kept giving generic weekly guidance
+   straight through taper week and silently missed the entire hand-planned reduction.
+   Now wired in: when `today` matches a `daily_schedule` entry, that day's real plan
+   overrides the generic `weekly_template` and is treated as authoritative (not
+   readiness-band-modulated — it's already a deliberately reduced week; layering a
+   second, independent reduction on top would double-discount it). **Verified against
+   the real config**: `scripts/briefing.py --date 2026-10-14` now correctly prints the
+   exact hand-planned "BJJ, drilling only — movement, warm-up flows, top 3 sequences"
+   instead of generic Wednesday guidance; `--date 2026-10-05` (13 days out, before the
+   taper block starts) correctly still shows generic weekly guidance plus a plain
+   day-count line. A day-count-to-competition line is always present in the briefing
+   and the dashboard header.
+2. **Deload** (`hrv_sustained_deviation()`, `sleep_debt_elevated()`,
+   `hooper_sustained_high()`, `should_deload()`) — fatigue-triggered, never calendar-
+   triggered. Fires once **2 of 5** markers are active (a reasoned default mirroring
+   this project's own 2-red/3-amber precedent, at a larger scale, since no literature
+   rule exists to borrow): HRV sustained deviation (now bidirectional, 6 days —
+   `hrv_sustained_low()` stays unchanged and low-only for its existing 3-day
+   session-guidance use, this is a separate function for a separate purpose), RHR
+   sustained-rise (reuses the existing baseline flag), sleep debt over a documented
+   threshold (7h over the rolling 14-day window), Hooper index sustained-high (3 days,
+   weighted as a full peer marker per the research above, not a tiebreaker), and TSB
+   persistently negative (reuses the existing structural flag). Every threshold is
+   individually commented in `config/athlete.yaml: deload:` with its real evidence
+   grade or an explicit "reasoned default, no literature number" flag. Once
+   triggered: ~6 days, ~40% less volume, intensity capped, prefer reduced load over
+   full rest (traces to the one converging research program noted above, documented
+   as such).
+
+`api/today.py` exposes both; `Today.tsx` shows a taper-week banner (when active) and
+a deload-recommended banner (when triggered, listing which markers fired and the
+concrete guidance) — same visual weight as the existing structural-flag warnings.
+
+24 new/updated tests, including two real end-to-end integration tests that seed
+actual `daily_metrics`/`subjective_log` rows through `compute_daily_plan()` rather
+than only testing the isolated rule functions (the same "wiring, not just the
+formula" discipline the sleep-quality-blend fix established earlier this session).
+507 tests total, ruff clean. Verified visually via Chrome-headless screenshot (both
+banners render correctly against realistic preview data, reverted after) and
+directly against the real config via `scripts/briefing.py`.
+
+**Not yet done**: no persistence of taper/deload state to `derived_daily` (these are
+live coaching decisions, same category as `sessions`/`structural_flags`, which also
+aren't persisted); the Hooper-index readiness-weighting question flagged above is
+noted, not acted on.
 
 ## Definition of done for v1
 
