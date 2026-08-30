@@ -1,4 +1,7 @@
-"""The readiness score composite (kickoff doc section 6).
+"""The readiness score composite — originally kickoff doc section 6, rebuilt
+2026-08-30 against a real evidence review (ADR 0007) after Francisco asked
+for the whole architecture to be re-derived from research rather than kept
+as originally specced.
 
 Pure function, deterministic, hand-verifiable (design principle 9, section 12).
 Computed alongside Garmin's own Training Readiness so disagreement is visible
@@ -6,25 +9,55 @@ Computed alongside Garmin's own Training Readiness so disagreement is visible
 
 Deliberately takes already-computed component values, not raw observation
 histories — callers get those from `metrics/baselines.py`
-(`compute_hrv_baseline`, `compute_rhr_baseline`, `compute_sleep_debt`) and
-`metrics/load.py` (`compute_tsb_zscore`), plus `subjective_log.hooper_index`
-directly. Keeps this function single-purpose: combine signals, don't compute
-them.
+(`compute_hrv_baseline`, `compute_rhr_baseline`, `compute_sleep_debt`), plus
+`subjective_log.hooper_index` directly. Keeps this function single-purpose:
+combine signals, don't compute them.
+
+**ADR 0007 changed three things from the original kickoff-doc design**:
+1. TSB/freshness is gone from this composite entirely (not just zero-weighted,
+   which was the 2026-08-30 stopgap for a data-coverage bug) — real, if recent
+   and narrow, 2025-2026 research argues same-day "readiness" and multi-week
+   "training-stress state" are different constructs that shouldn't be fused
+   into one number, and both Garmin's and WHOOP's own products keep them
+   separate the same way this project's Training page already does. TSB stays
+   a real, computed trend elsewhere (`metrics/load.py`, the structural
+   `tsb_persistently_negative` trigger, the Training page) — just not folded
+   into this score.
+2. HRV/RHR deviation scoring gained a small "no real signal" dead zone before
+   ADR 0006's quadratic curve starts moving the score at all — see
+   `_deviation_to_score()`'s docstring.
+3. `weight_subjective` raised from 0.10 to 0.25, absorbing TSB's freed 0.15 —
+   see the weights dict below for the full reasoning.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-# Kickoff doc section 6. Mirrored in config/athlete.yaml as the documented
-# source of truth for these numbers — kept here too as the function's default
-# so it's independently testable without loading config.
+# ADR 0007. Sums to 1.0 in the intended full model. Mirrored in
+# config/athlete.yaml as the documented, tunable source of truth — kept here
+# too as the function's default so it's independently testable without
+# loading config.
+#
+# hrv/sleep/rhr unchanged from the original kickoff-doc split (no validated
+# alternative weighting scheme exists anywhere — confirmed by deep research,
+# not merely unfound — so there's nothing evidence-based to change these
+# toward). tsb removed (see module docstring). subjective raised from the
+# original 0.10 to 0.25 — the entirety of TSB's freed weight — because
+# Saw, Main & Gastin 2016 (systematic review, 56 studies) found subjective
+# wellness measures track training-load effects with sensitivity/consistency
+# AT LEAST equal to, arguably better than, the objective measures they
+# reviewed, while this composite had it weighted lowest of all five
+# components. No literature number says "25" specifically — this is a
+# reasoned, revisable default (same spirit as ADR 0006's exponent=2), chosen
+# because reallocating one removed component's entire freed weight to the one
+# component the evidence most directly supports raising is a simpler, more
+# explicable rule than inventing a new split across all four survivors.
 DEFAULT_READINESS_WEIGHTS = {
     "hrv": 0.35,
     "sleep": 0.25,
     "rhr": 0.15,
-    "tsb": 0.15,
-    "subjective": 0.10,
+    "subjective": 0.25,
 }
 
 _HOOPER_INDEX_RANGE = (4.0, 40.0)  # best, worst — see core.models.SubjectiveLogEntry
@@ -39,14 +72,37 @@ def _clamp(value: float, lo: float, hi: float) -> float:
 # of the curve between 0 and the boundary changed, from linear to quadratic.
 HRV_RHR_SD_CLAMP = 2.0
 
+# ADR 0007: a small dead zone below which a deviation is treated as no real
+# signal at all (flat 50, not just "dampened") rather than nudging the score
+# even slightly. This is the "SWC/noise-floor gating" research verdict,
+# layered on TOP of ADR 0006's quadratic curve rather than replacing it --
+# Francisco chose (2026-08-30, asked directly rather than decided silently)
+# to keep the existing 60-day population-SD baseline instead of rearchitecting
+# to a shorter rolling window, so there's no per-athlete day-to-day
+# coefficient-of-variation figure computed yet to anchor a personalized SWC
+# (the Plews/Hopkins convention: ~0.5x the athlete's own trailing CV). Absent
+# that, this uses Hopkins' generic population default instead: a smallest-
+# worthwhile-change of ~0.2x SD -- and since `deviation_sd` here is already
+# expressed in units of the 60-day population SD, that default is simply 0.2
+# in these same units, no new baseline machinery required. Real precedent,
+# not invented: Firstbeat's own disclosed HRV Recovery methodology (which
+# partly underlies this project's Garmin data) already applies an SWC floor
+# before scaling, and all three independent HRV-guided-training RCT programs
+# found in the research use an SWC gate operationally. Whether this hybrid
+# (gate-then-continuous) actually outperforms pure continuous scoring has
+# never been tested head-to-head anywhere for this exact purpose -- adopting
+# it is well-precedented engineering practice, not a proven-superior method.
+HRV_RHR_NOISE_FLOOR_SD = 0.2
+
 
 def _deviation_to_score(deviation_sd: float, *, invert: bool = False) -> float:
-    """Maps a baseline deviation (in SD units) onto a 0-100 score via a
-    quadratic curve (ADR 0006) -- flat near 0 (an ordinary, statistically
-    routine ~1 SD deviation, which real data shows happens roughly 1 day in
-    3, only moves the score to ~37.5/62.5) and steep toward the +-2 SD
-    clamp boundary (still reaches the exact same 0/100 endpoints the
-    original linear mapping did).
+    """Maps a baseline deviation (in SD units) onto a 0-100 score: flat at 50
+    within a small dead zone (+-0.2 SD, ADR 0007 -- "no real signal"), then a
+    quadratic curve (ADR 0006) from the dead-zone edge out to the +-2 SD
+    clamp boundary, still reaching the exact same 0/100 endpoints the
+    original linear mapping did. An ordinary, statistically routine ~1 SD
+    deviation (real data: roughly 1 day in 3) moves the score to ~40/60, not
+    the 25/75 a straight linear mapping would give.
 
     Replaces a straight linear mapping (`50 + 25*clamp(x,-2,2)`) that spent
     a full quarter of the entire score range on the very first, routine SD
@@ -54,8 +110,8 @@ def _deviation_to_score(deviation_sd: float, *, invert: bool = False) -> float:
     sustained trend scored a 24/100, reading as a serious problem for
     something well within normal day-to-day noise.
 
-    Researched before choosing this shape, not guessed (ADR 0006 has the
-    full synthesis): neither WHOOP nor Garmin discloses their actual
+    Researched before choosing this shape, not guessed (ADR 0006/0007 have
+    the full synthesis): neither WHOOP nor Garmin discloses their actual
     formula (confirmed across official docs and a peer-reviewed cross-
     manufacturer survey that found NONE of 14 commercial composite scores
     disclose their weighting), and no peer-reviewed source validates any
@@ -63,25 +119,31 @@ def _deviation_to_score(deviation_sd: float, *, invert: bool = False) -> float:
     supports THIS DIRECTION specifically: real device data shows day-to-
     day HRV noise is genuinely small relative to real training-driven
     shifts, and sports-science convention (Hopkins' "smallest worthwhile
-    change," applied to HRV by Plews et al.) already treats small
-    deviations as noise rather than full signal. Critically, a sigmoid
-    curve (the other common "nonlinear" shape, and what the one specific
-    formula claiming to be WHOOP's actual math uses online -- self-
-    described by its own author as an invented approximation, not a
-    reverse-engineered fact) would move the score HARDER on ordinary
-    noise than linear already does, the opposite of the goal -- verified
-    by direct calculation before deciding, not assumed from the name
-    "nonlinear." Only a power-law/quadratic-family curve delivers what was
-    actually wanted; the specific exponent (2) itself has no direct
-    literature validation and is a documented, revisable default, same
-    spirit as this project's other seed-phase numbers.
+    change," applied to HRV by Plews et al. and used operationally by
+    every HRV-guided-training RCT program the ADR 0007 research found)
+    already treats small deviations below a threshold as noise rather than
+    signal at all. Critically, a sigmoid curve (the other common
+    "nonlinear" shape, and what the one specific formula claiming to be
+    WHOOP's actual math uses online -- self-described by its own author as
+    an invented approximation, not a reverse-engineered fact) would move
+    the score HARDER on ordinary noise than linear already does, the
+    opposite of the goal -- verified by direct calculation before
+    deciding, not assumed from the name "nonlinear." Only a power-law/
+    quadratic-family curve delivers what was actually wanted; the specific
+    exponent (2) and the specific dead-zone width (0.2 SD) both have no
+    direct literature validation for this exact use and are documented,
+    revisable defaults, same spirit as this project's other seed-phase
+    numbers.
 
     `invert=True` for RHR: elevated RHR is LESS ready, the mirror image of
     HRV's "higher is better."
     """
     clamped = _clamp(deviation_sd, -HRV_RHR_SD_CLAMP, HRV_RHR_SD_CLAMP)
+    span = HRV_RHR_SD_CLAMP - HRV_RHR_NOISE_FLOOR_SD
+    magnitude = max(0.0, abs(clamped) - HRV_RHR_NOISE_FLOOR_SD)
+    fraction = magnitude / span
     sign = -1.0 if clamped < 0 else 1.0
-    delta = sign * 50.0 * (abs(clamped) / HRV_RHR_SD_CLAMP) ** 2
+    delta = sign * 50.0 * fraction**2
     return 50.0 - delta if invert else 50.0 + delta
 
 
@@ -100,20 +162,47 @@ def _rhr_component_score(deviation_sd: float) -> float:
     return _deviation_to_score(deviation_sd, invert=True)
 
 
+# ADR 0007: a single 8.0h point target contradicts the sleep-science
+# consensus itself (the National Sleep Foundation's own adult recommendation
+# is a 7-9h RANGE, deliberately not a point value) -- any night within this
+# band now earns full quantity credit, rather than only exactly-8h doing so.
+# Nothing above the band is penalized either (no evidence found that this
+# population needs an upper-bound penalty for extra sleep). The lower edge
+# (7.0) doubles as `metrics/baselines.py: DEFAULT_NIGHTLY_NEED_HOURS` for the
+# rolling debt calculation -- kept as two independent constants in two
+# modules (no shared import, same pattern as HRV_RHR_SD_CLAMP already being
+# independent of anything in baselines.py), but conceptually the same number.
+SLEEP_BAND_LOW_HOURS = 7.0
+
+# ADR 0007: reduced from an even 50/50 blend (built 2026-08-28) after
+# research found Garmin's own consumer sleep-stage classification -- the
+# exact layer this quality score is built on -- scored WORST of 6 real
+# devices independently validated against lab polysomnography (kappa=0.21,
+# "fair," vs a same-device-generation company-reported 0.54), and the one
+# athlete-specific study that directly compared duration vs. architecture
+# (Knufinke et al. 2018, n=98 elite athletes) found duration significant and
+# stage/efficiency measures NOT significant for next-day performance. Not
+# removed entirely, though the evidence would support that -- Francisco
+# specifically asked for REM/deep to be factored in (2026-08-30) and chose,
+# when asked directly, to keep it at a reduced rather than zero weight, so
+# the signal still counts, just not as an equal partner to duration+debt.
+SLEEP_QUALITY_BLEND_WEIGHT = 0.25
+
+
 def _sleep_component_score(
     last_night_hours: float | None,
     debt_hours: float | None,
     quality_score: float | None = None,
-    *,
-    need_hours: float = 8.0,
 ) -> float | None:
-    """Blend of two halves: **quantity** (last night's duration vs need,
-    50/50 with the 14-day rolling debt — the kickoff doc doesn't specify an
-    exact split, a documented default, not a given number) and **quality**
-    (Garmin's own `sleep_score`, which factors in REM/deep/restlessness/
-    timing — something this project's own duration+debt math never looked
-    at until Francisco asked directly, 2026-08-30, why our sleep score read
-    97 the same night Garmin's read 74 "Fair" for low REM).
+    """Blend of two halves: **quantity** (last night's duration vs a 7-9h
+    band, 50/50 with the 14-day rolling debt — the kickoff doc doesn't
+    specify an exact split, a documented default, not a given number) and
+    **quality** (Garmin's own `sleep_score`, which factors in REM/deep/
+    restlessness/timing — something this project's own duration+debt math
+    never looked at until Francisco asked directly, 2026-08-30, why our
+    sleep score read 97 the same night Garmin's read 74 "Fair" for low REM),
+    weighted at `SLEEP_QUALITY_BLEND_WEIGHT` rather than an even half (see
+    that constant's docstring for why it's no longer 50/50).
 
     Deliberately reuses Garmin's own quality algorithm rather than inventing
     a stage-weighting formula from raw deep/light/rem/awake minutes — Garmin
@@ -129,7 +218,12 @@ def _sleep_component_score(
     """
     quantity_parts = []
     if last_night_hours is not None:
-        quantity_parts.append(_clamp(last_night_hours / need_hours * 100.0, 0.0, 100.0))
+        if last_night_hours >= SLEEP_BAND_LOW_HOURS:
+            quantity_parts.append(100.0)
+        else:
+            quantity_parts.append(
+                _clamp(last_night_hours / SLEEP_BAND_LOW_HOURS * 100.0, 0.0, 100.0)
+            )
     if debt_hours is not None:
         quantity_parts.append(_clamp(100.0 - debt_hours * 10.0, 0.0, 100.0))
     quantity_score = sum(quantity_parts) / len(quantity_parts) if quantity_parts else None
@@ -138,12 +232,8 @@ def _sleep_component_score(
         return quality_score
     if quality_score is None:
         return quantity_score
-    return (quantity_score + quality_score) / 2.0
-
-
-def _tsb_component_score(z_score: float) -> float:
-    """Higher TSB (fresher than usual) = more ready. Clamped +-2 like HRV."""
-    return 50.0 + 25.0 * _clamp(z_score, -2.0, 2.0)
+    w = SLEEP_QUALITY_BLEND_WEIGHT
+    return quantity_score * (1.0 - w) + quality_score * w
 
 
 def _subjective_component_score(hooper_index: float) -> float:
@@ -162,7 +252,6 @@ def compute_readiness_score(
     last_night_sleep_hours: float | None = None,
     sleep_debt_hours: float | None = None,
     sleep_quality_score: float | None = None,
-    tsb_z_score: float | None = None,
     hooper_index: float | None = None,
     weights: dict[str, float] | None = None,
 ) -> dict[str, Any]:
@@ -201,8 +290,6 @@ def compute_readiness_score(
             },
             "score": sleep_score,
         }
-    if tsb_z_score is not None:
-        components["tsb"] = {"raw": tsb_z_score, "score": _tsb_component_score(tsb_z_score)}
     if hooper_index is not None:
         components["subjective"] = {
             "raw": hooper_index,
@@ -215,7 +302,9 @@ def compute_readiness_score(
     covered_weight = sum(weights[name] for name in components)
     if covered_weight <= 0.0:
         # Every component that actually has data today was configured with
-        # weight 0.0 (e.g. `weight_tsb: 0.0` while its inputs are known stale)
+        # weight 0.0 in `weights` (e.g. a future component whose inputs are
+        # known unreliable, same reasoning TSB itself used briefly in
+        # 2026-08-30 before ADR 0007 removed it from this composite outright)
         # -- renormalizing a real weight against zero total weight is
         # undefined, not almost-zero, so this is "no usable score" the same
         # as the empty-components case above, not a crash.

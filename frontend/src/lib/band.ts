@@ -5,8 +5,9 @@ import type { ReadinessBand } from "@/types/today"
 // thresholds; this is a UI-only color mapping on top, same relationship
 // dashboard/theme.py: band_color() already had to Python's own
 // classify_readiness_band(). Only needed here for the sub-COMPONENT scores
-// (hrv/rhr/sleep/tsb/subjective), since the backend already sends the
-// overall score's own `band` directly in the payload.
+// (hrv/rhr/sleep/subjective -- TSB was removed from the composite entirely,
+// ADR 0007), since the backend already sends the overall score's own
+// `band` directly in the payload.
 export function scoreToBand(score: number | null): ReadinessBand {
   if (score === null) return "no_data"
   if (score >= 75) return "green"

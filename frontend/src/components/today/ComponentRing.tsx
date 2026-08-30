@@ -5,7 +5,6 @@ const COMPONENT_LABELS: Record<string, string> = {
   hrv: "HRV",
   sleep: "Sleep",
   rhr: "RHR",
-  tsb: "Freshness",
   subjective: "Wellness",
 }
 
@@ -17,11 +16,12 @@ interface ComponentRingProps {
   size?: number
 }
 
-/** A small ring for one readiness sub-component (HRV/RHR/sleep/TSB/
- * subjective), colored by the SAME 75/55 band thresholds as the main ring
- * (lib/band.ts) so a component ring and the overall ring never disagree on
- * what "amber" looks like. Same gradient-stroke treatment as the main ring,
- * scaled down. Counts up on mount, same as ReadinessRing.
+/** A small ring for one readiness sub-component (HRV/RHR/sleep/subjective --
+ * TSB was removed from the composite entirely, ADR 0007, so it never
+ * appears here anymore), colored by the SAME 75/55 band thresholds as the
+ * main ring (lib/band.ts) so a component ring and the overall ring never
+ * disagree on what "amber" looks like. Same gradient-stroke treatment as
+ * the main ring, scaled down. Counts up on mount, same as ReadinessRing.
  *
  * The number inside the ring is always the 0-100 readiness SCORE, never the
  * raw sensor reading -- real mix-up found 2026-08-30, "HRV 47" was
@@ -29,8 +29,9 @@ interface ComponentRingProps {
  * real HRV at 90ms. `displayRaw` (e.g. "90ms") renders below the label so
  * the actual reading is always visible, not just the abstracted score.
  *
- * `excluded` (weight_used === 0, e.g. TSB while its load-data coverage is
- * known unreliable -- config/athlete.yaml) renders the ring desaturated
+ * `excluded` (weight_used === 0, a general mechanism -- originally
+ * motivated by TSB while its load-data coverage was known unreliable, kept
+ * for any future zero-weighted component) renders the ring desaturated
  * with a dashed track and "not counted" in place of the label, so a
  * component contributing zero weight never looks like a real, scored 0.
  */

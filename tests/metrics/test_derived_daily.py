@@ -20,8 +20,7 @@ _CONFIG = {
         "weight_hrv": 0.35,
         "weight_sleep": 0.25,
         "weight_rhr": 0.15,
-        "weight_tsb": 0.15,
-        "weight_subjective": 0.10,
+        "weight_subjective": 0.25,
     },
     "goals": {"primary": {"date": "2026-10-18", "weight_division_kg": 77.0}},
 }

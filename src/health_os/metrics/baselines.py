@@ -15,7 +15,18 @@ from typing import Any
 DEFAULT_BASELINE_WINDOW_DAYS = 60
 DEFAULT_BASELINE_MIN_DAYS = 21
 DEFAULT_SLEEP_DEBT_WINDOW_DAYS = 14
-DEFAULT_NIGHTLY_NEED_HOURS = 8.0
+
+# ADR 0007 (2026-08-30): lowered from a flat 8.0h point target to 7.0h — the
+# LOW edge of the National Sleep Foundation's own adult recommendation, a
+# 7-9h range, not a point value. Debt only accrues below this floor now,
+# consistent with `metrics/readiness.py: SLEEP_BAND_LOW_HOURS` treating
+# anything in the adequate range as fully credited, not just exactly-8h.
+# The 14-day window itself is unchanged — genuinely unresolved either way
+# (no study anywhere compares 7 vs 14 vs 21 vs 30 days for real-world debt
+# tracking; the original 14-day pick was shared industry convention, not
+# shared evidence, and staying at 14 is exactly as evidence-free as moving
+# it, so there's nothing to change toward).
+DEFAULT_NIGHTLY_NEED_HOURS = 7.0
 
 # Francisco's own seed thresholds (kickoff doc section 6), used only while the
 # 60-day computed-baseline window is filling (21-59 total observations). The

@@ -358,7 +358,6 @@ def _readiness_weights(config: dict[str, Any]) -> dict[str, float]:
             "hrv": config["readiness_score"]["weight_hrv"],
             "sleep": config["readiness_score"]["weight_sleep"],
             "rhr": config["readiness_score"]["weight_rhr"],
-            "tsb": config["readiness_score"]["weight_tsb"],
             "subjective": config["readiness_score"]["weight_subjective"],
         }
     )
@@ -367,17 +366,21 @@ def _readiness_weights(config: dict[str, Any]) -> dict[str, float]:
 
 def _readiness_score_metric(
     daily_rows: list[sqlite3.Row],
-    load_series: list[tuple[str, float]],
     config: dict[str, Any],
     as_of_date: str,
     hooper_index: float | None,
 ) -> DerivedMetric:
+    """ADR 0007 (2026-08-30) removed TSB from this composite entirely -- no
+    longer takes `load_series`/computes a TSB z-score here at all. TSB is
+    still persisted separately by `_tsb_zscore_metric()` (its own
+    `derived_daily` row, still fed from `load_series` at the real call site
+    below), just not folded into `readiness_score` anymore.
+    """
     hrv_result = baselines.compute_hrv_baseline(_rows_to_tuples(daily_rows, "hrv_overnight_ms"))
     rhr_result = baselines.compute_rhr_baseline(_rows_to_tuples(daily_rows, "resting_hr"))
     sleep_obs = _rows_to_tuples(daily_rows, "sleep_total_min")
     sleep_quality_obs = _rows_to_tuples(daily_rows, "sleep_score")
     sleep_debt_result = baselines.compute_sleep_debt(sleep_obs)
-    tsb_zscore_result = load_metrics.compute_tsb_zscore(_tsb_series(load_series))
     weights = _readiness_weights(config)
 
     def _if_full(result: dict[str, Any], key: str) -> float | None:
@@ -394,7 +397,6 @@ def _readiness_score_metric(
         # and same "last element == as_of_date" convention as
         # coach/briefing.py's identical call site, kept in sync deliberately.
         sleep_quality_score=sleep_quality_obs[-1][1] if sleep_quality_obs else None,
-        tsb_z_score=_if_full(tsb_zscore_result, "z_score"),
         hooper_index=hooper_index,
         weights=weights,
     )
@@ -437,7 +439,7 @@ def compute_derived_metrics(
         _tsb_zscore_metric(load_series, as_of_date),
         *_weight_metrics(daily_rows, as_of_date),
         _comp_countdown_metric(daily_rows, config, as_of_date),
-        _readiness_score_metric(daily_rows, load_series, config, as_of_date, hooper_index),
+        _readiness_score_metric(daily_rows, config, as_of_date, hooper_index),
     ]
 
 

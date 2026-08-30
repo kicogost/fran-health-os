@@ -150,15 +150,17 @@ class TestComputeSleepDebt:
         assert result["debt_hours"] is None
 
     def test_hand_computed_partial_window(self) -> None:
-        # 3 real nights: 6h, 6h, 10h (in minutes). debt = 2 + 2 + (-2) = 2.0h.
-        obs = _dated([360.0, 360.0, 600.0])
+        # 3 real nights: 5h, 5h, 9h (in minutes). ADR 0007 lowered the
+        # nightly need default from 8.0h to 7.0h (the low edge of the 7-9h
+        # band, not a fixed point target) -- debt = 2 + 2 + (-2) = 2.0h.
+        obs = _dated([300.0, 300.0, 540.0])
         result = compute_sleep_debt(obs)
         assert result["debt_hours"] == pytest.approx(2.0)
         assert result["n_days"] == 3
         assert result["confidence"] == "partial"
 
     def test_full_window_zero_debt(self) -> None:
-        obs = _dated([480.0] * 14)  # exactly 8h every night
+        obs = _dated([420.0] * 14)  # exactly 7h every night (ADR 0007's need default)
         result = compute_sleep_debt(obs)
         assert result["debt_hours"] == pytest.approx(0.0)
         assert result["confidence"] == "full"

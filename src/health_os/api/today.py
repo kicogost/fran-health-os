@@ -47,11 +47,13 @@ def _annotate_components_with_display(components: dict[str, Any], daily_row: Any
     rings ("HRV 47", "RHR 24") against his real Garmin app and reasonably
     read them as raw HRV ms / RHR bpm -- they were always the readiness
     sub-SCORE (0-100), never the raw reading, and the raw reading was never
-    shown anywhere on this page at all. `excluded` covers the companion
-    fix (config/athlete.yaml: weight_tsb temporarily 0.0) -- a component
-    that's present but contributes zero weight needs to look visibly
-    different from a real, counted low score, not just show "0" the same
-    way a genuinely bad reading would.
+    shown anywhere on this page at all. `excluded` (weight_used == 0.0) is a
+    general mechanism -- originally motivated by TSB being temporarily
+    zero-weighted the same day, before ADR 0007 removed TSB from this
+    composite entirely -- kept here for any future component whose weight
+    gets set to 0.0 in config, so it looks visibly different from a real,
+    counted low score rather than just showing "0" the same way a genuinely
+    bad reading would.
     """
     display_raw = {
         "hrv": f"{daily_row['hrv_overnight_ms']:.0f}ms"

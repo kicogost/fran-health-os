@@ -26,8 +26,7 @@ _CONFIG = {
         "weight_hrv": 0.35,
         "weight_sleep": 0.25,
         "weight_rhr": 0.15,
-        "weight_tsb": 0.15,
-        "weight_subjective": 0.10,
+        "weight_subjective": 0.25,
     },
     "nutrition": {"protein_g_daily_min": 180},
     "goals": {"primary": {"date": "2026-10-18", "weight_division_kg": 77.0}},
@@ -223,14 +222,15 @@ class TestAnnotateComponentsWithDisplay:
         assert annotated["hrv"]["display_raw"] is None
 
     def test_zero_weight_used_marked_excluded(self, conn: sqlite3.Connection) -> None:
-        # Companion fix: config/athlete.yaml's weight_tsb temporarily 0.0
-        # (real coverage-gap bug, see CLAUDE.md) means TSB shows up with
-        # weight_used=0.0 -- it must read as visibly excluded, not as a
-        # real, counted score of 0.
+        # Generic mechanism test -- ADR 0007 removed TSB from the composite
+        # entirely (it's what originally motivated `excluded`, back when
+        # config/athlete.yaml's weight_tsb was temporarily 0.0 for a
+        # coverage-gap bug), but any future zero-weighted component should
+        # read as visibly excluded, not as a real, counted score of 0.
         row = self._daily_row(conn, "2026-08-30")
-        components = {"tsb": {"raw": -3.08, "score": 0.0, "weight_used": 0.0}}
+        components = {"hrv": {"raw": -0.11, "score": 0.0, "weight_used": 0.0}}
         annotated = _annotate_components_with_display(components, row)
-        assert annotated["tsb"]["excluded"] is True
+        assert annotated["hrv"]["excluded"] is True
 
     def test_nonzero_weight_used_not_excluded(self, conn: sqlite3.Connection) -> None:
         row = self._daily_row(conn, "2026-08-30")

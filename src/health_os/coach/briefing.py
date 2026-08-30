@@ -59,7 +59,6 @@ def _fetch_load_series(
 
 def _readiness_result_as_of(
     daily_rows: list[sqlite3.Row],
-    tsb_series: list[tuple[str, float]],
     hooper_by_date: dict[str, float],
     weights: dict[str, float],
     as_of_date: str,
@@ -72,6 +71,11 @@ def _readiness_result_as_of(
     score. Returns the full result (not just the band) so callers wanting
     today's component breakdown (e.g. the dashboard's ring gauges) don't need
     a second, separate computation.
+
+    No longer takes a TSB series (ADR 0007 removed TSB from this composite
+    entirely) — `tsb_series` in `compute_daily_plan()` is still computed and
+    used, just for the separate `tsb_persistently_negative` structural flag,
+    not fed in here anymore.
     """
     truncated = [r for r in daily_rows if r["date"] <= as_of_date]
     if not truncated:
@@ -84,8 +88,6 @@ def _readiness_result_as_of(
     hrv_result = baselines.compute_hrv_baseline(hrv_obs)
     rhr_result = baselines.compute_rhr_baseline(rhr_obs)
     sleep_debt_result = baselines.compute_sleep_debt(sleep_obs)
-    tsb_as_of = [(d, tsb) for d, tsb in tsb_series if d <= as_of_date]
-    tsb_zscore_result = load_metrics.compute_tsb_zscore(tsb_as_of)
 
     def _if_full(result: dict[str, Any], key: str) -> float | None:
         return result[key] if result.get("confidence") == "full" else None
@@ -103,7 +105,6 @@ def _readiness_result_as_of(
         # night Garmin's read 74 "Fair" for low REM). Same "last element ==
         # as_of_date" convention already used for last_night_sleep_hours above.
         sleep_quality_score=sleep_quality_obs[-1][1] if sleep_quality_obs else None,
-        tsb_z_score=_if_full(tsb_zscore_result, "z_score"),
         hooper_index=hooper_by_date.get(as_of_date),
         weights=weights,
     )
@@ -152,7 +153,6 @@ def compute_daily_plan(
             "hrv": config["readiness_score"]["weight_hrv"],
             "sleep": config["readiness_score"]["weight_sleep"],
             "rhr": config["readiness_score"]["weight_rhr"],
-            "tsb": config["readiness_score"]["weight_tsb"],
             "subjective": config["readiness_score"]["weight_subjective"],
         }
     )
@@ -161,7 +161,6 @@ def compute_daily_plan(
     readiness_results = [
         _readiness_result_as_of(
             daily_rows,
-            tsb_series,
             hooper_by_date,
             weights,
             (today_d - timedelta(days=i)).isoformat(),

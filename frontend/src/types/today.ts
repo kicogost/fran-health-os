@@ -11,14 +11,16 @@ export interface ReadinessComponent {
   // The actual sensor reading (e.g. "90ms", "52bpm", "7h29m") -- never the
   // same number as `score`, which is the abstracted 0-100 readiness
   // contribution, not a raw value. `null` when no raw display makes sense
-  // for this component (TSB/subjective) or the underlying reading is
-  // missing. Added 2026-08-30 after a real mix-up: the rings only ever
-  // showed `score`, and it was reasonable to read "HRV 47" as 47ms.
+  // for this component (subjective) or the underlying reading is missing.
+  // Added 2026-08-30 after a real mix-up: the rings only ever showed
+  // `score`, and it was reasonable to read "HRV 47" as 47ms.
   display_raw: string | null
-  // True when weight_used is 0 (e.g. config/athlete.yaml: weight_tsb
-  // temporarily 0.0 while its inputs are known unreliable) -- present in
+  // True when weight_used is 0 -- a general mechanism, present in
   // `components` for transparency, but contributing nothing to the total,
   // so it must look visibly different from a real, counted low score.
+  // (Originally motivated by TSB being temporarily zero-weighted; TSB was
+  // removed from this composite entirely by ADR 0007 and never appears in
+  // `components` anymore, but the mechanism stays for any future case.)
   excluded: boolean
 }
 
