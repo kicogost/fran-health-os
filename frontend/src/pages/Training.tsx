@@ -221,12 +221,16 @@ export function TrainingPage() {
           <button
             type="button"
             onClick={() => setShowTechnical((v) => !v)}
-            className="text-xs font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
+            className="rounded-full border border-border px-3 py-1 text-xs font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors"
           >
             {showTechnical ? "Hide" : "Show"} technical detail
           </button>
           {showTechnical && (
-            <div className="mt-4 space-y-4">
+            // Surface-ladder tone shift (Linear: depth via a lighter sub-
+            // panel, not a shadow) instead of just sitting flush on the
+            // flat card above -- one step up from --card, same as the rest
+            // of this flat-card family.
+            <div className="mt-4 space-y-4 rounded-lg bg-accent/40 p-4">
               <p className="text-xs text-muted-foreground">
                 The numbers behind the plain-English cards above, for anyone who wants to check
                 the math (design principle: every number here should be traceable).

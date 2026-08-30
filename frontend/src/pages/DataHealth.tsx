@@ -115,7 +115,10 @@ export function DataHealthPage() {
               </thead>
               <tbody>
                 {data.dedupe_log.map((row) => (
-                  <tr key={row.activity_id} className="border-b border-border/50 last:border-0">
+                  <tr
+                    key={row.activity_id}
+                    className="border-b border-border/50 last:border-0 even:bg-accent/20"
+                  >
                     <td className="py-2 pr-4 text-foreground font-mono text-xs">
                       {row.activity_id}
                     </td>

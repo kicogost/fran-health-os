@@ -81,16 +81,16 @@ export function TrendsPage() {
     <div className="max-w-4xl mx-auto p-6 space-y-3">
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-2xl font-semibold text-foreground tracking-tight">Trends</h1>
-        <div className="flex gap-1 rounded-lg border border-border p-1">
+        <div className="flex gap-1 rounded-full border border-border p-1">
           {WINDOW_OPTIONS.map((w) => (
             <button
               key={w}
               type="button"
               onClick={() => setWindowDays(w)}
               className={[
-                "px-3 py-1 text-sm rounded-md transition-colors",
+                "px-3 py-1 text-sm rounded-full transition-colors",
                 windowDays === w
-                  ? "bg-accent text-foreground font-medium"
+                  ? "bg-[var(--band-blue)] text-[#0a0a0b] font-medium"
                   : "text-muted-foreground hover:text-foreground",
               ].join(" ")}
             >

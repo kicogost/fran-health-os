@@ -3076,6 +3076,46 @@ their depth while the chart/log cards sit flatter and quieter, and Data
 Health's dedupe-log table (34 real merged activities, from the earlier
 dedup-bug fixes) renders cleanly in the new flat treatment.
 
+## Second design pass — pill buttons, surface-ladder depth (2026-08-30)
+
+Francisco: "deffo better, but let's push a bit more see what you can do."
+Three concrete, bounded pushes, each pulling a specific documented Spotify
+or Linear mechanism this app hadn't used yet — not a repaint, the same
+"borrow structure, not palette" discipline as the first pass.
+
+- **Pill buttons everywhere real** (Spotify: "pill everything," circular
+  icon buttons, rounded.full CTAs). `components/ui/button.tsx`'s base
+  `rounded-lg` → `rounded-full` — the shadcn Button is only actually used
+  for the Log page's 4 form-submit buttons, so this is a real, visible
+  change, not dead-code. Trends' 30d/90d/365d window selector rebuilt as a
+  proper pill segmented control, active state filled in the readiness-blue
+  accent (functional, matching that band color's existing meaning
+  elsewhere — not a new decorative color). Training's "Show/Hide technical
+  detail" toggle went from bare text to a real outlined pill button
+  (Spotify's own `button-outline-on-image` pattern), so it reads as
+  interactive at a glance instead of looking like a label.
+- **Surface-ladder depth instead of shadow** (Linear: hierarchy through a
+  lighter/darker sub-tone, not drop shadows) pushed one level deeper than
+  the first pass's flat cards — Training's expanded technical-detail panel
+  now sits on a visibly lighter `bg-accent/40` sub-panel rather than just
+  sitting flush inside the flat card, and Data Health's dedupe-log table
+  gained subtle `even:` row banding (tone-based scanability for a genuinely
+  wide table, the same mechanism, not a new one).
+- **Nothing further on tracking**: checked Linear's own numbers before
+  pushing here — its 40px display tier uses -1.0px letter-spacing, which is
+  almost exactly Tailwind's `tracking-tight` (-1.2px at 48px) already
+  applied in the first pass. Going to `tracking-tighter` (-2.4px) would
+  overshoot what Linear's own reference actually uses at this size — skipped
+  as unfaithful to the source, not just left out.
+
+Frontend `tsc -b` clean, no backend changes, no new tests (pure CSS/markup,
+same "dashboard/frontend can go untested" agreement). Verified via Chrome-
+headless screenshots of Trends (pill selector, active-state blue fill),
+Training (pill toggle button, plus a temporarily-seeded `showTechnical=true`
+screenshot confirming the surface-ladder panel — reverted immediately after,
+never left in committed code), and Data Health (row banding across the real
+34-row dedupe log) against the real running app.
+
 ## Definition of done for v1
 
 One command each morning: syncs Garmin + Strava, recomputes everything, prints a
