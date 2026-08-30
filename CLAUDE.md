@@ -2991,6 +2991,24 @@ night this week", "Your resting heart rate has been a bit elevated lately
 right now" (Freshness: Fatigued), "Your fitness has been building over the
 last few weeks," and a legended, correctly-titled effort-over-time chart.
 
+**Same day, a real gap Francisco spotted directly**: the Today page's
+"Structural" warning banners had been left out of the plain-language pass
+above — they still said "TSB has been negative for 4+ straight days" and
+"HRV has sat >1 SD below baseline for 3 straight days" verbatim, the exact
+kind of acronym/unit-jargon just removed everywhere else. These live in two
+places that had drifted to identical hardcoded text: `coach/briefing.py`'s
+CLI formatter and `frontend/src/components/today/SessionCard.tsx`'s label
+map — both rewritten together, in the same words, so the CLI briefing and
+the web app never again say something different for the same trigger.
+Also dropped the "Structural:" label prefix entirely — redundant once the
+sentence itself says what's been true for multiple days, and mildly jargon-
+y on its own. `dashboard/views/today.py` (the frozen Streamlit fallback) was
+deliberately left with the old text, consistent with that page's established
+not-kept-in-sync status since the React migration. No test asserted the old
+literal strings, so nothing broke; verified via a live CLI run and a
+Chrome-headless screenshot of the real Today page (both structural warnings
+render in plain English, matching each other exactly).
+
 ## Definition of done for v1
 
 One command each morning: syncs Garmin + Strava, recomputes everything, prints a
