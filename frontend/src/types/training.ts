@@ -43,6 +43,30 @@ export interface CalisthenicsRow {
   exercises: CalisthenicsExercise[]
 }
 
+// Plain-language reframing (2026-08-30, Francisco: "no fluff no acronyms")
+// -- mirrors metrics/insights.py's exact shape. `band` only appears on
+// "freshness" (drives which of 5 bands a badge/gauge renders).
+export interface TrainingInsight {
+  metric: "fitness_trend" | "freshness" | "consistency"
+  tone: "good" | "neutral" | "bad" | "unknown"
+  headline: string
+  detail: string | null
+  band?: "unknown" | "fatigued" | "tired" | "normal" | "fresh" | "very_fresh"
+}
+
+export interface WeeklySportSummary {
+  sport: string
+  count: number
+  minutes: number
+}
+
+export interface WeeklySummary {
+  days: number
+  session_count: number
+  total_minutes: number
+  by_sport: WeeklySportSummary[]
+}
+
 export interface TrainingPayload {
   // Rebuilt 2026-08-30: means "is there enough daily_metrics.resting_hr
   // history to build a TRIMP-based load series at all" -- the real
@@ -50,6 +74,14 @@ export interface TrainingPayload {
   // (including genuine 0.0 rest days), not "did some activity happen to
   // have Garmin/Strava's own training_load value" like it used to.
   has_load_data: boolean
+  weekly_summary: WeeklySummary
+  insights: {
+    fitness_trend: TrainingInsight
+    freshness: TrainingInsight
+    consistency: TrainingInsight
+  }
+  // Kept for traceability (design principle 9) -- no longer the primary
+  // view, surfaced behind a "technical detail" toggle on the page.
   ctl_atl_tsb: CtlAtlTsbPoint[]
   tsb_zscore: TsbZscore | null
   monotony_strain: MonotonyStrain | null

@@ -13,6 +13,7 @@ from health_os.metrics.strain import (
     build_activity_based_load_series,
     build_daily_strain,
     build_load_by_sport_rows,
+    build_weekly_summary,
     combine_daily_strain,
     compute_foster_load,
     compute_trimp,
@@ -415,3 +416,89 @@ class TestBuildLoadBySportRows:
         )
         rows = build_load_by_sport_rows(conn, _CONFIG, "2026-08-28")
         assert [r["sport"] for r in rows] == ["bjj"]
+
+
+class TestBuildWeeklySummary:
+    def test_no_data_gives_zero_counts(self, conn: sqlite3.Connection) -> None:
+        result = build_weekly_summary(conn, _CONFIG, "2026-08-30")
+        assert result == {"days": 7, "session_count": 0, "total_minutes": 0.0, "by_sport": []}
+
+    def test_counts_a_real_session_with_duration(self, conn: sqlite3.Connection) -> None:
+        db_module.upsert(
+            conn, "daily_metrics", {"date": "2026-08-28", "resting_hr": 49.0}, ["date"]
+        )
+        db_module.upsert(
+            conn,
+            "activities",
+            {
+                "activity_id": "garmin:ride1",
+                "source": "garmin",
+                "source_id": "ride1",
+                "start_utc": "2026-08-28T06:00:00Z",
+                "local_date": "2026-08-28",
+                "sport": "cycling",
+                "duration_s": 3600,
+                "avg_hr": 140,
+            },
+            ["activity_id"],
+        )
+        result = build_weekly_summary(conn, _CONFIG, "2026-08-30")
+        assert result["session_count"] == 1
+        assert result["total_minutes"] == pytest.approx(60.0)
+        assert result["by_sport"] == [
+            {"sport": "cycling", "count": 1, "minutes": pytest.approx(60.0)}
+        ]
+
+    def test_two_sessions_different_sports_both_counted(self, conn: sqlite3.Connection) -> None:
+        db_module.upsert(
+            conn, "daily_metrics", {"date": "2026-08-28", "resting_hr": 49.0}, ["date"]
+        )
+        db_module.upsert(
+            conn,
+            "activities",
+            {
+                "activity_id": "garmin:ride1",
+                "source": "garmin",
+                "source_id": "ride1",
+                "start_utc": "2026-08-28T06:00:00Z",
+                "local_date": "2026-08-28",
+                "sport": "cycling",
+                "duration_s": 3600,
+                "avg_hr": 140,
+            },
+            ["activity_id"],
+        )
+        db_module.upsert(
+            conn,
+            "bjj_sessions",
+            {
+                "date": "2026-08-28",
+                "session_type": "open_mat",
+                "duration_min": 90,
+                "session_rpe": 8,
+            },
+            ["date", "session_type"],
+        )
+        result = build_weekly_summary(conn, _CONFIG, "2026-08-30")
+        assert result["session_count"] == 2
+        assert result["total_minutes"] == pytest.approx(150.0)
+        sports = {row["sport"] for row in result["by_sport"]}
+        assert sports == {"cycling", "bjj"}
+
+    def test_outside_the_window_not_counted(self, conn: sqlite3.Connection) -> None:
+        db_module.upsert(
+            conn, "daily_metrics", {"date": "2026-08-01", "resting_hr": 49.0}, ["date"]
+        )
+        db_module.upsert(
+            conn,
+            "bjj_sessions",
+            {
+                "date": "2026-08-01",
+                "session_type": "open_mat",
+                "duration_min": 90,
+                "session_rpe": 8,
+            },
+            ["date", "session_type"],
+        )
+        result = build_weekly_summary(conn, _CONFIG, "2026-08-30")
+        assert result["session_count"] == 0

@@ -1,8 +1,25 @@
 import { useEffect, useState } from "react"
-import { Activity, Dumbbell, Gauge, TriangleAlert } from "lucide-react"
+import {
+  Activity,
+  Battery,
+  BatteryCharging,
+  BatteryFull,
+  BatteryLow,
+  BatteryWarning,
+  Bike,
+  Dumbbell,
+  Footprints,
+  Minus,
+  Swords,
+  TrendingDown,
+  TrendingUp,
+  TriangleAlert,
+  Waves,
+  type LucideIcon,
+} from "lucide-react"
 import { ApiError, fetchTraining } from "@/lib/api"
 import { CARD_CLASS } from "@/lib/styles"
-import type { TrainingPayload } from "@/types/training"
+import type { TrainingInsight, TrainingPayload } from "@/types/training"
 import { CtlAtlTsbChart } from "@/components/charts/CtlAtlTsbChart"
 import { StackedBarChart } from "@/components/charts/StackedBarChart"
 
@@ -18,6 +35,47 @@ const SPORT_COLORS = [
   "#8d8d8d",
 ]
 
+const SPORT_ICONS: Record<string, LucideIcon> = {
+  cycling: Bike,
+  ride: Bike,
+  bjj: Swords,
+  strength_training: Dumbbell,
+  weight_training: Dumbbell,
+  traditional_strength_training: Dumbbell,
+  functional_strength_training: Dumbbell,
+  running: Footprints,
+  run: Footprints,
+  walking: Footprints,
+  walk: Footprints,
+  swimming: Waves,
+  swim: Waves,
+}
+
+const FRESHNESS_ICONS: Record<string, LucideIcon> = {
+  unknown: Battery,
+  fatigued: BatteryWarning,
+  tired: BatteryLow,
+  normal: Battery,
+  fresh: BatteryFull,
+  very_fresh: BatteryCharging,
+}
+
+const FRESHNESS_LABELS: Record<string, string> = {
+  unknown: "Unknown",
+  fatigued: "Fatigued",
+  tired: "A bit tired",
+  normal: "Normal",
+  fresh: "Fresh",
+  very_fresh: "Very fresh",
+}
+
+const TONE_COLOR: Record<TrainingInsight["tone"], string> = {
+  good: "var(--band-green)",
+  bad: "var(--band-red)",
+  neutral: "var(--band-blue)",
+  unknown: "var(--muted-foreground)",
+}
+
 function pivotLoadBySport(rows: TrainingPayload["load_by_sport"]) {
   const sports = Array.from(new Set(rows.map((r) => r.sport)))
   const byDate = new Map<string, Record<string, string | number>>()
@@ -30,16 +88,22 @@ function pivotLoadBySport(rows: TrainingPayload["load_by_sport"]) {
     data: Array.from(byDate.values()).sort((a, b) => String(a.date).localeCompare(String(b.date))),
     bars: sports.map((sport, i) => ({
       key: sport,
-      label: sport,
+      label: sport.replace(/_/g, " "),
       color: SPORT_COLORS[i % SPORT_COLORS.length],
     })),
   }
+}
+
+function formatHours(minutes: number): string {
+  const hours = minutes / 60
+  return hours >= 10 ? `${hours.toFixed(0)}h` : `${hours.toFixed(1)}h`
 }
 
 export function TrainingPage() {
   const [data, setData] = useState<TrainingPayload | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [showTechnical, setShowTechnical] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -70,7 +134,6 @@ export function TrainingPage() {
   if (!data) return null
 
   const { data: sportData, bars: sportBars } = pivotLoadBySport(data.load_by_sport)
-  const mono = data.monotony_strain
 
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-3">
@@ -84,8 +147,8 @@ export function TrainingPage() {
               strokeWidth={2.25}
             />
             <p className="text-sm text-foreground">
-              No resting heart rate history exists yet to build a load series from — this needs
-              at least one day of Garmin wellness data synced (<code>scripts/sync.py</code>).
+              No resting heart rate history exists yet to build this from — this needs at least
+              one day of Garmin wellness data synced.
             </p>
           </div>
         </div>
@@ -93,89 +156,25 @@ export function TrainingPage() {
 
       {data.has_load_data && (
         <>
-          <div className={`${CARD_CLASS} p-4`}>
-            <div className="flex items-center gap-2 mb-3">
-              <Gauge className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={2} />
-              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                CTL / ATL / TSB
-              </p>
-            </div>
-            <p className="text-xs text-muted-foreground mb-3">
-              <span className="text-[var(--band-blue)]">CTL (blue)</span> is your longer-term
-              fitness — it rises and fades slowly. <span className="text-[var(--band-red)]">
-                ATL (red)
-              </span>{" "}
-              is your recent fatigue — it reacts fast to a hard week. TSB (the shaded bars) is
-              CTL minus ATL: positive means you&apos;re fresher than usual, negative means more
-              run-down than usual.
-            </p>
-            <CtlAtlTsbChart data={data.ctl_atl_tsb} />
-            {data.tsb_zscore?.confidence === "full" && (
-              <p className="text-xs text-muted-foreground mt-2">
-                Latest TSB z-score vs. own trailing 90-day distribution:{" "}
-                {data.tsb_zscore.z_score?.toFixed(2)}
-              </p>
-            )}
-            {data.tsb_zscore?.confidence === "full" &&
-              Math.abs(data.tsb_zscore.z_score ?? 0) >= 2 && (
-                <p className="text-xs text-[var(--band-amber)] mt-1">
-                  This is a real, large swing relative to your own recent history — but TSB has
-                  no universally validated &quot;how much is too much&quot; threshold (part of
-                  why it was removed from the readiness score itself, ADR 0007). Read it as a
-                  relative trend, not a fixed-scale verdict.
-                </p>
-              )}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <InsightHero insight={data.insights.freshness} band={data.insights.freshness.band} />
+            <InsightHero insight={data.insights.fitness_trend} />
           </div>
 
-          <div className={`${CARD_CLASS} p-4`}>
-            <div className="flex items-center gap-2 mb-3">
-              <Activity className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={2} />
-              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Monotony / strain (trailing 7 days)
-              </p>
-            </div>
-            <p className="text-xs text-muted-foreground mb-3">
-              Monotony is how same-y your daily load has been this week (high = you did roughly
-              the same amount every day, no easy/hard variation). Strain is weekly load ×
-              monotony — two weeks with identical total volume can feel very different in
-              recovery terms if one of them was more repetitive.
-            </p>
-            {!mono || mono.confidence === "insufficient_data" ? (
-              <p className="text-sm text-muted-foreground">Not enough days of load data yet (need 7).</p>
-            ) : mono.confidence === "undefined_zero_variance" ? (
-              <p className="text-sm text-muted-foreground">
-                Weekly load: {mono.weekly_load?.toFixed(0)}. Monotony undefined (zero variance this
-                week).
-              </p>
-            ) : (
-              <div className="grid grid-cols-3 gap-3">
-                <Stat label="Weekly load" value={mono.weekly_load?.toFixed(0) ?? "--"} />
-                <Stat
-                  label="Monotony"
-                  value={mono.monotony?.toFixed(2) ?? "--"}
-                  flag={mono.flag_high_monotony}
-                />
-                <Stat label="Strain" value={mono.strain?.toFixed(0) ?? "--"} />
-              </div>
-            )}
-          </div>
+          <WeekSummaryCard summary={data.weekly_summary} consistency={data.insights.consistency} />
 
           <div className={`${CARD_CLASS} p-4`}>
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
-              Load by day and sport
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1">
+              Effort over time, by sport
             </p>
             <p className="text-xs text-muted-foreground mb-3">
-              Estimated from heart rate wherever a session has one (rides, runs, recorded BJJ,
-              strength) — logged BJJ classes without a heart-rate recording use RPE × duration
-              instead. A day with real training but no bar just means neither of those was
-              available for it yet.
+              Every real session with a heart-rate reading (or a logged BJJ class), going back as
+              far as there's data — taller bars mean more effort that day.
             </p>
             {sportData.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                Nothing to break down by sport yet in this window.
-              </p>
+              <p className="text-sm text-muted-foreground">Nothing to show yet.</p>
             ) : (
-              <StackedBarChart data={sportData} bars={sportBars} />
+              <StackedBarChart data={sportData} bars={sportBars} showLegend />
             )}
           </div>
         </>
@@ -216,6 +215,148 @@ export function TrainingPage() {
           </div>
         )}
       </div>
+
+      {data.has_load_data && (
+        <div className={`${CARD_CLASS} p-4`}>
+          <button
+            type="button"
+            onClick={() => setShowTechnical((v) => !v)}
+            className="text-xs font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
+          >
+            {showTechnical ? "Hide" : "Show"} technical detail
+          </button>
+          {showTechnical && (
+            <div className="mt-4 space-y-4">
+              <p className="text-xs text-muted-foreground">
+                The numbers behind the plain-English cards above, for anyone who wants to check
+                the math (design principle: every number here should be traceable).
+              </p>
+              <div>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Fitness (blue) vs. fatigue (red) trend, and freshness (shaded bars) — the
+                  underlying Banister impulse-response model.
+                </p>
+                <CtlAtlTsbChart data={data.ctl_atl_tsb} />
+                {data.tsb_zscore?.confidence === "full" && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Freshness z-score vs. own trailing 90-day distribution:{" "}
+                    {data.tsb_zscore.z_score?.toFixed(2)}
+                  </p>
+                )}
+              </div>
+              {data.monotony_strain?.confidence === "full" && (
+                <div className="grid grid-cols-3 gap-3">
+                  <Stat
+                    label="Weekly load (raw)"
+                    value={data.monotony_strain.weekly_load?.toFixed(0) ?? "--"}
+                  />
+                  <Stat
+                    label="Monotony"
+                    value={data.monotony_strain.monotony?.toFixed(2) ?? "--"}
+                    flag={data.monotony_strain.flag_high_monotony}
+                  />
+                  <Stat label="Strain" value={data.monotony_strain.strain?.toFixed(0) ?? "--"} />
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Freshness or fitness-trend, as a big icon + plain sentence -- the primary
+ * view Francisco asked for (2026-08-30): "no fluff no acronyms," CTL/ATL/
+ * TSB never named here at all. `band` (freshness only) picks a battery-style
+ * icon; fitness-trend uses a simple up/flat/down arrow instead.
+ */
+function InsightHero({ insight, band }: { insight: TrainingInsight; band?: string }) {
+  const color = TONE_COLOR[insight.tone]
+  const Icon =
+    band !== undefined
+      ? (FRESHNESS_ICONS[band] ?? Battery)
+      : insight.headline.toLowerCase().includes("building")
+        ? TrendingUp
+        : insight.headline.toLowerCase().includes("dipped")
+          ? TrendingDown
+          : Minus
+
+  return (
+    <div className={`${CARD_CLASS} p-5`}>
+      <div className="flex items-center gap-4">
+        <div
+          className="flex items-center justify-center h-14 w-14 rounded-full shrink-0"
+          style={{ backgroundColor: `color-mix(in srgb, ${color} 15%, transparent)` }}
+        >
+          <Icon className="h-7 w-7" strokeWidth={2} style={{ color }} />
+        </div>
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1">
+            {band !== undefined ? "Freshness" : "Fitness trend"}
+            {band !== undefined && (
+              <span className="normal-case font-normal"> · {FRESHNESS_LABELS[band]}</span>
+            )}
+          </p>
+          <p className="text-sm text-foreground leading-snug">{insight.headline}</p>
+          {insight.detail && (
+            <p className="text-xs text-muted-foreground mt-1 leading-snug">{insight.detail}</p>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function WeekSummaryCard({
+  summary,
+  consistency,
+}: {
+  summary: TrainingPayload["weekly_summary"]
+  consistency: TrainingInsight
+}) {
+  return (
+    <div className={`${CARD_CLASS} p-4`}>
+      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
+        This week
+      </p>
+      <div className="grid grid-cols-2 gap-4 mb-4">
+        <div>
+          <p className="text-2xl font-semibold tabular-nums text-foreground">
+            {summary.session_count}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            session{summary.session_count === 1 ? "" : "s"}
+          </p>
+        </div>
+        <div>
+          <p className="text-2xl font-semibold tabular-nums text-foreground">
+            {formatHours(summary.total_minutes)}
+          </p>
+          <p className="text-xs text-muted-foreground">total time trained</p>
+        </div>
+      </div>
+      {summary.by_sport.length > 0 && (
+        <div className="flex flex-wrap gap-3 mb-3">
+          {summary.by_sport.map((row) => {
+            const Icon = SPORT_ICONS[row.sport] ?? Activity
+            return (
+              <div
+                key={row.sport}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground"
+              >
+                <Icon className="h-3.5 w-3.5" strokeWidth={2} />
+                <span className="text-foreground">{row.sport.replace(/_/g, " ")}</span>
+                <span>· {formatHours(row.minutes)}</span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+      <p className="text-xs text-muted-foreground pt-3 border-t border-border">
+        {consistency.headline}
+        {consistency.detail && <span> {consistency.detail}</span>}
+      </p>
     </div>
   )
 }

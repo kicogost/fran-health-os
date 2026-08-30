@@ -20,6 +20,20 @@ above): `_load_by_sport()`'s predecessor only ever read `activities.
 training_load`, so a real BJJ session that clearly moved the CTL/ATL/TSB
 chart and weekly-load stat above it never showed up in the sport breakdown
 at all. Gone now — both come from the same per-day components.
+
+**Plain-language rework, same day, immediately after** (Francisco: "i need
+more visuals and you need to tell me things in layman terms, not ctl, atl
+etc... no fluff no acronyms"). `insights` (`metrics/insights.py`) reframes
+CTL -> a plain fitness-trend sentence, TSB -> a plain, self-relative
+freshness read, and monotony -> a plain consistency sentence — never CTL/
+ATL/TSB/monotony/strain by name anywhere in the payload's own text.
+`weekly_summary` is a real, understandable "N sessions, X hours this week"
+built from the same per-day components, replacing the raw "weekly load"
+number as the headline weekly stat. The raw `ctl_atl_tsb`/`tsb_zscore`/
+`monotony_strain` fields are NOT removed — design principle 9 (every number
+traceable) still applies, they're just no longer what the page leads with;
+the frontend surfaces them as an optional, secondary "technical detail"
+section rather than the primary view.
 """
 
 from __future__ import annotations
@@ -28,6 +42,7 @@ import json
 import sqlite3
 from typing import Any
 
+from health_os.metrics import insights as insights_module
 from health_os.metrics import load as load_metrics
 from health_os.metrics import strain as strain_metrics
 
@@ -72,6 +87,12 @@ def build_training_payload(
         "monotony_strain": None,
         "load_by_sport": strain_metrics.build_load_by_sport_rows(conn, config, as_of_date),
         "calisthenics": _recent_calisthenics(conn),
+        "weekly_summary": strain_metrics.build_weekly_summary(conn, config, as_of_date),
+        "insights": {
+            "fitness_trend": insights_module.fitness_trend_insight([]),
+            "freshness": insights_module.freshness_insight({"confidence": "insufficient_data"}),
+            "consistency": insights_module.consistency_insight(None),
+        },
     }
 
     if daily_load_series:
@@ -79,8 +100,16 @@ def build_training_payload(
         payload["ctl_atl_tsb"] = [
             {"date": d, "ctl": ctl, "atl": atl, "tsb": tsb} for d, ctl, atl, tsb in ctl_atl_tsb
         ]
+        ctl_series = [(d, ctl) for d, ctl, _atl, _tsb in ctl_atl_tsb]
         tsb_series = [(d, tsb) for d, _ctl, _atl, tsb in ctl_atl_tsb]
-        payload["tsb_zscore"] = load_metrics.compute_tsb_zscore(tsb_series)
-        payload["monotony_strain"] = load_metrics.compute_monotony_strain(daily_load_series)
+        tsb_zscore = load_metrics.compute_tsb_zscore(tsb_series)
+        monotony_strain = load_metrics.compute_monotony_strain(daily_load_series)
+        payload["tsb_zscore"] = tsb_zscore
+        payload["monotony_strain"] = monotony_strain
+        payload["insights"] = {
+            "fitness_trend": insights_module.fitness_trend_insight(ctl_series),
+            "freshness": insights_module.freshness_insight(tsb_zscore),
+            "consistency": insights_module.consistency_insight(monotony_strain),
+        }
 
     return payload

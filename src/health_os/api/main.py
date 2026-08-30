@@ -77,7 +77,7 @@ def get_trends(window_days: int = 90) -> dict[str, Any]:
         )
     conn = db.init_db()
     try:
-        return build_trends_payload(conn, window_days)
+        return build_trends_payload(conn, window_days, _load_config())
     finally:
         conn.close()
 

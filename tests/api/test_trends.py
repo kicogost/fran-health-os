@@ -6,6 +6,8 @@ from health_os.api.trends import build_trends_payload
 from health_os.core import db as db_module
 from health_os.core.models import DailyMetric
 
+_CONFIG = {"goals": {"primary": {"date": "2026-10-18", "weight_division_kg": 77.0}}}
+
 
 def _write_derived(conn: sqlite3.Connection, date: str, value: float, confidence: str) -> None:
     db_module.upsert(
@@ -19,7 +21,7 @@ def _write_derived(conn: sqlite3.Connection, date: str, value: float, confidence
 
 class TestBuildTrendsPayload:
     def test_empty_db_returns_empty_series(self, conn: sqlite3.Connection) -> None:
-        payload = build_trends_payload(conn, 90)
+        payload = build_trends_payload(conn, 90, _CONFIG)
         assert payload == {
             "window_days": 90,
             "series": {},
@@ -30,6 +32,7 @@ class TestBuildTrendsPayload:
                 "smoothed": [],
                 "coverage_summary": {},
             },
+            "insights": [],
         }
 
     def test_window_filters_out_older_rows(self, conn: sqlite3.Connection) -> None:
@@ -42,7 +45,7 @@ class TestBuildTrendsPayload:
         db_module.upsert(
             conn, "daily_metrics", DailyMetric(date="2026-08-28", weight_kg=78.5).to_row(), ["date"]
         )
-        payload = build_trends_payload(conn, 30)
+        payload = build_trends_payload(conn, 30, _CONFIG)
         dates = [p["date"] for p in payload["series"]["weight_kg"]["raw"]]
         assert dates == ["2026-08-20", "2026-08-28"]
 
@@ -51,7 +54,7 @@ class TestBuildTrendsPayload:
             db_module.upsert(
                 conn, "daily_metrics", DailyMetric(date=d, weight_kg=w).to_row(), ["date"]
             )
-        payload = build_trends_payload(conn, 90)
+        payload = build_trends_payload(conn, 90, _CONFIG)
         raw = payload["series"]["weight_kg"]["raw"]
         smoothed = payload["series"]["weight_kg"]["smoothed"]
         assert len(raw) == len(smoothed) == 3
@@ -70,7 +73,7 @@ class TestBuildTrendsPayload:
         db_module.upsert(
             conn, "daily_metrics", DailyMetric(date="2026-08-27", resting_hr=50).to_row(), ["date"]
         )
-        payload = build_trends_payload(conn, 90)
+        payload = build_trends_payload(conn, 90, _CONFIG)
         assert len(payload["sleep_stages"]) == 1
         assert payload["sleep_stages"][0]["date"] == "2026-08-28"
         assert payload["sleep_stages"][0]["sleep_deep_min"] == 60
@@ -90,7 +93,7 @@ class TestReadinessHistory:
         _write_derived(conn, "2026-08-27", 54.1, "partial")
         _write_derived(conn, "2026-08-28", 55.8, "full")
 
-        payload = build_trends_payload(conn, 90)
+        payload = build_trends_payload(conn, 90, _CONFIG)
         raw = payload["readiness"]["raw"]
         assert [(r["date"], r["value"], r["confidence"]) for r in raw] == [
             ("2026-08-27", 54.1, "partial"),
@@ -103,7 +106,7 @@ class TestReadinessHistory:
         _write_derived(conn, "2026-08-27", 54.1, "partial")
         _write_derived(conn, "2026-08-28", 55.8, "full")
 
-        payload = build_trends_payload(conn, 90)
+        payload = build_trends_payload(conn, 90, _CONFIG)
         assert payload["readiness"]["coverage_summary"] == {"partial": 2, "full": 1}
 
     def test_insufficient_data_rows_excluded_by_null_value(self, conn: sqlite3.Connection) -> None:
@@ -114,7 +117,7 @@ class TestReadinessHistory:
         _write_derived(conn, "2026-08-27", None, "insufficient_data")
         _write_derived(conn, "2026-08-28", 55.8, "full")
 
-        payload = build_trends_payload(conn, 90)
+        payload = build_trends_payload(conn, 90, _CONFIG)
         assert [r["date"] for r in payload["readiness"]["raw"]] == ["2026-08-28"]
 
     def test_readiness_history_respects_the_window_cutoff(self, conn: sqlite3.Connection) -> None:
@@ -122,7 +125,7 @@ class TestReadinessHistory:
         _write_derived(conn, "2026-01-01", 60.0, "full")  # well outside a 30-day window
         _write_derived(conn, "2026-08-28", 55.8, "full")
 
-        payload = build_trends_payload(conn, 30)
+        payload = build_trends_payload(conn, 30, _CONFIG)
         assert [r["date"] for r in payload["readiness"]["raw"]] == ["2026-08-28"]
 
     def test_other_metric_names_never_leak_into_readiness_history(
@@ -136,5 +139,69 @@ class TestReadinessHistory:
             ["date", "metric_name"],
             touch_column="computed_at",
         )
-        payload = build_trends_payload(conn, 90)
+        payload = build_trends_payload(conn, 90, _CONFIG)
         assert payload["readiness"]["raw"] == []
+
+
+class TestInsights:
+    def test_always_includes_the_four_core_metrics(self, conn: sqlite3.Connection) -> None:
+        db_module.upsert(
+            conn, "daily_metrics", DailyMetric(date="2026-08-28", weight_kg=78.5).to_row(), ["date"]
+        )
+        payload = build_trends_payload(conn, 90, _CONFIG)
+        metrics = {i["metric"] for i in payload["insights"]}
+        assert {"weight", "sleep", "hrv", "rhr"} <= metrics
+
+    def test_no_data_anywhere_gives_unknown_tone_not_a_crash(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        db_module.upsert(
+            conn, "daily_metrics", DailyMetric(date="2026-08-28", weight_kg=78.5).to_row(), ["date"]
+        )
+        payload = build_trends_payload(conn, 90, _CONFIG)
+        by_metric = {i["metric"]: i for i in payload["insights"]}
+        assert by_metric["sleep"]["tone"] == "unknown"
+        assert by_metric["hrv"]["tone"] == "unknown"
+        assert by_metric["rhr"]["tone"] == "unknown"
+
+    def test_real_losing_weight_trend_produces_a_good_tone_insight(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        import datetime
+
+        start = datetime.date(2026, 8, 1)
+        for i in range(25):
+            d = (start + datetime.timedelta(days=i)).isoformat()
+            db_module.upsert(
+                conn,
+                "daily_metrics",
+                DailyMetric(date=d, weight_kg=80.0 - i * 0.05).to_row(),
+                ["date"],
+            )
+        payload = build_trends_payload(conn, 90, _CONFIG)
+        by_metric = {i["metric"]: i for i in payload["insights"]}
+        assert by_metric["weight"]["tone"] == "good"
+        assert "losing weight" in by_metric["weight"]["headline"].lower()
+
+    def test_insights_are_not_windowed_by_the_chart_selector(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # Real weight history goes back further than a 30-day chart window,
+        # but the insight itself should still use the full 21-day OLS trend
+        # regardless of what window the charts above are set to.
+        import datetime
+
+        start = datetime.date(2026, 6, 1)
+        for i in range(60):
+            d = (start + datetime.timedelta(days=i)).isoformat()
+            db_module.upsert(
+                conn,
+                "daily_metrics",
+                DailyMetric(date=d, weight_kg=80.0 - i * 0.05).to_row(),
+                ["date"],
+            )
+        payload_30 = build_trends_payload(conn, 30, _CONFIG)
+        payload_365 = build_trends_payload(conn, 365, _CONFIG)
+        weight_30 = next(i for i in payload_30["insights"] if i["metric"] == "weight")
+        weight_365 = next(i for i in payload_365["insights"] if i["metric"] == "weight")
+        assert weight_30 == weight_365

@@ -146,6 +146,10 @@ class StrainComponent:
     # 2026-08-30 alongside build_activity_based_load_series() below, so a
     # per-sport breakdown doesn't need to re-parse `source`'s "x:y" string.
     sport: str = "unknown"
+    # Real session duration in minutes -- added 2026-08-30 alongside
+    # build_weekly_summary() below, for a plain "N sessions, X hours this
+    # week" stat that needs no re-parsing of `description`'s free text.
+    duration_min: float = 0.0
 
 
 def combine_daily_strain(components: list[StrainComponent]) -> dict[str, Any]:
@@ -241,6 +245,7 @@ def _gather_day_components(
                     description=f"{row['sport']} ({row['duration_s'] / 60:.0f} min, "
                     f"avg HR {row['avg_hr']:.0f})",
                     sport="bjj" if is_bjj else (row["sport"] or "unknown"),
+                    duration_min=row["duration_s"] / 60.0,
                 )
             )
             if is_bjj:
@@ -263,6 +268,7 @@ def _gather_day_components(
                     description=f"{row['session_type']} ({row['duration_min']} min, "
                     f"RPE {row['session_rpe']}) -- no HR data, estimated from RPE",
                     sport="bjj",
+                    duration_min=row["duration_min"],
                 )
             )
 
@@ -380,3 +386,52 @@ def build_load_by_sport_rows(
             by_sport[c.sport] = by_sport.get(c.sport, 0.0) + c.raw_load
         rows.extend({"date": iso, "sport": sport, "load": load} for sport, load in by_sport.items())
     return rows
+
+
+DEFAULT_WEEKLY_SUMMARY_DAYS = 7
+
+
+def build_weekly_summary(
+    conn: sqlite3.Connection,
+    config: dict[str, Any],
+    as_of_date: str,
+    days: int = DEFAULT_WEEKLY_SUMMARY_DAYS,
+) -> dict[str, Any]:
+    """A plain, understandable "what did this week actually look like" --
+    real session count and real total minutes trained, trailing `days`
+    calendar days ending on `as_of_date` inclusive. Built 2026-08-30
+    alongside the Training page's plain-language rework (Francisco: "no
+    fluff no acronyms") as a concrete alternative to a raw "weekly load"
+    number nobody but this codebase can interpret.
+
+    Reuses `_gather_day_components()` per day -- each component already IS
+    one real session (one real activity, or one BJJ manual log not already
+    covered by a real activity), so counting components directly avoids
+    re-deriving BJJ's own double-counting guard a second time.
+    """
+    end = date_cls.fromisoformat(as_of_date)
+    start = end - timedelta(days=days - 1)
+
+    session_count = 0
+    total_minutes = 0.0
+    by_sport: dict[str, dict[str, float]] = {}
+
+    d = start
+    while d <= end:
+        for c in _gather_day_components(conn, d.isoformat(), config):
+            session_count += 1
+            total_minutes += c.duration_min
+            sport_totals = by_sport.setdefault(c.sport, {"count": 0, "minutes": 0.0})
+            sport_totals["count"] += 1
+            sport_totals["minutes"] += c.duration_min
+        d += timedelta(days=1)
+
+    return {
+        "days": days,
+        "session_count": session_count,
+        "total_minutes": total_minutes,
+        "by_sport": [
+            {"sport": sport, "count": int(totals["count"]), "minutes": totals["minutes"]}
+            for sport, totals in sorted(by_sport.items(), key=lambda kv: -kv[1]["minutes"])
+        ],
+    }

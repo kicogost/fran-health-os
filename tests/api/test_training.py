@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 
 from health_os.api.training import build_training_payload
@@ -152,3 +153,46 @@ class TestBuildTrainingPayload:
     def test_recent_calisthenics_empty_when_none_logged(self, conn: sqlite3.Connection) -> None:
         payload = build_training_payload(conn, _CONFIG, "2026-08-24")
         assert payload["calisthenics"] == []
+
+    def test_weekly_summary_present_and_counts_real_sessions(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        db_module.upsert(
+            conn, "daily_metrics", {"date": "2026-08-24", "resting_hr": 49.0}, ["date"]
+        )
+        db_module.upsert(
+            conn,
+            "bjj_sessions",
+            BjjSession(
+                date="2026-08-24", session_type="class", duration_min=90, session_rpe=8
+            ).to_row(),
+            ["date", "session_type"],
+        )
+        payload = build_training_payload(conn, _CONFIG, "2026-08-24")
+        assert payload["weekly_summary"]["session_count"] == 1
+        assert payload["weekly_summary"]["total_minutes"] == 90.0
+
+    def test_insights_present_even_with_no_data(self, conn: sqlite3.Connection) -> None:
+        payload = build_training_payload(conn, _CONFIG, "2026-08-24")
+        assert payload["insights"]["fitness_trend"]["tone"] == "unknown"
+        assert payload["insights"]["freshness"]["tone"] == "unknown"
+        assert payload["insights"]["consistency"]["tone"] == "unknown"
+
+    def test_insights_never_mention_the_old_acronyms(self, conn: sqlite3.Connection) -> None:
+        # Real ask, 2026-08-30: "no fluff no acronyms" -- lock this in so a
+        # future change can't silently reintroduce CTL/ATL/TSB jargon here.
+        db_module.upsert(
+            conn, "daily_metrics", {"date": "2026-08-24", "resting_hr": 49.0}, ["date"]
+        )
+        db_module.upsert(
+            conn,
+            "bjj_sessions",
+            BjjSession(
+                date="2026-08-24", session_type="class", duration_min=90, session_rpe=8
+            ).to_row(),
+            ["date", "session_type"],
+        )
+        payload = build_training_payload(conn, _CONFIG, "2026-08-24")
+        blob = json.dumps(payload["insights"]).lower()
+        for banned in ("ctl", "atl", "tsb", "monotony"):
+            assert banned not in blob
