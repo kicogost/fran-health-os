@@ -2572,6 +2572,64 @@ fatigue 5, soreness 1, hooper_index 12) while this conversation was still going.
 Genuine end-to-end proof the check reads real, live data correctly, not a
 constructed test case.
 
+## Quadratic HRV/RHR scoring curve, researched before implementing (ADR 0006, 2026-08-30)
+
+Francisco looked at a real day's breakdown and asked why RHR being "only 2bpm off"
+(50bpm baseline → 52bpm, +1.04 SD) scored a 24/100 — reading as a serious problem for
+something well within normal noise. Asked directly whether the linear mapping (50 ±
+25 points per SD, clamped ±2 SD) was too aggressive — then, before agreeing and just
+picking a fix, asked to check how WHOOP and Garmin actually do this and what the
+peer-reviewed literature says. Full research + ADR 0006 for the complete record;
+summary here.
+
+**What the research found**: neither WHOOP nor Garmin discloses their actual scoring
+formula — confirmed across three tiers, not assumed: WHOOP's own developer docs and
+support content (explicitly "proprietary"), Garmin's own manuals (inputs and score
+color-bands disclosed, no formula), and — the strongest evidence — Doherty et al.
+2025 (peer-reviewed, *Translational Exercise and Biomedicine*), which surveyed 14
+composite health scores across 10 manufacturers and found **none disclose their
+weighting, and none are validated against clinical/performance outcomes at all**.
+There is nothing to copy here even in principle. **No peer-reviewed source validates
+any specific curve shape** (linear, quadratic, sigmoid) for this exact purpose
+either — a confirmed gap, not glossed over.
+
+But **indirect evidence does support a specific direction**: real device data
+(Sekiguchi et al., peer-reviewed, Olympic athletes) shows day-to-day HRV noise is
+genuinely small (~5% CV) relative to real training-driven shifts (10-45%); a large
+real dataset (~100k HRV readings) shows ~1-in-3 days naturally lands beyond ±1 SD and
+only ~1-in-23 beyond ±2 SD — confirming 1 SD is routine, not rare; and established
+sports-science convention (Hopkins' "smallest worthwhile change," Plews et al.'s HRV
+application of it) already treats small deviations below a threshold as noise, not
+full signal.
+
+**The finding that justified doing this research rather than guessing**: a sigmoid
+curve (steepest near baseline, flattening at the extremes — what "nonlinear" most
+naturally suggests, and what the one specific formula claiming to be WHOOP's actual
+math uses online, self-described by its own author as an *invented approximation,
+not a reverse-engineered fact*) would move the score **harder** on ordinary noise
+than linear already does — the opposite of the goal. Verified by direct calculation
+before deciding, not assumed from the shape's name. Only a power-law/quadratic-family
+curve (flat near baseline, steep toward the extremes) delivers the intended effect.
+
+**Built**: `metrics/readiness.py: _hrv_component_score()`/`_rhr_component_score()`
+now share a new `_deviation_to_score()` — quadratic, same ±2 SD boundary and same
+0/100 endpoints as the old linear mapping (the kickoff doc's own original "clamped to
+±2 SD" spec is preserved exactly), but a genuinely flat middle: 1 SD now moves the
+score to 37.5/62.5 instead of 25/75. Honest about what's evidence-supported (the
+family/direction — power-law, not sigmoid) vs. what isn't (the specific exponent, 2,
+which has zero direct literature validation and is documented as a reasonable,
+revisable default, same spirit as this project's other seed-phase numbers).
+
+Both readiness call sites (`coach/briefing.py`, `metrics/derived_daily.py`) already
+shared the same underlying scoring functions, so no dual-implementation drift risk
+here (unlike the earlier TSB-staleness and sleep-quality-blend fixes this session,
+which each had two independent implementations to fix). Recomputed the full
+persisted `derived_daily` history (162 days) so the Trends chart reflects the
+corrected curve throughout. 4 new/updated tests, 516 total passing, ruff clean.
+**Real effect on the actual database**: today's HRV 47.3→49.9, RHR 24.1→36.5, overall
+readiness 58.0→61.2 — still Amber, now proportionate to the actual mild deviations
+instead of reading as alarming.
+
 ## Definition of done for v1
 
 One command each morning: syncs Garmin + Strava, recomputes everything, prints a
