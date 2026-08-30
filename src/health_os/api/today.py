@@ -148,6 +148,8 @@ def build_today_payload(
 
     strain_result = strain_metrics.build_daily_strain(conn, today, config)
 
+    deload_config = config.get("deload", {})
+
     return {
         "date": today,
         "weekday_name": plan["weekday_name"],
@@ -163,6 +165,12 @@ def build_today_payload(
         },
         "sessions": plan["sessions"],
         "structural_flags": plan["structural_flags"],
+        "taper": plan["taper"],
+        "deload": {
+            **plan["deload"],
+            "duration_days": deload_config.get("duration_days", 6),
+            "volume_reduction_pct": deload_config.get("volume_reduction_pct", 40),
+        },
         "nutrition_focus": plan["nutrition_focus"],
         "trend_observation": plan["trend_observation"],
         "sleep": sleep,

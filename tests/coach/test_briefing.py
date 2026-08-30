@@ -162,6 +162,80 @@ class TestComputeDailyPlanShape:
         assert sleep_component is not None
         assert sleep_component["raw"]["quality_score"] == 74
 
+    def test_taper_day_override_actually_replaces_the_weekly_template(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # Real gap closed 2026-08-30: config/athlete.yaml's hand-planned
+        # taper week (comp_prep.blocks[].daily_schedule) existed since
+        # 2026-08-27 but nothing ever read it -- this locks in the actual
+        # wiring through compute_daily_plan(), not just taper_day_override()
+        # tested in isolation.
+        config = {
+            **_CONFIG,
+            "comp_prep": {
+                **_CONFIG["comp_prep"],
+                "blocks": [
+                    {
+                        "name": "taper",
+                        "starts": "2026-10-12",
+                        "ends": "2026-10-18",
+                        "daily_schedule": [
+                            {
+                                "date": "2026-10-12",
+                                "day": "monday",
+                                "plan": "BJJ, technical, 60% effort",
+                            }
+                        ],
+                    }
+                ],
+            },
+        }
+        # 2026-10-12 is a Monday -- the generic weekly_template would
+        # otherwise schedule a real BJJ + calisthenics day here.
+        plan = compute_daily_plan(conn, config, "2026-10-12")
+        assert len(plan["sessions"]) == 1
+        assert plan["sessions"][0]["type"] == "taper"
+        assert plan["sessions"][0]["instruction"] == "BJJ, technical, 60% effort"
+        assert plan["taper"]["active"] is True
+        assert plan["taper"]["days_to_competition"] == 6
+
+    def test_deload_triggers_through_the_full_pipeline_with_real_seeded_data(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # Two real markers seeded through actual daily_metrics/subjective_log
+        # rows, not constructed rules.py inputs -- proves the wiring, not
+        # just should_deload()'s own arithmetic.
+        as_of = date(2026, 8, 30)
+        # 60 stable baseline days, then 6 days with elevated RHR (>1 SD
+        # above baseline, matching compute_rhr_baseline()'s own
+        # sustained_rise_flag window) AND a matching Hooper-index streak.
+        for i, d in enumerate(_date_range(as_of, 66)):
+            rhr = 65.0 if i >= 60 else 50.0
+            db_module.upsert(
+                conn,
+                "daily_metrics",
+                DailyMetric(date=d.isoformat(), resting_hr=rhr).to_row(),
+                ["date"],
+            )
+        for d in _date_range(as_of, 3):
+            db_module.upsert(
+                conn,
+                "subjective_log",
+                {
+                    "date": d.isoformat(),
+                    "sleep_quality": 9,
+                    "stress": 9,
+                    "fatigue": 9,
+                    "muscle_soreness": 8,
+                    "hooper_index": 35,
+                },
+                ["date"],
+            )
+        plan = compute_daily_plan(conn, _CONFIG, as_of.isoformat())
+        assert "rhr_sustained_rise" in plan["deload"]["markers_fired"]
+        assert "hooper_sustained_high" in plan["deload"]["markers_fired"]
+        assert plan["deload"]["recommended"] is True
+
 
 class TestBuildBriefing:
     def test_produces_readable_text(self, conn: sqlite3.Connection) -> None:

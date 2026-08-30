@@ -295,3 +295,66 @@ readiness_score:
   weight_tsb: 0.0
   weight_subjective: 0.10
   bjj_rpe_calibration_status: "uncalibrated — no Garmin training_load data yet"
+
+deload:
+  # Fatigue-TRIGGERED mid-block deload recommendation -- distinct from the
+  # taper below, which is calendar-anchored to the competition date, not
+  # fatigue-triggered. Researched 2026-08-30 (general-purpose research agent,
+  # deload/taper sports-science literature, see CLAUDE.md for the full
+  # evidence synthesis) specifically because Francisco asked for both a
+  # "when stress/recovery starts failing" trigger AND a "week before
+  # competition" trigger, and the literature treats these as genuinely
+  # different mechanisms, not the same feature at two times.
+  #
+  # No literature-validated "require M of N markers" composite rule exists
+  # anywhere the research found -- the one Delphi consensus panel that
+  # looked at this explicitly did NOT reach agreement on specific biomarker
+  # triggers. This mirrors, at a larger scale, this project's own already-
+  # built 2-red/3-amber single-day-downgrade precedent
+  # (coach/rules.py: should_downgrade_to_rest()) -- a reasoned default
+  # applied consistently, not a borrowed literature number.
+  markers_required: 2
+
+  # Bidirectional (not low-only): real research finding, not assumed --
+  # Bellenger et al. 2016 (meta-analysis, 27 studies) and Manresa-Rocamora
+  # et al. 2021 both found overreached athletes' HRV is often unaffected or
+  # even INCREASED, not just suppressed. A deload trigger that only watches
+  # for low HRV is using a simplified, partially-contradicted model.
+  # window_days is a documented, reasoned default -- no literature number
+  # exists for this specific "should I plan a deload this week" decision
+  # (the one combat-sport duration found, Tian et al. 2013's wrestlers,
+  # describes >2 weeks for a slower, after-the-fact NFOR diagnosis, not a
+  # preventive trigger -- using it directly would be far too slow to be
+  # useful inside an 8-week block).
+  hrv_sustained_deviation_days: 6
+
+  # No literature threshold found for sleep debt as a deload trigger
+  # specifically -- a reasoned default (~half a night's sleep, cumulative,
+  # over the existing rolling 14-day sleep-debt window).
+  sleep_debt_threshold_hours: 7.0
+
+  # Real research finding: Saw, Main, Gastin 2016 (systematic review) found
+  # subjective wellness measures MORE sensitive and consistent than
+  # commonly-used objective measures for detecting training-load effects --
+  # corroborated by real MMA data (Ostapiuk-Karolczuk et al. 2025) where
+  # subjective fatigue kept rising even as some objective markers partially
+  # recovered. This marker is deliberately NOT a tiebreaker -- it counts
+  # the same as any objective marker below, not less. Threshold is the
+  # midpoint of the 4 (best) - 40 (worst) hooper_index range; no literature
+  # number exists for this specific use, a reasoned default.
+  hooper_sustained_high_threshold: 22.0
+  hooper_sustained_high_days: 3
+
+  # Duration/volume-reduction once a deload IS recommended: 5-7 days,
+  # volume down ~30-50%, prefer reduced load over full cessation (the one
+  # RCT that directly tested full-cessation, Coleman et al. 2024, found it
+  # neutral-to-slightly-negative even for a non-overreached population).
+  # These specific numbers trace to ONE converging research program (Bell,
+  # Nolan, Rogerson, Androulakis Korakakis, Coleman et al. at Sheffield
+  # Hallam/Dublin City University, 2022-2025) studying powerlifting/physique
+  # athletes -- a real, well-executed program, but one estimate from
+  # overlapping investigators, not five independent triangulating studies,
+  # and not combat-sport data. Documented as such, not presented as broad
+  # consensus.
+  duration_days: 6
+  volume_reduction_pct: 40

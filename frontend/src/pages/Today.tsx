@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { Utensils } from "lucide-react"
+import { TriangleAlert, Utensils } from "lucide-react"
 import { ApiError, fetchToday } from "@/lib/api"
 import { BAND_COLORS } from "@/lib/band"
 import { CARD_CLASS } from "@/lib/styles"
@@ -81,10 +81,51 @@ export function TodayPage() {
       <div className="max-w-4xl mx-auto p-6 space-y-3">
         <div className="flex items-baseline justify-between mb-1">
           <h1 className="text-2xl font-semibold text-foreground tracking-tight">Today</h1>
-          <p className="text-sm text-muted-foreground tabular-nums">
-            {formatHeaderDate(data.date, data.weekday_name)}
-          </p>
+          <div className="text-right">
+            <p className="text-sm text-muted-foreground tabular-nums">
+              {formatHeaderDate(data.date, data.weekday_name)}
+            </p>
+            <p className="text-xs text-muted-foreground tabular-nums">
+              {data.taper.days_to_competition >= 0
+                ? `${data.taper.days_to_competition} day${data.taper.days_to_competition === 1 ? "" : "s"} to competition`
+                : "Competition day has passed"}
+            </p>
+          </div>
         </div>
+
+        {data.taper.active && (
+          <div
+            className={`${CARD_CLASS} p-4 border-[var(--band-blue)]/30 bg-[var(--band-blue)]/5`}
+          >
+            <p className="text-xs font-medium uppercase tracking-wider text-[var(--band-blue)] mb-1">
+              Taper week
+            </p>
+            <p className="text-sm text-foreground">
+              {data.taper.days_to_competition} day{data.taper.days_to_competition === 1 ? "" : "s"}{" "}
+              to competition — today's session below follows your own hand-planned taper
+              schedule, not the usual weekly pattern.
+            </p>
+          </div>
+        )}
+
+        {data.deload.recommended && (
+          <div
+            className={`${CARD_CLASS} p-4 border-[var(--band-amber)]/30 bg-[var(--band-amber)]/5`}
+          >
+            <div className="flex items-center gap-2 mb-1">
+              <TriangleAlert className="h-4 w-4 text-[var(--band-amber)]" strokeWidth={2.25} />
+              <p className="text-xs font-medium uppercase tracking-wider text-[var(--band-amber)]">
+                Deload recommended
+              </p>
+            </div>
+            <p className="text-sm text-foreground">
+              {data.deload.markers_fired.length} fatigue markers fired (
+              {data.deload.markers_fired.map((m) => m.replace(/_/g, " ")).join(", ")}). Suggest
+              ~{data.deload.duration_days} days at ~{data.deload.volume_reduction_pct}% less
+              volume, intensity capped — prefer reduced load over full rest.
+            </p>
+          </div>
+        )}
 
         {/* Recovery + Strain, side by side -- the same peer relationship
             WHOOP gives its own two headline rings (Recovery tells you what

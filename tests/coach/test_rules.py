@@ -3,12 +3,18 @@ from __future__ import annotations
 from health_os.coach.rules import (
     classify_readiness_band,
     has_recent_neck_niggle,
+    hooper_sustained_high,
+    hrv_sustained_deviation,
     hrv_sustained_low,
     monotony_strain_flag,
     nutrition_focus,
     scheduled_sessions_for,
     session_guidance,
+    should_deload,
     should_downgrade_to_rest,
+    sleep_debt_elevated,
+    taper_day_override,
+    taper_status,
     tsb_persistently_negative,
 )
 
@@ -200,3 +206,184 @@ class TestNutritionFocus:
     def test_no_social_meal_gets_default(self) -> None:
         result = nutrition_focus(_MINIMAL_CONFIG, yesterday_social_meal=False)
         assert "no compensating" not in result.lower()
+
+
+_TAPER_CONFIG = {
+    "goals": {"primary": {"date": "2026-10-18"}},
+    "comp_prep": {
+        "blocks": [
+            {"name": "build", "starts": "2026-09-07", "ends": "2026-09-27"},
+            {
+                "name": "taper",
+                "starts": "2026-10-12",
+                "ends": "2026-10-18",
+                "daily_schedule": [
+                    {"date": "2026-10-12", "day": "monday", "plan": "BJJ, technical, 60% effort"},
+                    {"date": "2026-10-18", "day": "sunday", "plan": "COMPETE"},
+                ],
+            },
+        ]
+    },
+}
+
+
+class TestTaperDayOverride:
+    def test_finds_a_real_scheduled_taper_day(self) -> None:
+        override = taper_day_override(_TAPER_CONFIG, "2026-10-12")
+        assert override == {
+            "type": "taper",
+            "label": "Taper",
+            "instruction": "BJJ, technical, 60% effort",
+            "block_name": "taper",
+        }
+
+    def test_date_outside_any_daily_schedule_returns_none(self) -> None:
+        assert taper_day_override(_TAPER_CONFIG, "2026-09-15") is None
+
+    def test_date_before_taper_block_returns_none(self) -> None:
+        # Real regression this guards: only an EXACT daily_schedule date
+        # entry should match, not "anytime on or after the block starts."
+        assert taper_day_override(_TAPER_CONFIG, "2026-10-11") is None
+
+    def test_missing_blocks_key_does_not_crash(self) -> None:
+        assert taper_day_override({"comp_prep": {}}, "2026-10-12") is None
+
+
+class TestTaperStatus:
+    def test_days_to_competition_counts_down(self) -> None:
+        status = taper_status(_TAPER_CONFIG, "2026-10-08")
+        assert status["days_to_competition"] == 10
+        assert status["active"] is False
+
+    def test_active_true_inside_taper_block_window(self) -> None:
+        status = taper_status(_TAPER_CONFIG, "2026-10-15")
+        assert status["active"] is True
+        assert status["days_to_competition"] == 3
+
+    def test_active_true_on_competition_day_itself(self) -> None:
+        status = taper_status(_TAPER_CONFIG, "2026-10-18")
+        assert status["active"] is True
+        assert status["days_to_competition"] == 0
+
+    def test_no_taper_block_defined_gives_inactive_but_still_counts_down(self) -> None:
+        config = {"goals": {"primary": {"date": "2026-10-18"}}, "comp_prep": {"blocks": []}}
+        status = taper_status(config, "2026-10-01")
+        assert status["active"] is False
+        assert status["days_to_competition"] == 17
+
+
+class TestHrvSustainedDeviation:
+    def _dated(self, values: list[float]) -> list[tuple[str, float]]:
+        from datetime import date, timedelta
+
+        start = date(2026, 1, 1)
+        return [((start + timedelta(days=i)).isoformat(), v) for i, v in enumerate(values)]
+
+    def test_sustained_high_triggers_not_just_low(self) -> None:
+        # The real fix this function exists for: hrv_sustained_low() would
+        # miss this entirely (it only ever checks for "low").
+        values = [90.0] * 60 + [115.0] * 6
+        assert hrv_sustained_deviation(self._dated(values), window_days=6)
+
+    def test_sustained_low_still_triggers(self) -> None:
+        values = [90.0] * 60 + [65.0] * 6
+        assert hrv_sustained_deviation(self._dated(values), window_days=6)
+
+    def test_stable_history_does_not_trigger(self) -> None:
+        assert not hrv_sustained_deviation(self._dated([90.0] * 66), window_days=6)
+
+    def test_insufficient_history_is_false(self) -> None:
+        assert not hrv_sustained_deviation(self._dated([90.0] * 3), window_days=6)
+
+
+class TestSleepDebtElevated:
+    def test_above_threshold_triggers(self) -> None:
+        assert sleep_debt_elevated(8.0, threshold_hours=7.0)
+
+    def test_at_threshold_does_not_trigger(self) -> None:
+        assert not sleep_debt_elevated(7.0, threshold_hours=7.0)
+
+    def test_below_threshold_does_not_trigger(self) -> None:
+        assert not sleep_debt_elevated(3.0, threshold_hours=7.0)
+
+    def test_none_is_false_not_a_crash(self) -> None:
+        assert not sleep_debt_elevated(None, threshold_hours=7.0)
+
+    def test_negative_debt_surplus_does_not_trigger(self) -> None:
+        assert not sleep_debt_elevated(-2.0, threshold_hours=7.0)
+
+
+class TestHooperSustainedHigh:
+    def test_consecutive_high_days_triggers(self) -> None:
+        by_date = {"2026-08-28": 25.0, "2026-08-29": 24.0, "2026-08-30": 30.0}
+        assert hooper_sustained_high(by_date, "2026-08-30", window_days=3, threshold=22.0)
+
+    def test_a_gap_day_breaks_the_streak(self) -> None:
+        # 2026-08-29 has no log at all -- never invented as "probably fine."
+        by_date = {"2026-08-28": 25.0, "2026-08-30": 30.0}
+        assert not hooper_sustained_high(by_date, "2026-08-30", window_days=3, threshold=22.0)
+
+    def test_one_day_below_threshold_breaks_the_streak(self) -> None:
+        by_date = {"2026-08-28": 25.0, "2026-08-29": 10.0, "2026-08-30": 30.0}
+        assert not hooper_sustained_high(by_date, "2026-08-30", window_days=3, threshold=22.0)
+
+    def test_exactly_at_threshold_counts(self) -> None:
+        by_date = {"2026-08-28": 22.0, "2026-08-29": 22.0, "2026-08-30": 22.0}
+        assert hooper_sustained_high(by_date, "2026-08-30", window_days=3, threshold=22.0)
+
+
+class TestShouldDeload:
+    def test_two_markers_triggers_by_default(self) -> None:
+        result = should_deload(
+            hrv_deviation=True,
+            rhr_sustained_rise=True,
+            sleep_debt_elevated=False,
+            hooper_sustained_high=False,
+            tsb_persistently_negative=False,
+        )
+        assert result["recommended"] is True
+        assert set(result["markers_fired"]) == {"hrv_sustained_deviation", "rhr_sustained_rise"}
+
+    def test_one_marker_does_not_trigger_by_default(self) -> None:
+        result = should_deload(
+            hrv_deviation=True,
+            rhr_sustained_rise=False,
+            sleep_debt_elevated=False,
+            hooper_sustained_high=False,
+            tsb_persistently_negative=False,
+        )
+        assert result["recommended"] is False
+        assert result["markers_fired"] == ["hrv_sustained_deviation"]
+
+    def test_no_markers_reports_empty_list_not_none(self) -> None:
+        result = should_deload(
+            hrv_deviation=False,
+            rhr_sustained_rise=False,
+            sleep_debt_elevated=False,
+            hooper_sustained_high=False,
+            tsb_persistently_negative=False,
+        )
+        assert result["markers_fired"] == []
+        assert result["recommended"] is False
+
+    def test_markers_required_is_configurable(self) -> None:
+        result = should_deload(
+            hrv_deviation=True,
+            rhr_sustained_rise=True,
+            sleep_debt_elevated=False,
+            hooper_sustained_high=False,
+            tsb_persistently_negative=False,
+            markers_required=3,
+        )
+        assert result["recommended"] is False
+
+    def test_all_five_markers_fire_together(self) -> None:
+        result = should_deload(
+            hrv_deviation=True,
+            rhr_sustained_rise=True,
+            sleep_debt_elevated=True,
+            hooper_sustained_high=True,
+            tsb_persistently_negative=True,
+        )
+        assert len(result["markers_fired"]) == 5
+        assert result["recommended"] is True

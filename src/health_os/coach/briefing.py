@@ -189,11 +189,25 @@ def compute_daily_plan(
     recent_neck_niggle = rules.has_recent_neck_niggle(niggle_texts)
 
     weekday_name = today_d.strftime("%A").lower()
-    sessions_today = rules.scheduled_sessions_for(config, weekday_name)
+    # A hand-planned taper day (comp_prep.blocks[].daily_schedule) overrides
+    # the generic weekly pattern entirely when one exists for `today` -- see
+    # rules.taper_day_override()'s own docstring for why this real gap
+    # existed until 2026-08-30 (the schedule was in config, nothing read it).
+    taper_override = rules.taper_day_override(config, today)
+    sessions_today = (
+        [taper_override] if taper_override else rules.scheduled_sessions_for(config, weekday_name)
+    )
     downgrade = rules.should_downgrade_to_rest(band_history)
 
     sessions_with_guidance = []
     for session in sessions_today:
+        if session.get("type") == "taper":
+            # Already has label/instruction from taper_day_override() --
+            # authoritative, not readiness-band-modulated (see that
+            # function's docstring for why layering a second reduction on
+            # top would double-discount an already-reduced week).
+            sessions_with_guidance.append(session)
+            continue
         label = session["type"].replace("_", " ").title()
         if session.get("subtype"):
             label += f" ({session['subtype'].replace('_', ' ')})"
@@ -201,12 +215,40 @@ def compute_daily_plan(
         sessions_with_guidance.append({**session, "label": label, "instruction": instruction})
 
     hrv_obs_full = _rows_to_tuples(daily_rows, "hrv_overnight_ms")
+    rhr_obs_full = _rows_to_tuples(daily_rows, "resting_hr")
+    rhr_result_full = baselines.compute_rhr_baseline(rhr_obs_full)
+    sleep_debt_result_full = baselines.compute_sleep_debt(
+        _rows_to_tuples(daily_rows, "sleep_total_min")
+    )
     structural_flags = {
         "downgrade_to_rest": downgrade,
         "hrv_sustained_low": rules.hrv_sustained_low(hrv_obs_full),
         "tsb_persistently_negative": rules.tsb_persistently_negative(tsb_series),
         "monotony_strain": rules.monotony_strain_flag(daily_load_series),
     }
+
+    taper = rules.taper_status(config, today)
+    deload_config = config.get("deload", {})
+    deload = rules.should_deload(
+        hrv_deviation=rules.hrv_sustained_deviation(
+            hrv_obs_full, window_days=deload_config.get("hrv_sustained_deviation_days", 6)
+        ),
+        rhr_sustained_rise=bool(rhr_result_full.get("sustained_rise_flag")),
+        sleep_debt_elevated=rules.sleep_debt_elevated(
+            sleep_debt_result_full.get("debt_hours")
+            if sleep_debt_result_full.get("confidence") != "insufficient_data"
+            else None,
+            threshold_hours=deload_config.get("sleep_debt_threshold_hours", 7.0),
+        ),
+        hooper_sustained_high=rules.hooper_sustained_high(
+            hooper_by_date,
+            today,
+            window_days=deload_config.get("hooper_sustained_high_days", 3),
+            threshold=deload_config.get("hooper_sustained_high_threshold", 22.0),
+        ),
+        tsb_persistently_negative=structural_flags["tsb_persistently_negative"],
+        markers_required=deload_config.get("markers_required", 2),
+    )
 
     yesterday = (today_d - timedelta(days=1)).isoformat()
     yesterday_row = conn.execute(
@@ -223,6 +265,8 @@ def compute_daily_plan(
         "recent_neck_niggle": recent_neck_niggle,
         "sessions": sessions_with_guidance,
         "structural_flags": structural_flags,
+        "taper": taper,
+        "deload": deload,
         "nutrition_focus": rules.nutrition_focus(
             config, yesterday_social_meal=yesterday_social_meal
         ),
@@ -238,6 +282,13 @@ def build_briefing(conn: sqlite3.Connection, config: dict[str, Any], today: str)
     """
     plan = compute_daily_plan(conn, config, today)
     lines = [f"Health OS briefing — {plan['today']} ({plan['weekday_name'].capitalize()})", ""]
+
+    taper = plan["taper"]
+    if taper["active"]:
+        lines.append(f"Taper week — {taper['days_to_competition']} day(s) to competition.")
+    elif 0 <= taper["days_to_competition"] <= 21:
+        lines.append(f"{taper['days_to_competition']} day(s) to competition.")
+
     lines.append(f"Readiness: {plan['band'].upper()}")
 
     if not plan["sessions"]:
@@ -259,6 +310,19 @@ def build_briefing(conn: sqlite3.Connection, config: dict[str, Any], today: str)
     if flags["monotony_strain"]:
         lines.append(
             "  ⚠ Structural: high monotony this week with strain in the recent top quartile."
+        )
+
+    deload = plan["deload"]
+    if deload["recommended"]:
+        deload_config = config.get("deload", {})
+        duration = deload_config.get("duration_days", 6)
+        volume_pct = deload_config.get("volume_reduction_pct", 40)
+        fired = ", ".join(m.replace("_", " ") for m in deload["markers_fired"])
+        lines.append("")
+        lines.append(
+            f"⚠ DELOAD RECOMMENDED — {len(deload['markers_fired'])} fatigue markers fired "
+            f"({fired}). Suggest ~{duration} days at ~{volume_pct}% less volume, intensity "
+            "capped, prefer reduced load over full rest."
         )
 
     lines.append("")

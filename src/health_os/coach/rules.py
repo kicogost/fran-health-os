@@ -29,6 +29,7 @@ copy).
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from typing import Any
 
 from health_os.metrics import baselines
@@ -241,3 +242,184 @@ def nutrition_focus(config: dict[str, Any], *, yesterday_social_meal: bool | Non
             f"skipped meal today. Just hit today's {protein_g}g protein target and move on."
         )
     return f"Hit {protein_g}g protein today — the one hard number that matters most."
+
+
+# ---------------------------------------------------------------------------
+# Taper (calendar-anchored to the competition date) and deload (fatigue-
+# triggered, independent of the calendar) -- built 2026-08-30 after Francisco
+# asked directly for both. Real sports-science research (see CLAUDE.md for
+# the full evidence synthesis) confirmed these are genuinely different
+# mechanisms, not the same feature at two different times: a taper is a
+# planned, event-anchored reduction to peak for a known date; a deload is an
+# autoregulated, fatigue-anchored reduction that should fire off real
+# markers, not a fixed schedule (research finding: a scheduled,
+# non-fatigue-triggered deload was neutral-to-slightly-negative in an RCT on
+# a population that wasn't already run down).
+# ---------------------------------------------------------------------------
+
+
+def taper_day_override(config: dict[str, Any], today: str) -> dict[str, Any] | None:
+    """If `today` falls within a `comp_prep.blocks[]` entry's explicit
+    day-by-day `daily_schedule`, returns that day's real planned session
+    instead of the generic `weekly_template` pattern.
+
+    Real gap closed 2026-08-30: this schedule has existed in
+    `config/athlete.yaml` since 2026-08-27 (Francisco's own hand-planned
+    final week before competing) but nothing in this codebase ever actually
+    read it — the coaching engine would have kept giving generic weekly
+    guidance straight through taper week and silently missed the
+    hand-planned reduction entirely.
+
+    The taper plan is treated as authoritative, not readiness-band-
+    modulated the way a normal day's `session_guidance()` output is — it
+    was already deliberately built as a reduced-load week; layering a
+    second, independent readiness-based reduction on top would double-
+    discount it rather than express it faithfully.
+    """
+    for block in config.get("comp_prep", {}).get("blocks", []):
+        for entry in block.get("daily_schedule", []):
+            if entry["date"] == today:
+                return {
+                    "type": "taper",
+                    "label": "Taper",
+                    "instruction": entry["plan"],
+                    "block_name": block["name"],
+                }
+    return None
+
+
+def taper_status(config: dict[str, Any], today: str) -> dict[str, Any]:
+    """Where `today` sits relative to the competition date and the taper
+    block's own window. `days_to_competition` is always present (a simple
+    countdown); `active` is only true once inside the taper block's actual
+    date range (`taper_day_override()` is what actually changes that day's
+    session — this is the summary/banner-level status alongside it).
+    """
+    comp_date = date.fromisoformat(config["goals"]["primary"]["date"])
+    today_d = date.fromisoformat(today)
+    taper_block = next(
+        (b for b in config.get("comp_prep", {}).get("blocks", []) if b.get("name") == "taper"),
+        None,
+    )
+    active = False
+    if taper_block is not None:
+        active = (
+            date.fromisoformat(taper_block["starts"])
+            <= today_d
+            <= date.fromisoformat(taper_block["ends"])
+        )
+    return {
+        "days_to_competition": (comp_date - today_d).days,
+        "active": active,
+    }
+
+
+def hrv_sustained_deviation(
+    hrv_observations: list[tuple[str, float]], *, window_days: int = 6
+) -> bool:
+    """Bidirectional version of `hrv_sustained_low()`, for the deload
+    trigger specifically — NOT a replacement for the existing low-only,
+    3-day session-guidance structural trigger, which stays exactly as
+    kickoff doc section 7 specified it.
+
+    Built after real research (2026-08-30) found HRV's overreaching signal
+    is genuinely contested as unidirectional: Bellenger et al. 2016
+    (meta-analysis, 27 studies) found overreached athletes' HRV is often
+    unaffected or even INCREASED, not just decreased — Manresa-Rocamora et
+    al. 2021 (meta-analysis) confirmed the same pattern. A deload trigger
+    that only watches for low HRV is using a simplified, partially-
+    contradicted model. `window_days` is a documented, reasoned default —
+    no literature-validated number exists for this specific "should I plan
+    a deload this week" decision (the one combat-sport duration found,
+    Tian et al. 2013's wrestlers, describes >2 weeks for a slower, more
+    severe after-the-fact NFOR diagnosis, not a preventive trigger — using
+    it directly would likely be far too slow to be useful inside an 8-week
+    block).
+    """
+    if len(hrv_observations) < window_days:
+        return False
+    for i in range(len(hrv_observations) - window_days, len(hrv_observations)):
+        as_of = hrv_observations[: i + 1]
+        result = baselines.compute_hrv_baseline(as_of)
+        if result["confidence"] != "full" or result["status"] not in ("low", "high"):
+            return False
+    return True
+
+
+def sleep_debt_elevated(debt_hours: float | None, *, threshold_hours: float) -> bool:
+    """True if the rolling 14-day sleep debt (`metrics.baselines.
+    compute_sleep_debt()`) exceeds `threshold_hours`. No literature-
+    validated threshold exists for this as a deload trigger specifically
+    (a real gap the 2026-08-30 research confirmed) — `threshold_hours` is
+    read from `config/athlete.yaml: deload.sleep_debt_threshold_hours`, a
+    documented reasoned default, not a literature number.
+    """
+    if debt_hours is None:
+        return False
+    return debt_hours > threshold_hours
+
+
+def hooper_sustained_high(
+    hooper_by_date: dict[str, float], as_of_date: str, *, window_days: int, threshold: float
+) -> bool:
+    """True if `window_days` consecutive CALENDAR days ending at
+    `as_of_date` all have a logged `hooper_index` >= `threshold` — a gap
+    (no log that day) breaks the streak, same "never invent" discipline as
+    every other sustained-X check in this module.
+
+    Built after real research (Saw, Main, Gastin 2016, systematic review)
+    found subjective wellness measures are MORE sensitive and consistent
+    than commonly-used objective measures for detecting training-load
+    effects — this marker is deliberately NOT a tiebreaker in
+    `should_deload()`, it counts the same as any objective marker.
+    """
+    as_of = date.fromisoformat(as_of_date)
+    for i in range(window_days):
+        d = (as_of - timedelta(days=i)).isoformat()
+        value = hooper_by_date.get(d)
+        if value is None or value < threshold:
+            return False
+    return True
+
+
+def should_deload(
+    *,
+    hrv_deviation: bool,
+    rhr_sustained_rise: bool,
+    sleep_debt_elevated: bool,
+    hooper_sustained_high: bool,
+    tsb_persistently_negative: bool,
+    markers_required: int = 2,
+) -> dict[str, Any]:
+    """Composite deload trigger — fires once at least `markers_required` of
+    these 5 markers are active at once. No literature-validated "M of N"
+    rule exists anywhere the 2026-08-30 research found (the one Delphi
+    consensus panel that looked at this explicitly did NOT reach agreement
+    on specific biomarker triggers) — this mirrors, at a larger scale, this
+    project's own already-built 2-red/3-amber single-day-downgrade
+    precedent (`should_downgrade_to_rest()`), a reasoned default applied
+    consistently, not a borrowed literature number.
+
+    Deliberately fatigue-triggered, never calendar-triggered (that's the
+    separate `taper_status()`/`taper_day_override()` above) — research
+    found a scheduled, non-fatigue-triggered deload was neutral-to-
+    slightly-negative for strength in a population that wasn't already run
+    down (Coleman et al. 2024 RCT), so this should only ever fire off real
+    markers, never a fixed "every N weeks" schedule.
+
+    Returns which markers fired, not just a bool — design principle 9, the
+    recommendation must be traceable to its real inputs, never a black box.
+    """
+    markers = {
+        "hrv_sustained_deviation": hrv_deviation,
+        "rhr_sustained_rise": rhr_sustained_rise,
+        "sleep_debt_elevated": sleep_debt_elevated,
+        "hooper_sustained_high": hooper_sustained_high,
+        "tsb_persistently_negative": tsb_persistently_negative,
+    }
+    fired = [name for name, active in markers.items() if active]
+    return {
+        "recommended": len(fired) >= markers_required,
+        "markers_fired": fired,
+        "markers_required": markers_required,
+    }

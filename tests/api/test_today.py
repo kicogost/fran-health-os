@@ -92,6 +92,13 @@ class TestBuildTodayPayload:
         payload = build_today_payload(conn, _CONFIG, "2026-08-24")
         assert payload["weight"] is None
 
+    def test_taper_and_deload_included_in_payload(self, conn: sqlite3.Connection) -> None:
+        payload = build_today_payload(conn, _CONFIG, "2026-08-24")
+        assert "days_to_competition" in payload["taper"]
+        assert payload["deload"]["recommended"] is False
+        assert payload["deload"]["duration_days"] == 6
+        assert payload["deload"]["volume_reduction_pct"] == 40
+
     def test_strain_included_in_payload(self, conn: sqlite3.Connection) -> None:
         payload = build_today_payload(conn, _CONFIG, "2026-08-24")
         assert "strain" in payload

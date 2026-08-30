@@ -63,6 +63,24 @@ export interface StructuralFlags {
   monotony_strain: boolean
 }
 
+// Calendar-anchored to the competition date -- distinct from Deload below,
+// which is fatigue-triggered. See coach/rules.py: taper_status().
+export interface Taper {
+  days_to_competition: number
+  active: boolean
+}
+
+// Fatigue-triggered, autoregulated -- never calendar-triggered (research,
+// 2026-08-30: a scheduled non-fatigue-triggered deload showed no benefit in
+// the one RCT that tested it). See coach/rules.py: should_deload().
+export interface Deload {
+  recommended: boolean
+  markers_fired: string[]
+  markers_required: number
+  duration_days: number
+  volume_reduction_pct: number
+}
+
 export interface Sleep {
   total_min: number
   deep_min: number | null
@@ -92,6 +110,8 @@ export interface TodayPayload {
   readiness: Readiness
   sessions: Session[]
   structural_flags: StructuralFlags
+  taper: Taper
+  deload: Deload
   nutrition_focus: string
   trend_observation: string | null
   sleep: Sleep | null
