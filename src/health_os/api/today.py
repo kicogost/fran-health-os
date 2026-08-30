@@ -24,6 +24,20 @@ def _format_hours_minutes(total_min: float | None) -> str | None:
     return f"{hours}h{minutes:02d}m"
 
 
+def _format_sleep_display(daily_row: Any) -> str | None:
+    """Duration alone, plus Garmin's own sleep_score when present (the
+    quality half now blended into the sleep component score too, see
+    metrics/readiness.py) -- shows both real inputs a reader would need to
+    understand the ring's number, not just one of them.
+    """
+    duration = _format_hours_minutes(daily_row["sleep_total_min"])
+    if duration is None:
+        return None
+    if daily_row["sleep_score"] is not None:
+        return f"{duration} · Garmin {daily_row['sleep_score']:.0f}"
+    return duration
+
+
 def _annotate_components_with_display(components: dict[str, Any], daily_row: Any) -> dict[str, Any]:
     """Attach a plain-language `display_raw` string (the actual sensor
     reading, not the abstracted 0-100 score or its internal SD-deviation/
@@ -46,9 +60,7 @@ def _annotate_components_with_display(components: dict[str, Any], daily_row: Any
         "rhr": f"{daily_row['resting_hr']:.0f}bpm"
         if daily_row is not None and daily_row["resting_hr"] is not None
         else None,
-        "sleep": _format_hours_minutes(daily_row["sleep_total_min"])
-        if daily_row is not None
-        else None,
+        "sleep": _format_sleep_display(daily_row) if daily_row is not None else None,
     }
     annotated: dict[str, Any] = {}
     for key, comp in components.items():

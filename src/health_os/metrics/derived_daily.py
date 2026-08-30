@@ -375,6 +375,7 @@ def _readiness_score_metric(
     hrv_result = baselines.compute_hrv_baseline(_rows_to_tuples(daily_rows, "hrv_overnight_ms"))
     rhr_result = baselines.compute_rhr_baseline(_rows_to_tuples(daily_rows, "resting_hr"))
     sleep_obs = _rows_to_tuples(daily_rows, "sleep_total_min")
+    sleep_quality_obs = _rows_to_tuples(daily_rows, "sleep_score")
     sleep_debt_result = baselines.compute_sleep_debt(sleep_obs)
     tsb_zscore_result = load_metrics.compute_tsb_zscore(_tsb_series(load_series))
     weights = _readiness_weights(config)
@@ -389,6 +390,10 @@ def _readiness_score_metric(
         sleep_debt_hours=sleep_debt_result["debt_hours"]
         if sleep_debt_result["confidence"] != "insufficient_data"
         else None,
+        # Garmin's own sleep_score (REM/deep/restlessness/timing) -- same fix
+        # and same "last element == as_of_date" convention as
+        # coach/briefing.py's identical call site, kept in sync deliberately.
+        sleep_quality_score=sleep_quality_obs[-1][1] if sleep_quality_obs else None,
         tsb_z_score=_if_full(tsb_zscore_result, "z_score"),
         hooper_index=hooper_index,
         weights=weights,

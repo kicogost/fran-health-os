@@ -198,6 +198,17 @@ class TestAnnotateComponentsWithDisplay:
         annotated = _annotate_components_with_display(components, row)
         assert annotated["sleep"]["display_raw"] == "7h29m"
 
+    def test_sleep_display_includes_garmin_score_when_present(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # Real gap found 2026-08-30: the ring's own number now blends
+        # Garmin's quality score in (metrics/readiness.py), so the caption
+        # should show both real inputs behind it, not just duration.
+        row = self._daily_row(conn, "2026-08-30", sleep_total_min=449, sleep_score=74)
+        components = {"sleep": {"raw": {}, "score": 85.5, "weight_used": 0.25}}
+        annotated = _annotate_components_with_display(components, row)
+        assert annotated["sleep"]["display_raw"] == "7h29m · Garmin 74"
+
     def test_missing_raw_value_gives_none_not_a_crash(self, conn: sqlite3.Connection) -> None:
         row = self._daily_row(conn, "2026-08-30")
         components = {"hrv": {"raw": -0.11, "score": 47.3, "weight_used": 0.35}}

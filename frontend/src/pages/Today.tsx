@@ -63,6 +63,13 @@ export function TodayPage() {
 
   const { readiness, strain } = data
   const bandColor = BAND_COLORS[readiness.band]
+  // HRV/RHR still drive the score underneath (Francisco's own call,
+  // 2026-08-30: "we can use it for calculations... don't need it in the
+  // readiness components screen") -- still fully computed and returned by
+  // the API, just not one of the rings shown here.
+  const visibleComponents = Object.entries(readiness.components).filter(
+    ([key]) => key !== "hrv" && key !== "rhr",
+  )
 
   return (
     <div
@@ -119,13 +126,13 @@ export function TodayPage() {
             </div>
           </div>
 
-          {Object.keys(readiness.components).length > 0 && (
+          {visibleComponents.length > 0 && (
             <div className="relative mt-6 pt-5 border-t border-border">
               <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-4">
                 Readiness components
               </p>
               <div className="grid grid-cols-3 sm:grid-cols-5 gap-4">
-                {Object.entries(readiness.components).map(([key, comp]) => (
+                {visibleComponents.map(([key, comp]) => (
                   <ComponentRing
                     key={key}
                     componentKey={key}

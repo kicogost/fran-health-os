@@ -45,19 +45,44 @@ def _rhr_component_score(deviation_sd: float) -> float:
 
 
 def _sleep_component_score(
-    last_night_hours: float | None, debt_hours: float | None, *, need_hours: float = 8.0
+    last_night_hours: float | None,
+    debt_hours: float | None,
+    quality_score: float | None = None,
+    *,
+    need_hours: float = 8.0,
 ) -> float | None:
-    """Even blend of last night's duration (vs need) and the 14-day rolling
-    debt. The kickoff doc doesn't specify an exact split between the two —
-    this 50/50 blend is a documented default, not a given number. `None` only
-    if BOTH inputs are missing.
+    """Blend of two halves: **quantity** (last night's duration vs need,
+    50/50 with the 14-day rolling debt — the kickoff doc doesn't specify an
+    exact split, a documented default, not a given number) and **quality**
+    (Garmin's own `sleep_score`, which factors in REM/deep/restlessness/
+    timing — something this project's own duration+debt math never looked
+    at until Francisco asked directly, 2026-08-30, why our sleep score read
+    97 the same night Garmin's read 74 "Fair" for low REM).
+
+    Deliberately reuses Garmin's own quality algorithm rather than inventing
+    a stage-weighting formula from raw deep/light/rem/awake minutes — Garmin
+    already does real, tuned quality scoring on the same underlying data;
+    re-deriving a worse approximation of it would be reinventing something
+    already measured, not adding real information.
+
+    Quality is optional and additive, never required: quantity alone is
+    still returned when `quality_score` is `None` (a day/source without a
+    Garmin sleep score), so this stays exactly backward-compatible rather
+    than a hard new dependency. Returns `None` only when there is truly
+    nothing to build any of this from.
     """
-    parts = []
+    quantity_parts = []
     if last_night_hours is not None:
-        parts.append(_clamp(last_night_hours / need_hours * 100.0, 0.0, 100.0))
+        quantity_parts.append(_clamp(last_night_hours / need_hours * 100.0, 0.0, 100.0))
     if debt_hours is not None:
-        parts.append(_clamp(100.0 - debt_hours * 10.0, 0.0, 100.0))
-    return sum(parts) / len(parts) if parts else None
+        quantity_parts.append(_clamp(100.0 - debt_hours * 10.0, 0.0, 100.0))
+    quantity_score = sum(quantity_parts) / len(quantity_parts) if quantity_parts else None
+
+    if quantity_score is None:
+        return quality_score
+    if quality_score is None:
+        return quantity_score
+    return (quantity_score + quality_score) / 2.0
 
 
 def _tsb_component_score(z_score: float) -> float:
@@ -80,6 +105,7 @@ def compute_readiness_score(
     rhr_deviation_sd: float | None = None,
     last_night_sleep_hours: float | None = None,
     sleep_debt_hours: float | None = None,
+    sleep_quality_score: float | None = None,
     tsb_z_score: float | None = None,
     hooper_index: float | None = None,
     weights: dict[str, float] | None = None,
@@ -107,10 +133,16 @@ def compute_readiness_score(
             "raw": rhr_deviation_sd,
             "score": _rhr_component_score(rhr_deviation_sd),
         }
-    sleep_score = _sleep_component_score(last_night_sleep_hours, sleep_debt_hours)
+    sleep_score = _sleep_component_score(
+        last_night_sleep_hours, sleep_debt_hours, sleep_quality_score
+    )
     if sleep_score is not None:
         components["sleep"] = {
-            "raw": {"last_night_hours": last_night_sleep_hours, "debt_hours": sleep_debt_hours},
+            "raw": {
+                "last_night_hours": last_night_sleep_hours,
+                "debt_hours": sleep_debt_hours,
+                "quality_score": sleep_quality_score,
+            },
             "score": sleep_score,
         }
     if tsb_z_score is not None:

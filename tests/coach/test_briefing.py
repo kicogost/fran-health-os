@@ -143,6 +143,25 @@ class TestComputeDailyPlanShape:
         plan = compute_daily_plan(conn, _CONFIG, "2026-08-26")  # a Wednesday, not in _CONFIG
         assert plan["sessions"] == []
 
+    def test_garmin_sleep_score_actually_reaches_the_sleep_component(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # Real gap found 2026-08-30: our own duration+debt sleep score read
+        # 97 the same night Garmin's quality-aware score read 74 -- fixed by
+        # blending Garmin's sleep_score in. This locks in the actual wiring
+        # (briefing.py fetching daily_metrics.sleep_score and passing it
+        # through), not just the pure formula tested in test_readiness.py.
+        db_module.upsert(
+            conn,
+            "daily_metrics",
+            DailyMetric(date="2026-08-24", sleep_total_min=449, sleep_score=74).to_row(),
+            ["date"],
+        )
+        plan = compute_daily_plan(conn, _CONFIG, "2026-08-24")
+        sleep_component = plan["score_result"]["components"].get("sleep")
+        assert sleep_component is not None
+        assert sleep_component["raw"]["quality_score"] == 74
+
 
 class TestBuildBriefing:
     def test_produces_readable_text(self, conn: sqlite3.Connection) -> None:

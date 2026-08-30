@@ -65,6 +65,35 @@ class TestComputeReadinessScore:
         result = compute_readiness_score(last_night_sleep_hours=4.0)  # half of need
         assert result["components"]["sleep"]["score"] == pytest.approx(50.0)
 
+    def test_sleep_quality_blends_in_when_present(self) -> None:
+        # Real gap found 2026-08-30: our duration+debt score read 97 the
+        # same night Garmin's own quality-aware score read 74 "Fair" (low
+        # REM) -- quantity alone missed that entirely. quantity here:
+        # last_night=8h -> 100, debt=0h -> 100, quantity=100. Blended 50/50
+        # with a real Garmin quality score of 74 -> (100+74)/2 = 87.
+        result = compute_readiness_score(
+            last_night_sleep_hours=8.0, sleep_debt_hours=0.0, sleep_quality_score=74.0
+        )
+        assert result["components"]["sleep"]["score"] == pytest.approx(87.0)
+
+    def test_sleep_quality_missing_falls_back_to_quantity_only(self) -> None:
+        # Exactly the pre-existing behavior when no Garmin sleep_score
+        # exists for that date -- backward compatible, not a hard new
+        # requirement.
+        with_quality_none = compute_readiness_score(
+            last_night_sleep_hours=8.0, sleep_debt_hours=0.0, sleep_quality_score=None
+        )
+        without_param = compute_readiness_score(last_night_sleep_hours=8.0, sleep_debt_hours=0.0)
+        assert with_quality_none["components"]["sleep"]["score"] == pytest.approx(
+            without_param["components"]["sleep"]["score"]
+        )
+
+    def test_sleep_raw_carries_quality_score_for_traceability(self) -> None:
+        result = compute_readiness_score(
+            last_night_sleep_hours=7.0, sleep_debt_hours=1.0, sleep_quality_score=80.0
+        )
+        assert result["components"]["sleep"]["raw"]["quality_score"] == 80.0
+
     def test_missing_components_renormalize_not_invented(self) -> None:
         # Only HRV (0.35) and subjective (0.10) present -> renormalized to
         # 0.35/0.45 and 0.10/0.45.

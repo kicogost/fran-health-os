@@ -172,6 +172,23 @@ class TestReadinessScoreMetric:
         assert metrics["readiness_score"].confidence == "insufficient_data"
         assert metrics["readiness_score"].value is None
 
+    def test_garmin_sleep_score_reaches_the_persisted_sleep_component(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # Same real gap/fix as coach/briefing.py's identical wiring test --
+        # this is the SEPARATE persistence-layer call site, kept in sync
+        # deliberately (the earlier TSB-staleness fix taught this project
+        # that these two call sites can silently drift apart otherwise).
+        db_module.upsert(
+            conn,
+            "daily_metrics",
+            DailyMetric(date="2026-08-24", sleep_total_min=449, sleep_score=74).to_row(),
+            ["date"],
+        )
+        metrics = {m.metric_name: m for m in compute_derived_metrics(conn, _CONFIG, "2026-08-24")}
+        readiness = metrics["readiness_score"]
+        assert readiness.inputs["components"]["sleep"]["raw"]["quality_score"] == 74
+
 
 class TestStoreDerivedMetrics:
     def test_computed_at_bumps_on_recompute(self, conn: sqlite3.Connection) -> None:

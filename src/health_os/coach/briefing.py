@@ -80,6 +80,7 @@ def _readiness_result_as_of(
     hrv_obs = _rows_to_tuples(truncated, "hrv_overnight_ms")
     rhr_obs = _rows_to_tuples(truncated, "resting_hr")
     sleep_obs = _rows_to_tuples(truncated, "sleep_total_min")
+    sleep_quality_obs = _rows_to_tuples(truncated, "sleep_score")
     hrv_result = baselines.compute_hrv_baseline(hrv_obs)
     rhr_result = baselines.compute_rhr_baseline(rhr_obs)
     sleep_debt_result = baselines.compute_sleep_debt(sleep_obs)
@@ -96,6 +97,12 @@ def _readiness_result_as_of(
         sleep_debt_hours=sleep_debt_result["debt_hours"]
         if sleep_debt_result["confidence"] != "insufficient_data"
         else None,
+        # Garmin's own sleep_score -- factors in REM/deep/restlessness/timing,
+        # something the duration+debt math above never looked at on its own
+        # (real gap Francisco found 2026-08-30: our score read 97 the same
+        # night Garmin's read 74 "Fair" for low REM). Same "last element ==
+        # as_of_date" convention already used for last_night_sleep_hours above.
+        sleep_quality_score=sleep_quality_obs[-1][1] if sleep_quality_obs else None,
         tsb_z_score=_if_full(tsb_zscore_result, "z_score"),
         hooper_index=hooper_by_date.get(as_of_date),
         weights=weights,
