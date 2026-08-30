@@ -843,7 +843,7 @@ src/health_os/
   dashboard/             app.py (Streamlit entrypoint, st.navigation), theme.py (dark theme + chart helpers), data.py (cached DB/config access), views/{today,trends,training,comp_prep,log,data_health}.py — stays in active use until the React migration (ADR 0005) is fully done
   api/                   main.py (FastAPI app, local-only, all 6 pages' routes), today.py/trends.py/training.py/comp_prep.py/data_health.py (one real read-only assembly fn per page), log.py (the one page with real POST mutation endpoints — reuses core/models.py's dataclasses for validation, never a second copy) — ADR 0005 frontend migration, 2026-08-28
 frontend/               Vite + React + TypeScript + Tailwind v4 + shadcn/ui (Radix base) + react-router-dom + recharts — ADR 0005, 2026-08-28, all 6 pages. src/pages/{Today,Trends,Training,CompPrep,Log,DataHealth}.tsx, components/{today,charts,log,layout}/*.tsx, index.css carries the same Carbon g100 dark tokens as dashboard/theme.py (ported, not re-picked). Daily use: `npm run build` once, then `uv run python scripts/run_api.py` alone serves everything on port 8000. Active frontend dev: `npm run dev` (port 5173, hot reload, proxies /api to FastAPI) + `scripts/run_api.py` (port 8000) as two processes instead.
-scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_calisthenics.py (manual calisthenics logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview), sync.py (Phase 6 daily live-sync entrypoint — Garmin + Health Auto Export, incl. per-lap detail for sub_sport=="bjj" activities), compute_derived.py (Phase 4 derived-metric persistence, trailing-3-day window like sync.py), briefing.py (Phase 7 CLI), weekly_retro.py (Phase 7 CLI), check_secrets.py (pre-commit secret-shaped-string guard, design principle 8), run_api.py (ADR 0005 — local FastAPI server, port 8000; also serves the built frontend/dist/ for one-command daily use, see "One-command frontend serving built"), morning_run.sh (Phase 8 — chains sync+compute_derived+briefing+retro, what launchd's 07:00 com.healthos.morning runs), quiet_sync.sh (Phase 8 — sync+compute_derived only, no briefing, what launchd's 21:30 com.healthos.quicksync runs, see "Real bug found: weight had been silently stale" for why)
+scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_calisthenics.py (manual calisthenics logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview), sync.py (Phase 6 daily live-sync entrypoint — Garmin + Health Auto Export, incl. per-lap detail for sub_sport=="bjj" activities), compute_derived.py (Phase 4 derived-metric persistence, trailing-3-day window like sync.py), briefing.py (Phase 7 CLI), weekly_retro.py (Phase 7 CLI), check_secrets.py (pre-commit secret-shaped-string guard, design principle 8), run_api.py (ADR 0005 — local FastAPI server, port 8000; also serves the built frontend/dist/ for one-command daily use, see "One-command frontend serving built"), morning_run.sh (Phase 8 — chains sync+compute_derived+briefing+retro, what launchd's 07:00 com.healthos.morning runs), quiet_sync.sh (Phase 8 — sync+compute_derived+wellness-reminder, no briefing, what launchd's 21:30 com.healthos.quicksync runs, see "Real bug found: weight had been silently stale" for why it exists and "Evening wellness-logging reminder" for the reminder step), check_wellness_logged.py (used by quiet_sync.sh — exit 0/1 on whether all 4 Hooper-Mackinnon fields are logged for a date)
 githooks/               pre-commit (calls check_secrets.py; activated once per clone via `git config core.hooksPath githooks`, since `.git/hooks/` itself can't be version-controlled)
 launchd/                com.healthos.morning.plist (Phase 8 — installed as a real LaunchAgent, 10:00 Europe/Madrid daily, moved from an initial 07:00 default per Francisco's request)
 tests/                  core/, ingest/, metrics/, coach/, scripts/, api/ (ADR 0005 backend), fixtures/ (synthetic — never real personal data, fixtures are committed to git)
@@ -2542,6 +2542,35 @@ directly against the real config via `scripts/briefing.py`.
 live coaching decisions, same category as `sessions`/`structural_flags`, which also
 aren't persisted); the Hooper-index readiness-weighting question flagged above is
 noted, not acted on.
+
+## Evening wellness-logging reminder (2026-08-30)
+
+Francisco asked directly whether he needs to log the daily wellness check-in every
+day. Honest answer: yes, ideally — the deload trigger's `hooper_sustained_high()`
+needs 3 *consecutive* days (a single gap resets the streak) and the correlation
+engine needs 30 real paired days, so sporadic logging quietly undermines both
+features just built. Morning is the actual ideal time (a day's own briefing only
+reflects that day's wellness if it's logged before the morning sync runs, and it's
+literally how Hooper-Mackinnon is designed to be used — a same-morning check before
+training) — this reminder is a backstop for a day that got missed, not the plan.
+
+`scripts/check_wellness_logged.py` (new) checks whether ALL FOUR Hooper-Mackinnon
+fields are logged for a date — a partial day (e.g. only `sleep_quality` set) counts
+as "not logged" too, since `core.models.SubjectiveLogEntry` only computes
+`hooper_index` once all four are present, and a partial day can't feed the deload
+check either. Wired into `scripts/quiet_sync.sh` (the existing 21:30 background job)
+as a new step; fires a macOS notification only when something's missing — silent on
+a day already logged, independent of the existing sync-error notification (both can
+fire the same evening if both conditions are true).
+
+8 new tests, 513 total passing, ruff clean. **Real, organic confirmation while
+building this**: tested `quiet_sync.sh` by hand mid-build and it correctly reported
+"not fully logged" — then, without anything changing on the code side, a second run
+minutes later correctly reported "already logged," because Francisco had logged his
+real wellness check-in for the day in the meantime (sleep quality 4, stress 2,
+fatigue 5, soreness 1, hooper_index 12) while this conversation was still going.
+Genuine end-to-end proof the check reads real, live data correctly, not a
+constructed test case.
 
 ## Definition of done for v1
 

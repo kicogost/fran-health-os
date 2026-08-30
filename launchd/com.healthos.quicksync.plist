@@ -8,10 +8,11 @@
   to show up without asking. One early morning run can't see either of
   those, since they haven't happened yet when it fires.
 
-  Runs scripts/quiet_sync.sh (sync + recompute derived metrics only -- no
-  briefing, no notification unless something's actually wrong) once in the
-  evening, so tomorrow's early morning briefing already has a complete
-  picture of today, and today's weight shows up same-day rather than
+  Runs scripts/quiet_sync.sh (sync + recompute derived metrics + a wellness-
+  logging check -- no briefing, no notification unless something's actually
+  wrong or missing) once in the evening, so tomorrow's early morning
+  briefing already has a complete picture of today, and today's weight
+  shows up same-day rather than
   needing a manual sync.
 
   Not "sync more often" -- Garmin's own wellness data only updates a
