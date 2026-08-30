@@ -14,6 +14,17 @@
 #
 # Same non-fatal-sync-error handling as morning_run.sh, same reasoning:
 # sync_garmin() already degrades gracefully and logs to ingest_runs itself.
+#
+# Also carries a wellness-logging reminder (added 2026-08-30): Francisco
+# asked directly whether he needs to log the Hooper-Mackinnon wellness
+# check-in daily -- yes, ideally, since the deload trigger's
+# hooper_sustained_high() needs 3 CONSECUTIVE days (one gap resets the
+# streak) and the correlation engine needs 30 real paired days. Morning is
+# the ideal time to actually log it (that day's own briefing only reflects
+# it if it's there before the morning sync runs) -- this evening check is
+# deliberately a backstop for a day that got missed, not the primary plan.
+# Silent when already logged, same "don't nag on a day you didn't need it"
+# discipline as the sync-error notification below.
 
 set -uo pipefail
 
@@ -35,6 +46,10 @@ TODAY_LOCAL="$(TZ=Europe/Madrid date +%Y-%m-%d)"
   echo "--- compute derived metrics ---"
   /opt/homebrew/bin/uv run python scripts/compute_derived.py
 
+  echo "--- wellness check ---"
+  /opt/homebrew/bin/uv run python scripts/check_wellness_logged.py
+  WELLNESS_EXIT=$?
+
   echo ""
 } >> "$LOG_FILE" 2>&1
 
@@ -43,6 +58,15 @@ TODAY_LOCAL="$(TZ=Europe/Madrid date +%Y-%m-%d)"
 # notification if something actually needs attention.
 if [ "$SYNC_EXIT" -ne 0 ]; then
   NOTE_TEXT="Evening sync had errors -- check data/logs/quiet_sync.log."
+  NOTE_TEXT_ESCAPED="$(printf '%s' "$NOTE_TEXT" | sed 's/[\\"]/\\&/g')"
+  osascript -e "display notification \"$NOTE_TEXT_ESCAPED\" with title \"Health OS — $TODAY_LOCAL\"" \
+    >> "$LOG_FILE" 2>&1
+fi
+
+# Independent of the sync-error check above -- both can fire the same
+# evening, they're unrelated conditions.
+if [ "$WELLNESS_EXIT" -ne 0 ]; then
+  NOTE_TEXT="Haven't logged today's wellness check-in yet -- log_wellness.py or the Log page."
   NOTE_TEXT_ESCAPED="$(printf '%s' "$NOTE_TEXT" | sed 's/[\\"]/\\&/g')"
   osascript -e "display notification \"$NOTE_TEXT_ESCAPED\" with title \"Health OS — $TODAY_LOCAL\"" \
     >> "$LOG_FILE" 2>&1
