@@ -20,8 +20,22 @@ export interface SleepStageRow {
   [key: string]: string | number | undefined
 }
 
+export interface ReadinessPoint {
+  date: string
+  value: number
+  confidence: string | null
+}
+
+export interface ReadinessHistory {
+  label: string
+  raw: ReadinessPoint[]
+  smoothed: SeriesPoint[]
+  coverage_summary: Record<string, number>
+}
+
 export interface TrendsPayload {
   window_days: number
   series: Record<string, TimeSeries>
   sleep_stages: SleepStageRow[]
+  readiness: ReadinessHistory
 }

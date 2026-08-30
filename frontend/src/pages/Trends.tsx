@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { Activity, HeartPulse, Moon, Scale } from "lucide-react"
+import { Activity, Gauge, HeartPulse, Moon, Scale } from "lucide-react"
 import { ApiError, fetchTrends } from "@/lib/api"
 import { CARD_CLASS } from "@/lib/styles"
 import type { TrendsPayload } from "@/types/trends"
@@ -72,6 +72,29 @@ export function TrendsPage() {
 
       {data && (
         <>
+          <ChartCard
+            icon={Gauge}
+            title="Readiness score"
+            hasData={!!data.readiness.raw.length}
+          >
+            {data.readiness.raw.length > 0 && (
+              <>
+                <TrendChart
+                  raw={data.readiness.raw}
+                  smoothed={data.readiness.smoothed}
+                  color="var(--band-blue)"
+                />
+                <p className="text-xs text-muted-foreground mt-2">
+                  {data.readiness.raw.length} day{data.readiness.raw.length === 1 ? "" : "s"} shown —{" "}
+                  {Object.entries(data.readiness.coverage_summary)
+                    .map(([confidence, count]) => `${count} ${confidence}`)
+                    .join(", ")}{" "}
+                  confidence. Partial mostly means no wellness log that day — never invented as full.
+                </p>
+              </>
+            )}
+          </ChartCard>
+
           <ChartCard
             icon={Scale}
             title="Weight (kg)"

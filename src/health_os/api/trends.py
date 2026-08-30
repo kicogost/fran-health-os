@@ -16,6 +16,7 @@ _TIME_SERIES_COLUMNS = {
     "hrv_overnight_ms": "HRV (overnight)",
     "resting_hr": "Resting heart rate",
 }
+_READINESS_METRIC_NAME = "readiness_score"
 _SLEEP_STAGE_COLUMNS = {
     "sleep_deep_min": "Deep",
     "sleep_light_min": "Light",
@@ -50,7 +51,17 @@ def build_trends_payload(conn: sqlite3.Connection, window_days: int) -> dict[str
     """
     max_row = conn.execute("SELECT MAX(date) AS d FROM daily_metrics").fetchone()
     if max_row["d"] is None:
-        return {"window_days": window_days, "series": {}, "sleep_stages": []}
+        return {
+            "window_days": window_days,
+            "series": {},
+            "sleep_stages": [],
+            "readiness": {
+                "label": "Readiness score",
+                "raw": [],
+                "smoothed": [],
+                "coverage_summary": {},
+            },
+        }
 
     cutoff = (date.fromisoformat(max_row["d"]) - timedelta(days=window_days - 1)).isoformat()
 
@@ -84,4 +95,51 @@ def build_trends_payload(conn: sqlite3.Connection, window_days: int) -> dict[str
         for r in stage_rows
     ]
 
-    return {"window_days": window_days, "series": series, "sleep_stages": sleep_stages}
+    readiness = _build_readiness_history(conn, cutoff)
+
+    return {
+        "window_days": window_days,
+        "series": series,
+        "sleep_stages": sleep_stages,
+        "readiness": readiness,
+    }
+
+
+def _build_readiness_history(conn: sqlite3.Connection, cutoff: str) -> dict[str, Any]:
+    """Readiness score over time, straight from `derived_daily` — real
+    historical tracking of the composite itself, not just its inputs, now
+    that it's actually persisted per date (added 2026-08-28) rather than
+    only ever computed live for "today." Built 2026-08-30 after Francisco
+    asked for this directly.
+
+    `derived_daily` is a long/tall table (one row per (date, metric_name)),
+    unlike `daily_metrics`'s wide columns, hence its own small query rather
+    than reusing `_TIME_SERIES_COLUMNS`'s loop.
+
+    Confidence is never hidden or averaged away (design principle 6) — most
+    days will read "partial" (only the subjective/Hooper component is
+    typically missing) rather than invented as "full"; `coverage_summary`
+    reports the real count of each confidence level actually present in
+    this window so a reader isn't left guessing how much of the chart to
+    trust.
+    """
+    rows = conn.execute(
+        "SELECT date, value, confidence, n_days FROM derived_daily "
+        "WHERE metric_name = ? AND date >= ? AND value IS NOT NULL ORDER BY date",
+        (_READINESS_METRIC_NAME, cutoff),
+    ).fetchall()
+    obs = [(r["date"], r["value"]) for r in rows]
+
+    coverage_summary: dict[str, int] = {}
+    for r in rows:
+        key = r["confidence"] or "unknown"
+        coverage_summary[key] = coverage_summary.get(key, 0) + 1
+
+    return {
+        "label": "Readiness score",
+        "raw": [
+            {"date": r["date"], "value": r["value"], "confidence": r["confidence"]} for r in rows
+        ],
+        "smoothed": [{"date": d, "value": v} for d, v in _smooth(obs)],
+        "coverage_summary": coverage_summary,
+    }
