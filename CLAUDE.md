@@ -910,17 +910,22 @@ Minimum tables, full column lists in kickoff doc section 5:
   performance-risk problem, not a fat-loss problem).
 - **Readiness score (0-100)** ✅ (`metrics/readiness.py: compute_readiness_score()`) —
   own composite alongside Garmin's Training Readiness, so disagreement is visible.
-  Weights live in `config/athlete.yaml: readiness_score` (tunable): 35% HRV deviation
-  (SD units, clamped ±2), 25% sleep (last-night vs 8h need + 14-day debt), 15% RHR
-  deviation (inverted), 15% TSB scored self-relatively (a z-score within the athlete's
-  own trailing TSB distribution — raw TSB magnitude depends on load units that aren't
-  universally comparable, so no borrowed absolute threshold), 10% subjective input
-  (`hooper_index`). Missing components are dropped and remaining weights renormalized
-  (never invented as neutral) — `coverage` reports how much of the full weight was
-  real. Component breakdown always included. Real output against the actual database,
-  2026-08-28: **47.0, confidence "partial"** — see the readiness build-out section
-  above for the full component-by-component read and its caveats (TSB stale, no
-  subjective data logged yet).
+  **Rebuilt from a full evidence review 2026-08-30 (ADR 0007) — the weights/shape
+  below are current, not what was originally specced.** Weights live in
+  `config/athlete.yaml: readiness_score` (tunable): 35% HRV deviation (SD units,
+  clamped ±2, quadratic curve with a ±0.2 SD noise floor — ADR 0006 + 0007), 25%
+  sleep (last-night vs a 7-9h band + 14-day debt, blended 75/25 with Garmin's own
+  quality score), 15% RHR deviation (inverted, same curve as HRV), 25% subjective
+  input (`hooper_index`). **TSB is no longer a component of this composite at all**
+  — removed permanently (ADR 0007), not just zero-weighted; it remains a real,
+  computed trend elsewhere (`metrics/load.py`, the Training page, the
+  `tsb_persistently_negative` structural trigger). Missing components are dropped
+  and remaining weights renormalized (never invented as neutral) — `coverage`
+  reports how much of the full weight was real. Component breakdown always
+  included. Real output against the actual database, 2026-08-30: **66.2, confidence
+  "full"** (HRV within the noise floor → neutral 50, RHR +1.04 SD → 39.2, sleep 93.5,
+  subjective 77.8) — see the ADR 0007 section above for the complete research
+  synthesis and the three judgment calls Francisco decided directly.
 
 ## Coaching layer — rules engine + briefing built, Phase 7 (2026-08-28)
 
@@ -2629,6 +2634,135 @@ corrected curve throughout. 4 new/updated tests, 516 total passing, ruff clean.
 **Real effect on the actual database**: today's HRV 47.3→49.9, RHR 24.1→36.5, overall
 readiness 58.0→61.2 — still Amber, now proportionate to the actual mild deviations
 instead of reading as alarming.
+
+## Readiness score rebuilt from a full evidence review (ADR 0007, 2026-08-30)
+
+Francisco asked a sharper follow-up to ADR 0006: the ±2 SD boundary, the 60-day
+baseline window, the fixed 8h sleep need, and the 35/25/15/15/10 weight split were
+all **inherited from the original kickoff-doc spec, written before any of this was
+built** — never themselves researched. He asked to rebuild the whole architecture
+from real evidence, "keep what's genuinely useful and scrap what's not." Four
+parallel deep-research passes (HRV/RHR baseline methodology; sleep need/debt/
+quality; TSB-in-a-same-day-score + composite weighting; the single-number paradigm
+and Oura's published science) plus direct primary-source verification (Hopkins'
+original SWC paper, two real Firstbeat white papers, Garmin's own HRV Status docs,
+several load-bearing 2025-2026 papers read directly). Full source table and evidence
+grading in the research transcript; ADR 0007 has the complete decision record.
+
+**Worth recording on its own merits**: three independent search passes (two
+subagents, one direct) all surfaced the same two fabricated "studies" — a "2024
+Frontiers in Physiology WHOOP-recovery-vs-cortisol" paper and a "2023 JSMS
+WHOOP-vs-subjective-fatigue" paper — both traced to content-farm pages laundered
+into confident prose by AI search summaries. Neither exists on PubMed, Frontiers, or
+anywhere else. Exactly the failure mode this methodology exists to catch, and it
+would have been easy to miss without independent verification.
+
+**The finding underneath every verdict**: no commercial wearable — Oura, WHOOP,
+Garmin, or any of the 10 vendors a 2025 peer-reviewed survey (Doherty et al.,
+*Translational Exercise and Biomedicine*) checked — discloses its actual composite
+formula, and none have the composite itself (as opposed to some raw sensor inputs)
+validated against a real outcome. There was never anything to reverse-engineer.
+
+**Three genuinely open judgment calls, asked directly rather than decided silently**
+(no validated answer exists in the literature for any of them):
+
+1. **HRV/RHR baseline window** — research found a 7-day rolling window (with either
+   a coefficient-of-variation dispersion measure or an individually-calibrated
+   smallest-worthwhile-change) is the design actually used in three independent
+   HRV-guided-training RCT programs that beat fixed programming — genuinely
+   better-evidenced than 60-day population SD, but the CV-specific version traces
+   substantially through one overlapping author lineage (Plews/Buchheit/Laursen),
+   including a foundational **n=2 case report** — not independent multi-lab
+   replication. **Decision: keep the 60-day baseline** (stable, already built,
+   survives a missed night), **add the SWC noise floor on top instead** — lower risk,
+   doesn't bet the whole architecture on the narrower evidence base. RHR baseline
+   methodology specifically has **no independent research base at all** (confirmed
+   gap, not an access failure) — every real study borrows HRV convention wholesale;
+   left unchanged, gap now documented rather than presented as evidenced.
+2. **Sleep-quality blend weight** — Garmin's own consumer sleep-stage classification
+   (the exact layer the quality score is built on) scored **worst of 6 real devices**
+   independently validated against lab polysomnography (κ=0.21, "fair," vs. a
+   same-generation company-reported 0.54), and the one athlete-specific study
+   comparing duration vs. architecture (Knufinke et al. 2018, n=98 elite athletes)
+   found duration significant and stage/efficiency measures **not** significant for
+   next-day performance. Full removal would be the more evidence-aligned choice, but
+   Francisco specifically asked for this signal one day earlier (2026-08-30) — asked
+   directly, he chose to **reduce it (50%→25%) rather than remove it**.
+3. **Subjective (Hooper) weight** — Saw, Main & Gastin 2016 (systematic review, 56
+   studies) found subjective wellness measures track training-load effects with
+   sensitivity/consistency *at least* equal to, arguably better than, the objective
+   measures reviewed — yet this composite had subjective weighted lowest of all five
+   components (0.10). Asked directly, Francisco chose to **raise it, to 0.25** — the
+   entirety of TSB's freed weight (below), rather than split it across all four
+   survivors, since no validated split exists either way and giving it all to the one
+   component the evidence directly supports is the simpler, more explicable rule.
+
+**Decided directly (clear evidence, no real tradeoff to weigh)**:
+
+- **TSB removed from the composite permanently**, not just zero-weighted (the
+  2026-08-30 stopgap for the training-load coverage bug, see below). Real, if recent
+  and narrow, 2025-2026 research (Kruczek, Rebelo, Gabbett & Nowak 2026, *Frontiers in
+  Physiology*: *"readiness must not be conceptualised as a unitary latent state
+  adequately captured by a single dashboard metric"*) argues same-day "readiness" and
+  multi-week "training-stress state" are different constructs that shouldn't be
+  fused — and both Garmin's Training Readiness and WHOOP's Recovery already keep them
+  separate, same structure this project's own Training page already uses. TSB stays
+  a real, computed trend elsewhere (`metrics/load.py`, the Training page, the
+  `tsb_persistently_negative` structural trigger) — never folded back into this score.
+  Confidence stated plainly as moderate, not high: the most likely authoritative
+  document either way (Bourdon et al. 2017's IJSPP consensus statement) could not be
+  read in full text (403s on four mirror attempts) — a real, acknowledged gap.
+- **Fixed 8.0h sleep need → a 7-9h band.** A single point target contradicts the
+  sleep-science consensus itself (the NSF's own adult recommendation is a 7-9h range,
+  deliberately not a point value). Any night in-band now earns full quantity credit;
+  `metrics/baselines.py: DEFAULT_NIGHTLY_NEED_HOURS` dropped 8.0→7.0 (the band's low
+  edge) for the rolling debt calculation too. The 14-day debt *window* itself is
+  untouched — genuinely unresolved either way, no study compares 7 vs 14 vs 21 vs 30
+  days for real-world debt tracking, so nothing to change toward.
+- **SWC/noise-floor gating added.** A new `HRV_RHR_NOISE_FLOOR_SD = 0.2` dead zone
+  (Hopkins' generic population SWC default) sits below ADR 0006's quadratic curve — a
+  deviation smaller than this now reads as flat-50 (no real signal), not just
+  "dampened." Real precedent, not invented: Firstbeat's own disclosed HRV Recovery
+  methodology already applies an SWC floor before scaling, and all three RCT programs
+  above use one operationally. Whether gate-then-continuous actually beats pure
+  continuous scoring has never been tested head-to-head for this purpose anywhere —
+  adopting it is well-precedented engineering practice, not a proven-superior method.
+- **Single 0-100 composite kept, not restructured.** Current research (Rebelo 2026;
+  the Kruczek/Gabbett 2026 piece above) argues for decomposed/quadrant presentation
+  over a single number; none argue for a single number beyond company marketing copy.
+  Kept anyway (it's already more transparent than any of the ten commercial scores
+  Doherty et al. surveyed, none of which disclose formulas at all) — did NOT
+  restructure the Today page's visual hierarchy as part of this pass, since that
+  page's design was already deliberately iterated on and approved twice this session
+  and this evidence, while real, is recent and narrow. Worth revisiting if it comes
+  up again, not acted on unilaterally here.
+
+**Built**: `metrics/readiness.py` — `DEFAULT_READINESS_WEIGHTS` drops `"tsb"`, raises
+`"subjective"` 0.10→0.25; `_tsb_component_score()` removed; `compute_readiness_score()`
+no longer accepts `tsb_z_score` at all (a caller that forgets to update gets a
+`TypeError`, not a silently wrong score); `_deviation_to_score()` gains the noise
+floor; `_sleep_component_score()` reframed around a 7h band floor and a new
+`SLEEP_QUALITY_BLEND_WEIGHT = 0.25`. `config/athlete.yaml: readiness_score.weight_tsb`
+removed entirely (not left at 0.0); `weight_subjective` 0.10→0.25. Both call sites
+that assemble the composite (`coach/briefing.py`, `metrics/derived_daily.py`) updated
+together — no dual-call-site drift (same discipline as ADR 0006) — `tsb_series`/
+`compute_tsb_zscore()` themselves are untouched, only the wiring that fed TSB into
+the composite is gone; the separate `tsb_persistently_negative` trigger and the
+`tsb_zscore` derived-daily metric are unaffected. Frontend: `ComponentRing.tsx`'s
+"tsb: Freshness" label mapping removed (dead now that the key never appears);
+`Today.tsx`'s existing generic `Object.entries(readiness.components)` loop needed no
+change — it just naturally stops rendering a TSB ring. Historical `derived_daily`
+recomputed for the full existing window (162 days, 2026-03-22 through today).
+
+**Verification**: 518 tests passing (up from 516), ruff clean, frontend `tsc -b`
+clean. Live API + a real Chrome-headless screenshot of the running Today page both
+confirm the rebuild against the actual database (2026-08-30): readiness 66.2/Amber,
+HRV -0.11 SD → exactly 50.0 (within the new noise floor — genuinely no signal today,
+confirmed by the real number), RHR +1.04 SD → 39.18 (matches the hand-computed test
+value), sleep 93.5 (7h29m + Garmin quality 74, blended at the new 25% weight), subjective
+77.8 (hooper_index=12, now weighted 0.25) — only Sleep and Wellness rings shown on the
+page (HRV/RHR already hidden per the 2026-08-30 simplification; TSB/Freshness now
+gone structurally, not just hidden).
 
 ## Definition of done for v1
 
