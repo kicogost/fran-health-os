@@ -95,6 +95,28 @@ export function TrainingPage() {
         </div>
       )}
 
+      {data.has_load_data && data.is_stale && (
+        <div className={`${CARD_CLASS} p-5 border-[var(--band-amber)]/30`}>
+          <div className="flex items-start gap-2">
+            <TriangleAlert
+              className="h-4 w-4 text-[var(--band-amber)] mt-0.5 shrink-0"
+              strokeWidth={2.25}
+            />
+            <p className="text-sm text-foreground">
+              These charts are running on stale training-load data — the most recent day with a
+              real load number is <strong>{data.days_stale} day(s) ago</strong>. That&apos;s not a
+              rest streak: your Garmin watch (Forerunner 165) doesn&apos;t report a{" "}
+              <code>training_load</code> number for activities at all, and Strava&apos;s only has
+              it for a handful of old runs (pre-June 2026). Bike rides, BJJ recorded on the watch,
+              and strength sessions currently contribute nothing here unless logged manually via{" "}
+              <code>log_bjj.py</code> — that&apos;s why they&apos;re missing from the chart below,
+              not a display bug. Read the numbers as &quot;what the mechanism does with the load
+              data that exists,&quot; not a current picture of your training.
+            </p>
+          </div>
+        </div>
+      )}
+
       {data.has_load_data && (
         <>
           <div className={`${CARD_CLASS} p-4`}>
@@ -104,13 +126,34 @@ export function TrainingPage() {
                 CTL / ATL / TSB
               </p>
             </div>
+            <p className="text-xs text-muted-foreground mb-3">
+              <span className="text-[var(--band-blue)]">CTL (blue)</span> is your longer-term
+              fitness — it rises and fades slowly. <span className="text-[var(--band-red)]">
+                ATL (red)
+              </span>{" "}
+              is your recent fatigue — it reacts fast to a hard week. TSB (the shaded bars) is
+              CTL minus ATL: positive means you&apos;re fresher than usual, negative means more
+              run-down than usual.
+            </p>
             <CtlAtlTsbChart data={data.ctl_atl_tsb} />
             {data.tsb_zscore?.confidence === "full" && (
               <p className="text-xs text-muted-foreground mt-2">
                 Latest TSB z-score vs. own trailing 90-day distribution:{" "}
                 {data.tsb_zscore.z_score?.toFixed(2)}
+                {data.is_stale && " — read this with the staleness note above in mind."}
               </p>
             )}
+            {data.tsb_zscore?.confidence === "full" &&
+              Math.abs(data.tsb_zscore.z_score ?? 0) >= 2 && (
+                <p className="text-xs text-[var(--band-amber)] mt-1">
+                  A swing this large is often a data-coverage artifact, not a real fitness
+                  change: with most days having no recorded load at all, one real session
+                  landing on an otherwise-empty trailing window can spike this number on its
+                  own. This is exactly why TSB was removed from the readiness score itself
+                  (ADR 0007) — treat it as a diagnostic of the mechanism here, not a verdict on
+                  how run-down you actually are.
+                </p>
+              )}
           </div>
 
           <div className={`${CARD_CLASS} p-4`}>
@@ -120,6 +163,12 @@ export function TrainingPage() {
                 Monotony / strain (trailing 7 days)
               </p>
             </div>
+            <p className="text-xs text-muted-foreground mb-3">
+              Monotony is how same-y your daily load has been this week (high = you did roughly
+              the same amount every day, no easy/hard variation). Strain is weekly load ×
+              monotony — two weeks with identical total volume can feel very different in
+              recovery terms if one of them was more repetitive.
+            </p>
             {!mono || mono.confidence === "insufficient_data" ? (
               <p className="text-sm text-muted-foreground">Not enough days of load data yet (need 7).</p>
             ) : mono.confidence === "undefined_zero_variance" ? (
@@ -143,6 +192,12 @@ export function TrainingPage() {
           <div className={`${CARD_CLASS} p-4`}>
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
               Load by day and sport
+            </p>
+            <p className="text-xs text-muted-foreground mb-3">
+              Only counts sessions with a recorded load number — right now that&apos;s BJJ
+              (logged manually) plus a handful of old Strava runs. Bike rides and Garmin-recorded
+              BJJ/strength sessions don&apos;t have one on this watch yet, so they won&apos;t
+              appear here even on days you trained.
             </p>
             {sportData.length === 0 ? (
               <p className="text-sm text-muted-foreground">

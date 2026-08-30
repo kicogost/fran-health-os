@@ -31,6 +31,29 @@ DEFAULT_CTL_TAU_DAYS = 42.0  # "fitness", slow to build, slow to fade
 DEFAULT_ATL_TAU_DAYS = 7.0  # "fatigue", fast to build, fast to fade
 MONOTONY_FLAG = 2.0
 
+# Matches sync.py's own trailing-window granularity. Originally private to
+# metrics/derived_daily.py (built 2026-08-28 alongside that module's own
+# honesty note above) -- promoted here, public, 2026-08-30 so the LIVE
+# Training page (api/training.py) can carry the same "this load series is
+# stale" read the persisted derived_daily rows already had, instead of a
+# second, un-synced copy of the same threshold living in two places.
+STALE_LOAD_THRESHOLD_DAYS = 3
+
+
+def load_staleness(last_series_date: str | None, as_of_date: str) -> tuple[bool, int]:
+    """`(is_stale, days_stale)` for a date-sorted load series's last real
+    date compared to `as_of_date` -- see this module's own "zero is a real
+    value" note above for why a stale series isn't silently padded with
+    invented zeros instead of being flagged. `last_series_date is None`
+    (no load data at all) is NOT stale in this function's sense -- that's
+    "no data," a different, already-handled case (`has_load_data`/
+    `insufficient_data`), not "old data."
+    """
+    if last_series_date is None:
+        return False, 0
+    days_stale = (date.fromisoformat(as_of_date) - date.fromisoformat(last_series_date)).days
+    return days_stale >= STALE_LOAD_THRESHOLD_DAYS, days_stale
+
 
 def build_daily_load_series(
     activity_loads: list[tuple[str, float]],

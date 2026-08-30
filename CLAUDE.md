@@ -2764,6 +2764,70 @@ value), sleep 93.5 (7h29m + Garmin quality 74, blended at the new 25% weight), s
 page (HRV/RHR already hidden per the 2026-08-30 simplification; TSB/Freshness now
 gone structurally, not just hidden).
 
+## Training page made honest + a real BJJ/sport-chart bug fixed (2026-08-30)
+
+Francisco looked at the Training page and said plainly: "I still don't know what
+the hell this means, and in the bar charts, why don't my bike rides show up?" Two
+real, distinct problems, not one:
+
+1. **A real bug**: `_load_by_sport()` (`api/training.py`) only ever read
+   `activities.training_load` — it never included `bjj_sessions.computed_load` at
+   all, even though the CTL/ATL/TSB chart and the "weekly load: 720" stat directly
+   above it on the SAME page already do (via `build_daily_load_series()`, which
+   merges both). So the page was silently disagreeing with itself: the summary
+   numbers included Francisco's first real BJJ log, the sport breakdown chart
+   below them didn't. Fixed by unioning BJJ sessions into the sport breakdown
+   under `sport="bjj"`, scaled by the same calibration factor the CTL/ATL series
+   already uses.
+2. **Bike rides genuinely don't show up, and that's real, not a bug**: confirmed
+   directly against the account (already documented earlier this project, re-
+   confirmed here) — `activities.training_load` is NULL for every bike ride, every
+   Garmin-recorded BJJ/strength session, and effectively everything except 9 old
+   Strava runs (pre-June 2026) and now manually-logged BJJ. Garmin's Forerunner
+   165 simply doesn't report a `training_load` number for activities at all (same
+   device-tier gap already found for Training Readiness). This can't be fixed by
+   a chart change — there's no number to plot.
+
+**A second, narrower honesty gap, found while fixing the bug above**:
+`has_load_data` was all-or-nothing — Francisco's first real BJJ log was enough to
+flip it `True` and render the full charts with zero caveat, even though
+`training_load` coverage is still ~2.5 months stale for everything else. Added
+`is_stale`/`days_stale` (via a newly-public `metrics/load.py: load_staleness()` —
+promoted out of `metrics/derived_daily.py`'s private `_staleness()` so the LIVE
+Training page shares the exact same staleness read the persisted `derived_daily`
+rows already used, rather than a second, un-synced copy of the same threshold) —
+an amber banner now explains plainly when the load series has gone stale, and
+why (the same hardware/coverage gap above), not just that a number changed.
+
+**Real, permanent (not staleness-gated) caveat added too**: the TSB z-score
+(-3.08 the day this was found) is exactly the same coverage-gap artifact
+documented earlier this session under "Real bugs found comparing the dashboard
+against Francisco's actual Garmin app" — one real load value landing on an
+otherwise near-empty 90-day window spikes the z-score regardless of whether the
+data is technically "fresh." A standing amber note now appears whenever
+`|z_score| >= 2` explaining this directly and pointing at ADR 0007 (which removed
+TSB from the readiness composite for exactly this reason) — this is a real,
+recurring risk with this account's data shape, not a one-off.
+
+**Plain-language explanations added to every section** (the "I don't know what
+this means" half) — CTL = slow-building fitness trend, ATL = fast-reacting
+fatigue, TSB = CTL−ATL (freshness); Monotony = how same-y the week's daily load
+has been, Strain = weekly load × monotony; and an unconditional note on the sport
+chart itself naming exactly which sports currently have a load number and which
+don't, so the "why are my bike rides missing" question is answered on the page
+itself, not just in chat.
+
+`metrics/load.py` gains `STALE_LOAD_THRESHOLD_DAYS`/`load_staleness()` (public,
+was private to `derived_daily.py`); `api/training.py: build_training_payload()`
+now takes an explicit `as_of_date` (same convention as
+`coach.briefing.compute_daily_plan()`) — `api/main.py`'s `/api/training` route
+resolves it from `MAX(date) FROM daily_metrics`, same pattern `/api/today` already
+uses. 4 new/updated tests (BJJ-inclusion, calibration scaling, fresh-vs-stale),
+522 tests total, ruff clean, frontend `tsc -b` clean. Verified against the real
+database and a live screenshot: the sport chart now shows a real green BJJ bar
+(2026-08-28, load 720) alongside the old blue Strava-run bars, and the amber
+data-coverage-artifact note renders correctly under the -3.08 TSB z-score.
+
 ## Definition of done for v1
 
 One command each morning: syncs Garmin + Strava, recomputes everything, prints a

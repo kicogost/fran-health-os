@@ -6,6 +6,7 @@ this machine).
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ from health_os.api.today import build_today_payload
 from health_os.api.training import build_training_payload
 from health_os.api.trends import ALLOWED_WINDOW_DAYS, build_trends_payload
 from health_os.core import db
+from health_os.core.timezones import to_local_date
 from health_os.metrics.correlations import (
     build_daily_metrics_correlation_panel,
     correlation_result_to_dict,
@@ -84,7 +86,13 @@ def get_trends(window_days: int = 90) -> dict[str, Any]:
 def get_training() -> dict[str, Any]:
     conn = db.init_db()
     try:
-        return build_training_payload(conn, _load_config())
+        # Same "latest daily_metrics date" convention as /api/today -- used
+        # here only to measure load-data staleness against, not to bound
+        # any query (build_training_payload's own queries are unbounded by
+        # design, same as before this param was added).
+        row = conn.execute("SELECT MAX(date) AS d FROM daily_metrics").fetchone()
+        as_of_date = row["d"] if row and row["d"] else to_local_date(datetime.now(UTC))
+        return build_training_payload(conn, _load_config(), as_of_date)
     finally:
         conn.close()
 

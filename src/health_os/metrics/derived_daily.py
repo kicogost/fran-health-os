@@ -31,18 +31,20 @@ NOT paper over that by padding with assumed zeros (an untracked training
 day is not the same as a genuine rest day, and inventing that distinction
 away would be exactly the kind of false precision design principle 6 warns
 against). Instead, when a series' last real date is more than
-`STALE_LOAD_THRESHOLD_DAYS` before `as_of_date`, the affected rows carry
-`confidence="stale"` and `inputs_json` records how many days stale, so a
-dashboard reading these rows can't mistake a stale carried-forward number
-for a fresh one. The same treatment applies to the weight/EWMA metrics for
-the identical reason (a gap in weigh-ins isn't a gap in load, but the
-principle — don't silently present old data as current — is the same).
+`load_metrics.STALE_LOAD_THRESHOLD_DAYS` before `as_of_date` (checked via
+`load_metrics.load_staleness()` — promoted out of this module 2026-08-30 so
+the LIVE Training page can share the exact same staleness read instead of a
+second un-synced copy), the affected rows carry `confidence="stale"` and
+`inputs_json` records how many days stale, so a dashboard reading these
+rows can't mistake a stale carried-forward number for a fresh one. The same
+treatment applies to the weight/EWMA metrics for the identical reason (a
+gap in weigh-ins isn't a gap in load, but the principle — don't silently
+present old data as current — is the same).
 """
 
 from __future__ import annotations
 
 import sqlite3
-from datetime import date
 from typing import Any
 
 from health_os.core import db
@@ -50,8 +52,6 @@ from health_os.core.models import DerivedMetric
 from health_os.metrics import baselines, body_comp
 from health_os.metrics import load as load_metrics
 from health_os.metrics import readiness as readiness_metrics
-
-STALE_LOAD_THRESHOLD_DAYS = 3  # matches sync.py's own trailing-window granularity
 
 
 def _rows_to_tuples(rows: list[sqlite3.Row], value_col: str) -> list[tuple[str, float]]:
@@ -86,17 +86,6 @@ def _fetch_load_series(
     return load_metrics.build_daily_load_series(
         activity_loads, bjj_loads, bjj_calibration_factor=bjj_calibration_factor
     )
-
-
-def _staleness(last_series_date: str | None, as_of_date: str) -> tuple[bool, int]:
-    """`(is_stale, days_stale)` for a date-sorted series's last real date
-    compared to `as_of_date` — see module docstring's CTL/ATL/TSB honesty
-    note for why this isn't silently padded away instead.
-    """
-    if last_series_date is None:
-        return False, 0
-    days_stale = (date.fromisoformat(as_of_date) - date.fromisoformat(last_series_date)).days
-    return days_stale >= STALE_LOAD_THRESHOLD_DAYS, days_stale
 
 
 def _metric(
@@ -190,7 +179,7 @@ def _load_based_metrics(
             for name in ("ctl", "atl", "tsb", "monotony", "strain")
         ]
 
-    is_stale, days_stale = _staleness(load_series[-1][0], as_of_date)
+    is_stale, days_stale = load_metrics.load_staleness(load_series[-1][0], as_of_date)
     stale_inputs = (
         {"last_real_data_date": load_series[-1][0], "days_stale": days_stale} if is_stale else None
     )
@@ -258,7 +247,9 @@ def _tsb_series(load_series: list[tuple[str, float]]) -> list[tuple[str, float]]
 def _tsb_zscore_metric(load_series: list[tuple[str, float]], as_of_date: str) -> DerivedMetric:
     tsb_series = _tsb_series(load_series)
     result = load_metrics.compute_tsb_zscore(tsb_series)
-    is_stale, days_stale = _staleness(tsb_series[-1][0] if tsb_series else None, as_of_date)
+    is_stale, days_stale = load_metrics.load_staleness(
+        tsb_series[-1][0] if tsb_series else None, as_of_date
+    )
     confidence = "stale" if (is_stale and result["confidence"] == "full") else result["confidence"]
     return _metric(
         as_of_date,
@@ -282,7 +273,7 @@ def _weight_metrics(daily_rows: list[sqlite3.Row], as_of_date: str) -> list[Deri
 
     ewma_series = body_comp.compute_weight_ewma(weight_obs)
     ewma_date, ewma_value = ewma_series[-1]
-    is_stale, days_stale = _staleness(ewma_date, as_of_date)
+    is_stale, days_stale = load_metrics.load_staleness(ewma_date, as_of_date)
     ewma_confidence = "stale" if is_stale else "full"
 
     trend = body_comp.weight_trend_ols(weight_obs)
