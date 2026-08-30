@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { TriangleAlert, Trophy } from "lucide-react"
 import { ApiError, fetchCompPrep } from "@/lib/api"
-import { CARD_CLASS } from "@/lib/styles"
+import { CARD_CLASS, CARD_CLASS_FLAT } from "@/lib/styles"
 import type { CompPrepPayload } from "@/types/compPrep"
 import { StatCard } from "@/components/today/StatCard"
 import { WeightTrajectoryChart } from "@/components/charts/WeightTrajectoryChart"
@@ -103,7 +103,7 @@ export function CompPrepPage() {
             </p>
           )}
 
-          <div className={`${CARD_CLASS} p-4`}>
+          <div className={`${CARD_CLASS_FLAT} p-4`}>
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
               Weight trajectory vs. required path
             </p>

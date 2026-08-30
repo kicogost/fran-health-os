@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { Activity, Gauge, HeartPulse, Moon, Scale, Search, TriangleAlert } from "lucide-react"
 import { ApiError, fetchCorrelations, fetchTrends } from "@/lib/api"
-import { CARD_CLASS } from "@/lib/styles"
+import { CARD_CLASS, CARD_CLASS_FLAT } from "@/lib/styles"
 import type { CorrelationResult, TrendInsight, TrendsPayload } from "@/types/trends"
 import { TrendChart } from "@/components/charts/TrendChart"
 import { StackedBarChart } from "@/components/charts/StackedBarChart"
@@ -237,7 +237,7 @@ function ChartCard({
   children: React.ReactNode
 }) {
   return (
-    <div className={`${CARD_CLASS} p-4`}>
+    <div className={`${CARD_CLASS_FLAT} p-4`}>
       <div className="flex items-center gap-2 mb-3">
         <Icon className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={2} />
         <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">

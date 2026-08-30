@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react"
-import { CARD_CLASS } from "@/lib/styles"
+import { CARD_CLASS_FLAT } from "@/lib/styles"
 
 interface StatCardProps {
   icon: LucideIcon
@@ -17,14 +17,14 @@ interface StatCardProps {
  */
 export function StatCard({ icon: Icon, label, value, caption, children }: StatCardProps) {
   return (
-    <div className={`${CARD_CLASS} p-4 min-w-0`}>
+    <div className={`${CARD_CLASS_FLAT} p-4 min-w-0`}>
       <div className="flex items-center gap-2 mb-2">
         <Icon className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={2} />
         <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
           {label}
         </p>
       </div>
-      <p className="text-2xl font-semibold tabular-nums text-foreground">{value}</p>
+      <p className="text-2xl font-semibold tabular-nums tracking-tight text-foreground">{value}</p>
       {caption && <p className="text-sm text-muted-foreground mt-1">{caption}</p>}
       {children}
     </div>

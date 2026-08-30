@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { AlertCircle, CheckCircle2, Clock, Database, Stethoscope } from "lucide-react"
 import { ApiError, fetchDataHealth } from "@/lib/api"
-import { CARD_CLASS } from "@/lib/styles"
+import { CARD_CLASS, CARD_CLASS_FLAT } from "@/lib/styles"
 import type { DataHealthPayload } from "@/types/dataHealth"
 
 export function DataHealthPage() {
@@ -44,7 +44,7 @@ export function DataHealthPage() {
         <h1 className="text-2xl font-semibold text-foreground tracking-tight">Data Health</h1>
       </div>
 
-      <div className={`${CARD_CLASS} p-4`}>
+      <div className={`${CARD_CLASS_FLAT} p-4`}>
         <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
           Freshness
         </p>
@@ -68,7 +68,7 @@ export function DataHealthPage() {
         </div>
       </div>
 
-      <div className={`${CARD_CLASS} p-4`}>
+      <div className={`${CARD_CLASS_FLAT} p-4`}>
         <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
           Missing days (trailing {data.missing_days_window})
         </p>
@@ -89,7 +89,7 @@ export function DataHealthPage() {
         )}
       </div>
 
-      <div className={`${CARD_CLASS} p-4`}>
+      <div className={`${CARD_CLASS_FLAT} p-4`}>
         <div className="flex items-center gap-2 mb-3">
           <Database className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={2} />
           <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -133,7 +133,7 @@ export function DataHealthPage() {
         )}
       </div>
 
-      <div className={`${CARD_CLASS} p-4`}>
+      <div className={`${CARD_CLASS_FLAT} p-4`}>
         <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
           Recent ingest runs
         </p>

@@ -3009,6 +3009,73 @@ literal strings, so nothing broke; verified via a live CLI run and a
 Chrome-headless screenshot of the real Today page (both structural warnings
 render in plain English, matching each other exactly).
 
+## Card-treatment split, borrowed from Spotify/Linear (2026-08-30)
+
+Francisco asked what the frontend was built on "so i can find a repo that
+gives you amazing front end design skills," then came back with his own
+analysis of three real systems from `alexpate/awesome-design-systems`
+(Spotify, Linear, Nike — full per-system `DESIGN.md`/`DESIGN (1).md`/
+`DESIGN (2).md` analyses, generated externally, dropped into the repo root
+and read directly) and a recommendation: Spotify's dark shell for daily
+in-app use, Linear's restraint for data-dense screens, Nike's photography/
+type scale for marketing and first-run — then asked which framing (performance
+vs. wellness app) actually fits before committing, and said to use the docs
+"however you best see fit."
+
+**Judgment calls made, stated plainly rather than silently decided:**
+- **This is a performance app, not a wellness app** — the whole project is
+  built around a BJJ competition date, a weight-division cut, and a
+  readiness/training-load score; dark, high-contrast, data-forward is
+  already the right direction, confirmed rather than reopened.
+- **Nike doesn't get applied at all.** Its entire system is a photography-
+  driven retail/marketing shell (campaign heroes, PDP, filter sidebars) —
+  this app has no marketing page, no onboarding funnel, and never will
+  (design principle 1: local-first, single user, opens directly to Today).
+  Forcing Nike's language in here would be decoration with no real surface
+  to serve, exactly the "chrome for chrome's sake" both Spotify's and Nike's
+  own docs explicitly warn against.
+- **Colors were NOT re-touched.** The Carbon g100 palette already went
+  through two real iteration rounds and Francisco's explicit approval
+  earlier this session — worth naming directly: a Linear/Vercel-toned
+  palette was tried and REPLACED by Carbon in that exact round (see
+  "Dashboard visual redesign, round 2"), so reintroducing Linear's literal
+  hex tokens now would re-litigate an already-settled call. What's borrowed
+  here is Linear's and Spotify's *structural* principles (shadow-vs-flat,
+  letter-spacing, card role), not their palettes — the readiness-band
+  colors stay exactly what they are, since they're semantically meaningful
+  (green/amber/red/blue = a real state), not decorative, matching the
+  "functional never decorative" rule both source docs state explicitly for
+  their own single accents.
+
+**What actually changed**: a genuine tension exists between the two systems
+Francisco pointed at for the in-app/data split — Spotify's own docs insist
+dark UI needs HEAVY shadows to read depth at all, while Linear's docs
+explicitly resist drop shadows in favor of a flat hairline-bordered surface
+ladder. Rather than pick one for the whole app, the split follows Francisco's
+own framing directly: **insight/hero cards** (the plain-language takeaways
+just built — Trends' 4 insight cards, Training's Freshness/Fitness-trend/
+This-week cards, Today's rings) keep the existing shadow+hover-lift
+treatment (`CARD_CLASS`) — these are exactly Spotify's "content you open
+four times a day" surface. **Chart and raw-number cards** (every chart on
+Trends/Training, Comp Prep's weight-trajectory chart, all of Data Health)
+move to a new flat, hairline-only `CARD_CLASS_FLAT` (same border/radius/
+background tokens as before — no shadow, no hover-lift) — Linear's "workout
+logs, progress charts, and PR history need restraint more than personality."
+Big standalone numbers (Today's readiness/strain rings, Training's weekly
+stat numbers, the shared `StatCard` used on Comp Prep) gained `tracking-
+tight`, a small, low-risk nod to both systems' negative-letter-spacing
+display type — page `<h1>` titles already had this, now the big numbers
+match.
+
+No backend changes; frontend `tsc -b` clean, no new tests needed (a pure
+CSS-class/visual change, consistent with this project's "dashboard/frontend
+can go untested" working agreement). Verified via Chrome-headless
+screenshots of all four affected pages (Today, Training, Trends, Data
+Health) against the real, running app — the insight cards visibly keep
+their depth while the chart/log cards sit flatter and quieter, and Data
+Health's dedupe-log table (34 real merged activities, from the earlier
+dedup-bug fixes) renders cleanly in the new flat treatment.
+
 ## Definition of done for v1
 
 One command each morning: syncs Garmin + Strava, recomputes everything, prints a

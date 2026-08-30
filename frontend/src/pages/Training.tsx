@@ -18,7 +18,7 @@ import {
   type LucideIcon,
 } from "lucide-react"
 import { ApiError, fetchTraining } from "@/lib/api"
-import { CARD_CLASS } from "@/lib/styles"
+import { CARD_CLASS, CARD_CLASS_FLAT } from "@/lib/styles"
 import type { TrainingInsight, TrainingPayload } from "@/types/training"
 import { CtlAtlTsbChart } from "@/components/charts/CtlAtlTsbChart"
 import { StackedBarChart } from "@/components/charts/StackedBarChart"
@@ -163,7 +163,7 @@ export function TrainingPage() {
 
           <WeekSummaryCard summary={data.weekly_summary} consistency={data.insights.consistency} />
 
-          <div className={`${CARD_CLASS} p-4`}>
+          <div className={`${CARD_CLASS_FLAT} p-4`}>
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1">
               Effort over time, by sport
             </p>
@@ -217,7 +217,7 @@ export function TrainingPage() {
       </div>
 
       {data.has_load_data && (
-        <div className={`${CARD_CLASS} p-4`}>
+        <div className={`${CARD_CLASS_FLAT} p-4`}>
           <button
             type="button"
             onClick={() => setShowTechnical((v) => !v)}
@@ -322,7 +322,7 @@ function WeekSummaryCard({
       </p>
       <div className="grid grid-cols-2 gap-4 mb-4">
         <div>
-          <p className="text-2xl font-semibold tabular-nums text-foreground">
+          <p className="text-2xl font-semibold tabular-nums tracking-tight text-foreground">
             {summary.session_count}
           </p>
           <p className="text-xs text-muted-foreground">
@@ -330,7 +330,7 @@ function WeekSummaryCard({
           </p>
         </div>
         <div>
-          <p className="text-2xl font-semibold tabular-nums text-foreground">
+          <p className="text-2xl font-semibold tabular-nums tracking-tight text-foreground">
             {formatHours(summary.total_minutes)}
           </p>
           <p className="text-xs text-muted-foreground">total time trained</p>
@@ -365,7 +365,7 @@ function Stat({ label, value, flag }: { label: string; value: string; flag?: boo
   return (
     <div>
       <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="text-xl font-semibold tabular-nums text-foreground">
+      <p className="text-xl font-semibold tabular-nums tracking-tight text-foreground">
         {value}
         {flag && <span className="text-[var(--band-amber)] text-sm ml-1">high</span>}
       </p>

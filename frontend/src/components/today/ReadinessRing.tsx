@@ -69,7 +69,7 @@ export function ReadinessRing({ score, band, size = 220 }: ReadinessRingProps) {
         )}
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
-        <span className="text-5xl font-semibold tabular-nums text-foreground">
+        <span className="text-5xl font-semibold tabular-nums tracking-tight text-foreground">
           {animated !== null ? Math.round(animated) : "–"}
         </span>
         <span className="text-xs font-medium uppercase tracking-wider" style={{ color }}>

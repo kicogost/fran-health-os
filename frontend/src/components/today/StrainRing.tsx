@@ -76,7 +76,7 @@ export function StrainRing({ strain, zone, size = 220 }: StrainRingProps) {
         )}
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
-        <span className="text-5xl font-semibold tabular-nums text-foreground">
+        <span className="text-5xl font-semibold tabular-nums tracking-tight text-foreground">
           {animated !== null ? animated.toFixed(1) : "–"}
         </span>
         <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
