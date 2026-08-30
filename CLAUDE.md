@@ -838,7 +838,7 @@ data/
 src/health_os/
   ingest/               strava_bulk.py, apple_health.py (historical XML), garmin_bulk.py (historical), garmin.py (Phase 6 live sync, ADR 0004), health_auto_export.py (Phase 6 live weight sync — different JSON format from apple_health.py, not the same pipeline), common.py (shared helpers) — bjj_manual.py not needed (log_bjj.py writes directly)
   core/                 db.py, timezones.py, dedupe.py (activities cross-source dedup, live), schema.sql (snapshot, v5), migrations/000{1,2,3,4,5}_*.sql (source of truth), models.py
-  metrics/              body_comp.py (weight trend + comp countdown), load.py (monotony/strain, CTL/ATL/TSB — no ACWR, ADR 0003), baselines.py (HRV/RHR baselines, sleep debt), readiness.py (0-100 composite), correlations.py (Spearman correlation engine, MIN_N=30 + Bonferroni-corrected), strain.py (WHOOP-inspired 0-21 Daily Strain — TRIMP + Foster, saturating scale), bjj_laps.py (HR-based sparring/rest lap classification), derived_daily.py (Phase 4 persistence — writes all of the above into `derived_daily`, with an honest "stale" confidence for CTL/ATL/TSB/weight when the underlying series doesn't reach today)
+  metrics/              body_comp.py (weight trend + comp countdown), load.py (pure monotony/strain + CTL/ATL/TSB math — no ACWR, ADR 0003; no longer the training-load SOURCE for these, ADR 0008), baselines.py (HRV/RHR baselines, sleep debt), readiness.py (0-100 composite), correlations.py (Spearman correlation engine, MIN_N=30 + Bonferroni-corrected), strain.py (WHOOP-inspired 0-21 Daily Strain — TRIMP + Foster, saturating scale; ADR 0008 — `build_activity_based_load_series()`/`build_load_by_sport_rows()` are now the real training-load SOURCE for CTL/ATL/TSB/monotony/strain everywhere, replacing `activities.training_load`), bjj_laps.py (HR-based sparring/rest lap classification), derived_daily.py (Phase 4 persistence — writes all of the above into `derived_daily`; "stale" confidence still real for weight/EWMA, no longer reachable for CTL/ATL/TSB/monotony/strain since ADR 0008's series always computes through to today)
   coach/                rules.py (readiness bands, session guidance, structural triggers, taper + deload — see "Taper + deload system"), briefing.py, weekly_retro.py
   dashboard/             app.py (Streamlit entrypoint, st.navigation), theme.py (dark theme + chart helpers), data.py (cached DB/config access), views/{today,trends,training,comp_prep,log,data_health}.py — stays in active use until the React migration (ADR 0005) is fully done
   api/                   main.py (FastAPI app, local-only, all 6 pages' routes), today.py/trends.py/training.py/comp_prep.py/data_health.py (one real read-only assembly fn per page), log.py (the one page with real POST mutation endpoints — reuses core/models.py's dataclasses for validation, never a second copy) — ADR 0005 frontend migration, 2026-08-28
@@ -2827,6 +2827,94 @@ uses. 4 new/updated tests (BJJ-inclusion, calibration scaling, fresh-vs-stale),
 database and a live screenshot: the sport chart now shows a real green BJJ bar
 (2026-08-28, load 720) alongside the old blue Strava-run bars, and the amber
 data-coverage-artifact note renders correctly under the -3.08 TSB z-score.
+
+## Training load rebuilt on TRIMP — real bikes, a real dedup bug, ADR 0008
+(2026-08-30)
+
+Same day, Francisco pushed back on the fix above: "but i actually want it to
+be useful! Why can't you show the bikes, and once I start measuring my BJJ
+sessions, the sessions as well?" Right question — the previous fix made the
+page honest about its input being sparse, but never asked whether a richer
+input already existed. It did: `metrics/strain.py`'s Daily Strain ring
+already computes a real per-day load (TRIMP wherever `avg_hr` exists,
+Foster's method for BJJ) — checked directly against the real database
+before touching anything: all 17 real bike rides on this account (May-Aug
+2026) have 100% `avg_hr` coverage, they just never had Garmin/Strava's own
+`training_load` figure. Full reasoning in
+[ADR 0008](docs/decisions/0008-trimp-based-training-load.md); summary here.
+
+**Two real, independently-confirmed bugs found and fixed before the
+migration could ship correctly** (both would have silently corrupted the
+new numbers if missed):
+
+1. **Cross-source dedup gap, `core/dedupe.py`** — 8 real Strava/Garmin ride
+   pairs (auto-uploads of the same physical ride) never merged: start times
+   differ by exactly 2 hours. Verified this is a genuine cross-source
+   discrepancy, not an ingestion bug on this project's side — pulled the
+   raw Strava CSV row directly ("May 23, 2026, 8:25:24 AM" local) and called
+   the live Garmin API directly for the same activity (`startTimeGMT:
+   2026-05-23T08:25:24`, `startTimeLocal: 2026-05-23T10:25:24` — internally
+   consistent with real Madrid CEST, i.e. Garmin's side is correct; Strava's
+   raw local-time value is 2 hours off for reasons outside this codebase).
+   `avg_hr` is identical (within 1bpm rounding) across every pair — added a
+   second matching tier (same local date + same sport family + near-exact
+   `avg_hr`, generous time window) that catches these even when start time
+   and duration don't line up. Real, caught-in-testing detail: first built
+   with exact `avg_hr` equality, which still missed one pair (2026-08-15,
+   153 vs. 152) — widened to +-1bpm once that specific miss showed up as a
+   visibly doubled load number on the Training page.
+2. **`_SPORT_FAMILIES` gap, same file** — `strength_training` (a real
+   Garmin label) had no family mapping, so a 2026-08-24 Strava
+   "weight_training" + Garmin "strength_training" pair (identical gym
+   session, avg_hr 116 both) never even reached the matching logic. Added,
+   plus `trail_running`/`treadmill_running` -> running and `lap_swimming`
+   -> swimming, the same real gap pattern for labels not previously seen.
+
+Ran `dedupe_activities()` against the real database three times as these
+were found (18, then 6, then 6 more merges — 567 -> 538 activities total),
+inspecting the actual merged clusters each time rather than trusting the
+count alone.
+
+**The migration itself**: `metrics/strain.py` gained `build_activity_based_
+load_series()` and `build_load_by_sport_rows()`, both walking every day from
+the earliest relevant date (first real `resting_hr` OR first BJJ log,
+whichever is earlier — Foster's method needs no HR at all, a real gap
+caught by a failing test before this shipped) through `as_of_date`, reusing
+a newly-extracted `_gather_day_components()` — the exact same per-day logic
+`build_daily_strain()` already used for "today," now shared rather than
+reimplemented. Wired into **four** call sites, not just the Training page:
+`api/training.py` (CTL/ATL/TSB, monotony/strain, sport breakdown),
+`coach/briefing.py` (the `tsb_persistently_negative` structural trigger),
+`metrics/derived_daily.py` (the persisted history), and `coach/
+weekly_retro.py` (the weekly TSB/monotony summary) — deliberately not
+stopping at the one page Francisco was looking at, since leaving the other
+three on the old sparse column would have created a fresh version of the
+exact inconsistency this investigation started by finding.
+
+**A structural side effect, worth naming plainly**: the old `is_stale`/
+`days_stale` mechanism (`metrics/load.py: load_staleness()`) is now
+permanently dead for CTL/ATL/TSB/monotony/strain — the new series always
+walks through to `as_of_date`, computing a real, confirmed value (including
+genuine 0.0 rest days) every time, so "the series stopped updating N days
+ago" can no longer happen. Removed from `_load_based_metrics()`/
+`_tsb_zscore_metric()` rather than left in place looking like it still
+checks something. `load_staleness()` itself stays — weight/EWMA staleness
+is a different, still-real problem (a gap in weigh-ins isn't a gap in
+training).
+
+**Real output against the actual database, 2026-08-30**: CTL/ATL/TSB now
+shows a genuine curve across the full ~5-month Garmin-era history (2026-03-21
+through today) instead of a near-flat line reacting only to 9 old runs.
+TSB z-score -2.68 (was -3.08 pre-dedup-fix, now against real data, not a
+mostly-empty window). Sport-by-day chart shows real cycling bars (e.g.
+2026-08-15: 277.7, correctly halved from 567.3 pre-fix once the duplicate
+merged) alongside running/BJJ/strength — the Training page's own caveat text
+was rewritten to stop calling large TSB swings a "data-coverage artifact"
+(no longer true) and instead note plainly that TSB has no validated
+magnitude threshold at all (ADR 0003/0007). Historical `derived_daily`
+recomputed (165 days). 539 tests passing, ruff clean, frontend `tsc -b`
+clean. Verified via the live API and a Chrome-headless screenshot of the
+running Training page.
 
 ## Definition of done for v1
 
