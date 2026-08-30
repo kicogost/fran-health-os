@@ -34,17 +34,46 @@ class TestComputeReadinessScore:
         assert result["coverage"] == pytest.approx(1.0)
 
     def test_hrv_component_direction_and_clamp(self) -> None:
-        # +2 SD (clamped) HRV alone, nothing else -> full weight on hrv,
-        # score = 50 + 25*2 = 100.
+        # +2 SD (clamped) HRV alone, nothing else -> full weight on hrv.
+        # ADR 0006's quadratic curve still reaches the exact same 0/100
+        # endpoints at the +-2 SD clamp boundary as the old linear mapping
+        # did -- only the shape BETWEEN 0 and the boundary changed.
         result = compute_readiness_score(hrv_deviation_sd=5.0)  # clamped to +2
         assert result["components"]["hrv"]["score"] == pytest.approx(100.0)
         assert result["score"] == pytest.approx(100.0)
         assert result["components"]["hrv"]["weight_used"] == pytest.approx(1.0)
 
+    def test_hrv_at_one_sd_is_dampened_not_a_quarter_of_the_range(self) -> None:
+        # ADR 0006's actual point: a routine, statistically common ~1 SD
+        # deviation (real data: ~1 day in 3) must NOT already swing the
+        # score a full quarter of the range the way the old linear mapping
+        # did (50 + 25*1 = 75). Hand-computed quadratic:
+        # 50 + 50*(1/2)**2 = 62.5.
+        result = compute_readiness_score(hrv_deviation_sd=1.0)
+        assert result["components"]["hrv"]["score"] == pytest.approx(62.5)
+
     def test_rhr_component_is_inverted_vs_hrv(self) -> None:
         # Elevated RHR (positive deviation) should REDUCE readiness, opposite of HRV.
         result = compute_readiness_score(rhr_deviation_sd=2.0)
         assert result["components"]["rhr"]["score"] == pytest.approx(0.0)
+
+    def test_rhr_at_one_sd_is_dampened_not_a_quarter_of_the_range(self) -> None:
+        # Real motivating case (2026-08-30): a 2bpm RHR blip with no
+        # sustained trend worked out to +1.04 SD and scored 24/100 under
+        # the old linear mapping -- read as a serious problem for
+        # something well within normal noise. Quadratic, inverted:
+        # 50 - 50*(1/2)**2 = 37.5.
+        result = compute_readiness_score(rhr_deviation_sd=1.0)
+        assert result["components"]["rhr"]["score"] == pytest.approx(37.5)
+
+    def test_real_2026_08_30_rhr_deviation_matches_hand_computed_value(self) -> None:
+        # The exact real deviation that prompted ADR 0006 (52bpm vs. a
+        # 50bpm/1.93bpm-SD baseline -> +1.0374553... SD). Hand-verified via
+        # a standalone script before writing this assertion: quadratic
+        # gives ~36.55, a real, meaningful drop from neutral, but nowhere
+        # near as alarming as the old linear mapping's 24.06.
+        result = compute_readiness_score(rhr_deviation_sd=1.0374553608862056)
+        assert result["components"]["rhr"]["score"] == pytest.approx(36.546, abs=0.001)
 
     def test_tsb_component_direction_and_clamp(self) -> None:
         result = compute_readiness_score(tsb_z_score=-5.0)  # clamped to -2

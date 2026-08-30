@@ -34,14 +34,70 @@ def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
 
 
+# ADR 0006: the +-2 SD "full range" boundary is from the kickoff doc's own
+# original spec ("clamped to +-2 SD") -- preserved exactly; only the SHAPE
+# of the curve between 0 and the boundary changed, from linear to quadratic.
+HRV_RHR_SD_CLAMP = 2.0
+
+
+def _deviation_to_score(deviation_sd: float, *, invert: bool = False) -> float:
+    """Maps a baseline deviation (in SD units) onto a 0-100 score via a
+    quadratic curve (ADR 0006) -- flat near 0 (an ordinary, statistically
+    routine ~1 SD deviation, which real data shows happens roughly 1 day in
+    3, only moves the score to ~37.5/62.5) and steep toward the +-2 SD
+    clamp boundary (still reaches the exact same 0/100 endpoints the
+    original linear mapping did).
+
+    Replaces a straight linear mapping (`50 + 25*clamp(x,-2,2)`) that spent
+    a full quarter of the entire score range on the very first, routine SD
+    of deviation -- real complaint, 2026-08-30: a 2bpm RHR blip with no
+    sustained trend scored a 24/100, reading as a serious problem for
+    something well within normal day-to-day noise.
+
+    Researched before choosing this shape, not guessed (ADR 0006 has the
+    full synthesis): neither WHOOP nor Garmin discloses their actual
+    formula (confirmed across official docs and a peer-reviewed cross-
+    manufacturer survey that found NONE of 14 commercial composite scores
+    disclose their weighting), and no peer-reviewed source validates any
+    specific curve shape for this exact purpose. But real evidence
+    supports THIS DIRECTION specifically: real device data shows day-to-
+    day HRV noise is genuinely small relative to real training-driven
+    shifts, and sports-science convention (Hopkins' "smallest worthwhile
+    change," applied to HRV by Plews et al.) already treats small
+    deviations as noise rather than full signal. Critically, a sigmoid
+    curve (the other common "nonlinear" shape, and what the one specific
+    formula claiming to be WHOOP's actual math uses online -- self-
+    described by its own author as an invented approximation, not a
+    reverse-engineered fact) would move the score HARDER on ordinary
+    noise than linear already does, the opposite of the goal -- verified
+    by direct calculation before deciding, not assumed from the name
+    "nonlinear." Only a power-law/quadratic-family curve delivers what was
+    actually wanted; the specific exponent (2) itself has no direct
+    literature validation and is a documented, revisable default, same
+    spirit as this project's other seed-phase numbers.
+
+    `invert=True` for RHR: elevated RHR is LESS ready, the mirror image of
+    HRV's "higher is better."
+    """
+    clamped = _clamp(deviation_sd, -HRV_RHR_SD_CLAMP, HRV_RHR_SD_CLAMP)
+    sign = -1.0 if clamped < 0 else 1.0
+    delta = sign * 50.0 * (abs(clamped) / HRV_RHR_SD_CLAMP) ** 2
+    return 50.0 - delta if invert else 50.0 + delta
+
+
 def _hrv_component_score(deviation_sd: float) -> float:
-    """Higher HRV relative to baseline = more ready. Clamped +-2 SD."""
-    return 50.0 + 25.0 * _clamp(deviation_sd, -2.0, 2.0)
+    """Higher HRV relative to baseline = more ready. Quadratic curve,
+    clamped +-2 SD (ADR 0006) -- see `_deviation_to_score()`'s docstring
+    for the full reasoning behind the shape.
+    """
+    return _deviation_to_score(deviation_sd)
 
 
 def _rhr_component_score(deviation_sd: float) -> float:
-    """Inverted vs HRV: elevated RHR relative to baseline = less ready."""
-    return 50.0 - 25.0 * _clamp(deviation_sd, -2.0, 2.0)
+    """Inverted vs HRV: elevated RHR relative to baseline = less ready.
+    Same quadratic curve as HRV (ADR 0006).
+    """
+    return _deviation_to_score(deviation_sd, invert=True)
 
 
 def _sleep_component_score(
