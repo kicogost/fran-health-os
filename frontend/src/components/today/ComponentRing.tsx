@@ -12,6 +12,8 @@ const COMPONENT_LABELS: Record<string, string> = {
 interface ComponentRingProps {
   componentKey: string
   score: number
+  displayRaw?: string | null
+  excluded?: boolean
   size?: number
 }
 
@@ -20,8 +22,25 @@ interface ComponentRingProps {
  * (lib/band.ts) so a component ring and the overall ring never disagree on
  * what "amber" looks like. Same gradient-stroke treatment as the main ring,
  * scaled down. Counts up on mount, same as ReadinessRing.
+ *
+ * The number inside the ring is always the 0-100 readiness SCORE, never the
+ * raw sensor reading -- real mix-up found 2026-08-30, "HRV 47" was
+ * reasonably read as 47ms when it was really a deviation-based score with
+ * real HRV at 90ms. `displayRaw` (e.g. "90ms") renders below the label so
+ * the actual reading is always visible, not just the abstracted score.
+ *
+ * `excluded` (weight_used === 0, e.g. TSB while its load-data coverage is
+ * known unreliable -- config/athlete.yaml) renders the ring desaturated
+ * with a dashed track and "not counted" in place of the label, so a
+ * component contributing zero weight never looks like a real, scored 0.
  */
-export function ComponentRing({ componentKey, score, size = 64 }: ComponentRingProps) {
+export function ComponentRing({
+  componentKey,
+  score,
+  displayRaw,
+  excluded = false,
+  size = 64,
+}: ComponentRingProps) {
   const animated = useCountUp(score, 180) ?? 0
   const strokeWidth = size * 0.12
   const radius = (size - strokeWidth) / 2
@@ -29,13 +48,13 @@ export function ComponentRing({ componentKey, score, size = 64 }: ComponentRingP
   const clamped = Math.max(0, Math.min(100, animated))
   const dashoffset = circumference * (1 - clamped / 100)
   const band = scoreToBand(score)
-  const color = BAND_COLORS[band]
-  const colorLight = BAND_COLORS_LIGHT[band]
+  const color = excluded ? "var(--muted-foreground)" : BAND_COLORS[band]
+  const colorLight = excluded ? "var(--muted-foreground)" : BAND_COLORS_LIGHT[band]
   const gradientId = `component-gradient-${componentKey}`
 
   return (
     <div className="flex flex-col items-center gap-1.5">
-      <div className="relative" style={{ width: size, height: size }}>
+      <div className="relative" style={{ width: size, height: size, opacity: excluded ? 0.4 : 1 }}>
         <svg width={size} height={size} className="-rotate-90">
           <defs>
             <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="100%">
@@ -50,25 +69,33 @@ export function ComponentRing({ componentKey, score, size = 64 }: ComponentRingP
             stroke="var(--border)"
             strokeWidth={strokeWidth}
             fill="none"
+            strokeDasharray={excluded ? "3 4" : undefined}
           />
-          <circle
-            cx={size / 2}
-            cy={size / 2}
-            r={radius}
-            stroke={`url(#${gradientId})`}
-            strokeWidth={strokeWidth}
-            fill="none"
-            strokeLinecap="round"
-            strokeDasharray={circumference}
-            strokeDashoffset={dashoffset}
-          />
+          {!excluded && (
+            <circle
+              cx={size / 2}
+              cy={size / 2}
+              r={radius}
+              stroke={`url(#${gradientId})`}
+              strokeWidth={strokeWidth}
+              fill="none"
+              strokeLinecap="round"
+              strokeDasharray={circumference}
+              strokeDashoffset={dashoffset}
+            />
+          )}
         </svg>
         <div className="absolute inset-0 flex items-center justify-center">
-          <span className="text-sm font-semibold tabular-nums">{Math.round(animated)}</span>
+          <span className="text-sm font-semibold tabular-nums">
+            {excluded ? "–" : Math.round(animated)}
+          </span>
         </div>
       </div>
       <span className="text-[0.7rem] text-muted-foreground">
         {COMPONENT_LABELS[componentKey] ?? componentKey}
+      </span>
+      <span className="text-[0.65rem] text-muted-foreground/70 -mt-1">
+        {excluded ? "not counted" : (displayRaw ?? " ")}
       </span>
     </div>
   )

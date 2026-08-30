@@ -265,13 +265,33 @@ training_load:
 
 readiness_score:
   # Weights for metrics.readiness.compute_readiness_score(), kickoff doc section 6.
-  # Sum to 1.0. When a component has no data for a given day (e.g. no wellness log,
-  # or insufficient HRV history), it's dropped entirely and the remaining weights
-  # are renormalized — never invented as a neutral score. See
-  # metrics/readiness.py's docstring for exactly how.
+  # Sum to 1.0 in the intended full model. When a component has no data for a
+  # given day (e.g. no wellness log, or insufficient HRV history), it's dropped
+  # entirely and the remaining weights are renormalized — never invented as a
+  # neutral score. See metrics/readiness.py's docstring for exactly how.
   weight_hrv: 0.35
   weight_sleep: 0.25
   weight_rhr: 0.15
-  weight_tsb: 0.15
+  # Temporarily 0.0, not the intended 0.15 -- real bug found 2026-08-30
+  # (Francisco compared the dashboard against his real Garmin app and the
+  # numbers didn't line up). Root cause: activities.training_load has almost
+  # zero coverage across this account's real activities (documented
+  # extensively elsewhere in CLAUDE.md), so build_daily_load_series() fills
+  # nearly every day for months with a literal 0.0 -- not because Francisco
+  # rested, but because no source ever recorded a load value for what he
+  # actually did. When his first real BJJ log (2026-08-28, computed_load=720)
+  # landed against that artificially-flat backdrop, ATL spiked from a
+  # near-zero baseline while CTL barely moved, producing TSB=-57 and a
+  # z-score of -3.08 against a trailing window that's almost entirely
+  # coverage-gap zeros, not real rest days. That's a data-coverage artifact,
+  # not a genuine freshness reading -- scored 0/100 and dragged the whole
+  # composite to RED on a day that wasn't actually that bad (verified: HRV
+  # and sleep were both close to normal). `covered_weight <= 0.0` is already
+  # handled (metrics/readiness.py), so this safely drops TSB via the same
+  # "missing = dropped, renormalize the rest" path as any other missing
+  # component, rather than crashing or silently distorting the score.
+  # Revert to 0.15 once training-load coverage/calibration is real (kickoff
+  # doc 2.4) — not before, or this exact distortion just recurs.
+  weight_tsb: 0.0
   weight_subjective: 0.10
   bjj_rpe_calibration_status: "uncalibrated — no Garmin training_load data yet"

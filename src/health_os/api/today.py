@@ -16,6 +16,49 @@ from health_os.coach import briefing
 from health_os.metrics import body_comp
 
 
+def _format_hours_minutes(total_min: float | None) -> str | None:
+    if total_min is None:
+        return None
+    hours, minutes = divmod(round(total_min), 60)
+    return f"{hours}h{minutes:02d}m"
+
+
+def _annotate_components_with_display(components: dict[str, Any], daily_row: Any) -> dict[str, Any]:
+    """Attach a plain-language `display_raw` string (the actual sensor
+    reading, not the abstracted 0-100 score or its internal SD-deviation/
+    z-score representation) to each component, plus an `excluded` flag.
+
+    Real bug found 2026-08-30: Francisco compared the dashboard's component
+    rings ("HRV 47", "RHR 24") against his real Garmin app and reasonably
+    read them as raw HRV ms / RHR bpm -- they were always the readiness
+    sub-SCORE (0-100), never the raw reading, and the raw reading was never
+    shown anywhere on this page at all. `excluded` covers the companion
+    fix (config/athlete.yaml: weight_tsb temporarily 0.0) -- a component
+    that's present but contributes zero weight needs to look visibly
+    different from a real, counted low score, not just show "0" the same
+    way a genuinely bad reading would.
+    """
+    display_raw = {
+        "hrv": f"{daily_row['hrv_overnight_ms']:.0f}ms"
+        if daily_row is not None and daily_row["hrv_overnight_ms"] is not None
+        else None,
+        "rhr": f"{daily_row['resting_hr']:.0f}bpm"
+        if daily_row is not None and daily_row["resting_hr"] is not None
+        else None,
+        "sleep": _format_hours_minutes(daily_row["sleep_total_min"])
+        if daily_row is not None
+        else None,
+    }
+    annotated: dict[str, Any] = {}
+    for key, comp in components.items():
+        annotated[key] = {
+            **comp,
+            "display_raw": display_raw.get(key),
+            "excluded": comp.get("weight_used", 1.0) == 0.0,
+        }
+    return annotated
+
+
 def build_today_payload(
     conn: sqlite3.Connection, config: dict[str, Any], today: str
 ) -> dict[str, Any]:
@@ -77,7 +120,9 @@ def build_today_payload(
             "band": plan["band"],
             "coverage": plan["score_result"]["coverage"],
             "confidence": plan["score_result"]["confidence"],
-            "components": plan["score_result"]["components"],
+            "components": _annotate_components_with_display(
+                plan["score_result"]["components"], daily_row
+            ),
         },
         "sessions": plan["sessions"],
         "structural_flags": plan["structural_flags"],

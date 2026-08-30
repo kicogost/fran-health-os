@@ -6,7 +6,11 @@ from __future__ import annotations
 
 import sqlite3
 
-from health_os.api.today import build_today_payload
+from health_os.api.today import (
+    _annotate_components_with_display,
+    _format_hours_minutes,
+    build_today_payload,
+)
 from health_os.core import db as db_module
 from health_os.core.models import DailyMetric
 
@@ -93,3 +97,108 @@ class TestBuildTodayPayload:
         payload = build_today_payload(conn, _CONFIG, "2026-08-24")
         assert isinstance(payload["readiness"]["components"], dict)
         assert isinstance(payload["structural_flags"], dict)
+
+    def test_readiness_components_carry_display_raw_end_to_end(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # Integration-level version of TestAnnotateComponentsWithDisplay --
+        # confirms the wiring through the real route function, not just the
+        # helper in isolation. Needs real seeded history, not one day: with
+        # too little history `components` comes back empty and an
+        # `if "hrv" in components` check would pass vacuously without
+        # proving anything (caught while writing this). HRV specifically
+        # needs 60+ days (its "seed" phase, 21-59 days, never populates
+        # deviation_sd at all -- only the full 60-day computed baseline
+        # does, per metrics/baselines.py), unlike RHR which has no such
+        # seed phase and reaches full confidence at 21.
+        from datetime import date, timedelta
+
+        target = date(2026, 8, 24)
+        for days_back in range(60, 0, -1):  # 60 consecutive days before the target, no gap
+            d = (target - timedelta(days=days_back)).isoformat()
+            db_module.upsert(
+                conn,
+                "daily_metrics",
+                DailyMetric(date=d, hrv_overnight_ms=88.0, resting_hr=50.0).to_row(),
+                ["date"],
+            )
+        db_module.upsert(
+            conn,
+            "daily_metrics",
+            DailyMetric(date="2026-08-24", hrv_overnight_ms=90.0, resting_hr=52.0).to_row(),
+            ["date"],
+        )
+
+        payload = build_today_payload(conn, _CONFIG, "2026-08-24")
+        components = payload["readiness"]["components"]
+        assert "hrv" in components and "rhr" in components  # sanity: not a vacuous check
+        assert components["hrv"]["display_raw"] == "90ms"
+        assert components["rhr"]["display_raw"] == "52bpm"
+
+
+class TestFormatHoursMinutes:
+    def test_formats_with_leading_zero_minutes(self) -> None:
+        assert _format_hours_minutes(449) == "7h29m"
+        assert _format_hours_minutes(360) == "6h00m"
+
+    def test_none_stays_none(self) -> None:
+        assert _format_hours_minutes(None) is None
+
+
+class TestAnnotateComponentsWithDisplay:
+    """Real bug found 2026-08-30: the dashboard's component rings ("HRV 47",
+    "RHR 24") are the 0-100 readiness sub-score, never the raw sensor
+    reading -- Francisco reasonably read them as raw HRV ms / RHR bpm since
+    nothing on the page ever showed the actual number. These tests lock in
+    the fix: a real, human-readable raw value alongside the score.
+    """
+
+    def _daily_row(self, conn: sqlite3.Connection, date: str, **fields) -> sqlite3.Row:
+        db_module.upsert(conn, "daily_metrics", DailyMetric(date=date, **fields).to_row(), ["date"])
+        return conn.execute("SELECT * FROM daily_metrics WHERE date = ?", (date,)).fetchone()
+
+    def test_hrv_gets_a_real_ms_display(self, conn: sqlite3.Connection) -> None:
+        row = self._daily_row(conn, "2026-08-30", hrv_overnight_ms=90.0)
+        components = {"hrv": {"raw": -0.11, "score": 47.3, "weight_used": 0.35}}
+        annotated = _annotate_components_with_display(components, row)
+        assert annotated["hrv"]["display_raw"] == "90ms"
+        assert annotated["hrv"]["score"] == 47.3  # original fields preserved
+
+    def test_rhr_gets_a_real_bpm_display(self, conn: sqlite3.Connection) -> None:
+        row = self._daily_row(conn, "2026-08-30", resting_hr=52.0)
+        components = {"rhr": {"raw": 1.04, "score": 24.1, "weight_used": 0.15}}
+        annotated = _annotate_components_with_display(components, row)
+        assert annotated["rhr"]["display_raw"] == "52bpm"
+
+    def test_sleep_gets_a_real_hours_minutes_display(self, conn: sqlite3.Connection) -> None:
+        row = self._daily_row(conn, "2026-08-30", sleep_total_min=449)
+        components = {"sleep": {"raw": {}, "score": 96.8, "weight_used": 0.25}}
+        annotated = _annotate_components_with_display(components, row)
+        assert annotated["sleep"]["display_raw"] == "7h29m"
+
+    def test_missing_raw_value_gives_none_not_a_crash(self, conn: sqlite3.Connection) -> None:
+        row = self._daily_row(conn, "2026-08-30")
+        components = {"hrv": {"raw": -0.11, "score": 47.3, "weight_used": 0.35}}
+        annotated = _annotate_components_with_display(components, row)
+        assert annotated["hrv"]["display_raw"] is None
+
+    def test_zero_weight_used_marked_excluded(self, conn: sqlite3.Connection) -> None:
+        # Companion fix: config/athlete.yaml's weight_tsb temporarily 0.0
+        # (real coverage-gap bug, see CLAUDE.md) means TSB shows up with
+        # weight_used=0.0 -- it must read as visibly excluded, not as a
+        # real, counted score of 0.
+        row = self._daily_row(conn, "2026-08-30")
+        components = {"tsb": {"raw": -3.08, "score": 0.0, "weight_used": 0.0}}
+        annotated = _annotate_components_with_display(components, row)
+        assert annotated["tsb"]["excluded"] is True
+
+    def test_nonzero_weight_used_not_excluded(self, conn: sqlite3.Connection) -> None:
+        row = self._daily_row(conn, "2026-08-30")
+        components = {"hrv": {"raw": -0.11, "score": 47.3, "weight_used": 0.35}}
+        annotated = _annotate_components_with_display(components, row)
+        assert annotated["hrv"]["excluded"] is False
+
+    def test_no_daily_row_at_all_does_not_crash(self) -> None:
+        components = {"hrv": {"raw": -0.11, "score": 47.3, "weight_used": 0.35}}
+        annotated = _annotate_components_with_display(components, None)
+        assert annotated["hrv"]["display_raw"] is None

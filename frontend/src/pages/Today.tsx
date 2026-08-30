@@ -121,7 +121,13 @@ export function TodayPage() {
               ) : (
                 <div className="grid grid-cols-3 sm:grid-cols-5 gap-4">
                   {Object.entries(readiness.components).map(([key, comp]) => (
-                    <ComponentRing key={key} componentKey={key} score={comp.score} />
+                    <ComponentRing
+                      key={key}
+                      componentKey={key}
+                      score={comp.score}
+                      displayRaw={comp.display_raw}
+                      excluded={comp.excluded}
+                    />
                   ))}
                 </div>
               )}
