@@ -838,7 +838,7 @@ data/
 src/health_os/
   ingest/               strava_bulk.py, apple_health.py (historical XML), garmin_bulk.py (historical), garmin.py (Phase 6 live sync, ADR 0004), health_auto_export.py (Phase 6 live weight sync — different JSON format from apple_health.py, not the same pipeline), common.py (shared helpers) — bjj_manual.py not needed (log_bjj.py writes directly)
   core/                 db.py, timezones.py, dedupe.py (activities cross-source dedup, live), schema.sql (snapshot, v5), migrations/000{1,2,3,4,5}_*.sql (source of truth), models.py
-  metrics/              body_comp.py (weight trend + comp countdown), load.py (pure monotony/strain + CTL/ATL/TSB math — no ACWR, ADR 0003; no longer the training-load SOURCE for these, ADR 0008), baselines.py (HRV/RHR baselines, sleep debt), readiness.py (0-100 composite), correlations.py (Spearman correlation engine, MIN_N=30 + Bonferroni-corrected), strain.py (WHOOP-inspired 0-21 Daily Strain — TRIMP + Foster, saturating scale; ADR 0008 — `build_activity_based_load_series()`/`build_load_by_sport_rows()` are now the real training-load SOURCE for CTL/ATL/TSB/monotony/strain everywhere, replacing `activities.training_load`), bjj_laps.py (HR-based sparring/rest lap classification), derived_daily.py (Phase 4 persistence — writes all of the above into `derived_daily`; "stale" confidence still real for weight/EWMA, no longer reachable for CTL/ATL/TSB/monotony/strain since ADR 0008's series always computes through to today)
+  metrics/              body_comp.py (weight trend + comp countdown), load.py (pure monotony/strain + CTL/ATL/TSB math — no ACWR, ADR 0003; no longer the training-load SOURCE for these, ADR 0008), baselines.py (HRV/RHR baselines, sleep debt), readiness.py (0-100 composite), correlations.py (Spearman correlation engine, MIN_N=30 + Bonferroni-corrected), strain.py (WHOOP-inspired 0-21 Daily Strain — TRIMP + Foster, saturating scale; ADR 0008 — `build_activity_based_load_series()`/`build_load_by_sport_rows()` are now the real training-load SOURCE for CTL/ATL/TSB/monotony/strain everywhere, replacing `activities.training_load`), bjj_laps.py (HR-based sparring/rest lap classification), insights.py (plain-English trend/training takeaways — weight/sleep/HRV/RHR/fitness-trend/freshness/consistency/correlation, 2026-08-30 Trends+Training plain-language rework), derived_daily.py (Phase 4 persistence — writes all of the above into `derived_daily`; "stale" confidence still real for weight/EWMA, no longer reachable for CTL/ATL/TSB/monotony/strain since ADR 0008's series always computes through to today)
   coach/                rules.py (readiness bands, session guidance, structural triggers, taper + deload — see "Taper + deload system"), briefing.py, weekly_retro.py
   dashboard/             app.py (Streamlit entrypoint, st.navigation), theme.py (dark theme + chart helpers), data.py (cached DB/config access), views/{today,trends,training,comp_prep,log,data_health}.py — stays in active use until the React migration (ADR 0005) is fully done
   api/                   main.py (FastAPI app, local-only, all 6 pages' routes), today.py/trends.py/training.py/comp_prep.py/data_health.py (one real read-only assembly fn per page), log.py (the one page with real POST mutation endpoints — reuses core/models.py's dataclasses for validation, never a second copy) — ADR 0005 frontend migration, 2026-08-28
@@ -2915,6 +2915,81 @@ magnitude threshold at all (ADR 0003/0007). Historical `derived_daily`
 recomputed (165 days). 539 tests passing, ruff clean, frontend `tsc -b`
 clean. Verified via the live API and a Chrome-headless screenshot of the
 running Training page.
+
+## Trends and Training rebuilt in plain language (2026-08-30)
+
+Same conversation, immediately after: "but i actually want it to be useful"
+was followed by "can you rework the trends page, so it actually tells me
+something... and then i need a complete re-work of the training section...
+no fluff no acronyms." Two real asks, addressed together since both needed
+the same new building block.
+
+**New module: `metrics/insights.py`** — pure, deterministic functions
+(same discipline as `coach/rules.py`: fixed templates selected by a real
+computed number, never freeform text, no LLM call) turning already-computed
+baseline/trend results into one-sentence plain English, each tagged
+`tone: good|neutral|bad|unknown` for color-coding. `unknown` is a real,
+honest state (not enough data) — never silently shown as neutral.
+
+**Trends page** (`api/trends.py`, `Trends.tsx`) — now leads with 4 always-
+present insight cards (weight, sleep, HRV, RHR) plus zero-or-more real
+correlation findings, ABOVE the existing charts (kept, as supporting detail,
+not removed). Weight reuses `body_comp.weight_trend_ols()`'s 21-day OLS
+slope + CI (distinguishable-from-flat gate unchanged); sleep adds a genuine
+week-over-week average comparison on top of the existing 14-day debt read;
+HRV/RHR reuse their existing 60-day baselines, only speaking once
+`confidence == "full"` (never off the seed-phase placeholder). The
+correlation engine's own rho/p-value/Bonferroni-corrected-alpha text is kept
+out of the primary sentence entirely (design ask: "no acronyms") — `n`
+("backed by 40 real days of data") is the one number kept visible; the full
+stats remain in `metrics/correlations.py` for anyone who wants to check the
+math, and the existing sample-size honesty ("N of M pairs have enough data
+yet") is kept as a small note below the cards.
+
+**Training page** (`api/training.py`, `Training.tsx`) — the bigger rework.
+CTL became a plain "fitness trend" (rising/steady/dipped, compared to ~21
+days back, a documented 15%-relative-change threshold since CTL's own units
+aren't independently meaningful, ADR 0008); TSB became a plain, self-relative
+"freshness" band (fatigued/tired/normal/fresh/very fresh, from the existing
+z-score-vs-own-90-day-distribution read, ADR 0003/0007's same "no absolute
+threshold" reasoning); monotony became a plain "consistency" sentence.
+"Strain" (monotony's other half) deliberately gets no plain-language insight
+at all — it has no self-relative reading built yet, and inventing one now
+would mean guessing a threshold with even less backing than the ones already
+documented. New `metrics/strain.py: build_weekly_summary()` (real session
+count + real total hours trained, trailing 7 days, grouped by sport) replaces
+the raw "weekly load" number as the headline weekly stat — reuses
+`_gather_day_components()` so it can't double-count a BJJ session already
+covered by a real chest-strap-recorded activity, same guard Daily Strain
+already has. The CTL/ATL/TSB chart and monotony/strain raw numbers are NOT
+deleted (design principle 9: every number traceable) — moved behind a
+"Show technical detail" toggle, collapsed by default.
+
+**A real, smaller gap fixed in passing**: the sport-by-day chart
+(`StackedBarChart`) had no legend at all — a 6-color palette cycling across
+however many distinct real sport strings appear (cycling, running, bjj,
+strength_training, yoga, walking, ...) meant two different sports could
+silently share a color with no way to tell them apart. Added an optional
+`showLegend` prop (off by default, so the sleep-stages chart elsewhere is
+unaffected) and turned it on here; also fixed the chart's own title, which
+had drifted to "This week's effort, by sport" during the rework even though
+the data underneath is the FULL available history, not one week — retitled
+"Effort over time, by sport" with a one-line caption explaining what counts.
+
+40 new tests for `metrics/insights.py`, plus updated/new tests across
+`api/trends.py`, `api/training.py`, and `metrics/strain.py` (weekly summary,
+duration tracking on `StrainComponent`) — 590 tests total, ruff clean,
+frontend `tsc -b` clean. A dedicated test (`test_insights_never_mention_
+the_old_acronyms`) locks in the literal ask — asserts "ctl"/"atl"/"tsb"/
+"monotony" never appear anywhere in the Training page's `insights` payload
+text, so a future change can't silently reintroduce the jargon. Verified
+against the real database and Chrome-headless screenshots of both running
+pages: Trends shows real cards ("You're sleeping great — averaging 8h00m a
+night this week", "Your resting heart rate has been a bit elevated lately
+(52bpm)"); Training shows "3 sessions, 3.8h total time trained" this week
+(cycling/BJJ/strength, with icons), "You're carrying more fatigue than usual
+right now" (Freshness: Fatigued), "Your fitness has been building over the
+last few weeks," and a legended, correctly-titled effort-over-time chart.
 
 ## Definition of done for v1
 
