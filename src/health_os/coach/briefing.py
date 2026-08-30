@@ -295,18 +295,24 @@ def build_briefing(conn: sqlite3.Connection, config: dict[str, Any], today: str)
             lines.append(f"  {session['label']}: {session['instruction']}")
         if plan["structural_flags"]["downgrade_to_rest"]:
             lines.append(
-                "  ⚠ Structural: 2+ consecutive red days or 3 amber days in a row — "
-                "consider downgrading today's session further, not just per-band guidance above."
+                "  ⚠ Your readiness has been low for several days in a row — worth cutting "
+                "back further today than the guidance above already suggests."
             )
 
     flags = plan["structural_flags"]
     if flags["hrv_sustained_low"]:
-        lines.append("  ⚠ Structural: HRV has sat >1 SD below baseline for 3 straight days.")
+        lines.append(
+            "  ⚠ Your HRV has been below your normal range for 3 days straight — "
+            "a sign your body could use more recovery."
+        )
     if flags["tsb_persistently_negative"]:
-        lines.append("  ⚠ Structural: TSB has been negative for 4+ straight days.")
+        lines.append(
+            "  ⚠ You've been carrying fatigue for over 4 days without a real freshness rebound."
+        )
     if flags["monotony_strain"]:
         lines.append(
-            "  ⚠ Structural: high monotony this week with strain in the recent top quartile."
+            "  ⚠ This week's training has been both hard and repetitive — a combination "
+            "linked to higher burnout/injury risk. Worth an easier day."
         )
 
     deload = plan["deload"]

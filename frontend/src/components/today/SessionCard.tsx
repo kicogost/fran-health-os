@@ -2,12 +2,20 @@ import { BedDouble, Bike, Dumbbell, Swords, TriangleAlert, type LucideIcon } fro
 import { CARD_CLASS } from "@/lib/styles"
 import type { Session, StructuralFlags } from "@/types/today"
 
+// Plain-English versions of coach/rules.py's structural triggers (2026-08-30
+// -- Francisco: "no fluff no acronyms," same fix already applied to Trends/
+// Training; these mirror scripts/briefing.py's own CLI text verbatim so the
+// app and the CLI briefing never say something different for the same
+// trigger).
 const WARNING_MESSAGES: Record<keyof StructuralFlags, string> = {
   downgrade_to_rest:
-    "2+ consecutive red days or 3 amber days in a row -- consider downgrading further.",
-  hrv_sustained_low: "HRV has sat >1 SD below baseline for 3 straight days.",
-  tsb_persistently_negative: "TSB has been negative for 4+ straight days.",
-  monotony_strain: "High monotony this week with strain in the recent top quartile.",
+    "Your readiness has been low for several days in a row -- worth cutting back further today than the guidance above already suggests.",
+  hrv_sustained_low:
+    "Your HRV has been below your normal range for 3 days straight -- a sign your body could use more recovery.",
+  tsb_persistently_negative:
+    "You've been carrying fatigue for over 4 days without a real freshness rebound.",
+  monotony_strain:
+    "This week's training has been both hard and repetitive -- a combination linked to higher burnout/injury risk. Worth an easier day.",
 }
 
 const SESSION_ICONS: Record<string, LucideIcon> = {
@@ -92,9 +100,7 @@ export function SessionCard({ weekdayName, sessions, structuralFlags }: SessionC
                   strokeWidth={2.25}
                 />
               </span>
-              <span>
-                <span className="font-medium">Structural:</span> {WARNING_MESSAGES[key]}
-              </span>
+              <span>{WARNING_MESSAGES[key]}</span>
             </div>
           ))}
         </div>
