@@ -52,11 +52,23 @@ export function SessionCard({ weekdayName, sessions, structuralFlags }: SessionC
                 </span>
                 <div>
                   <p className="text-lg font-medium text-foreground leading-snug">
-                    {session.label} -- {session.instruction}
+                    {session.label}
                   </p>
-                  {(session.format ?? session.notes) && (
-                    <p className="text-sm text-muted-foreground mt-0.5">
-                      {session.format ?? session.notes}
+                  <p className="text-sm text-[var(--band-blue)] mt-0.5 font-medium">
+                    {session.instruction}
+                  </p>
+                  {(session.format || session.distance_km_range || session.duration_min) && (
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {session.format}
+                      {session.distance_km_range &&
+                        `${session.distance_km_range[0]}-${session.distance_km_range[1]}km`}
+                      {session.zone_range && ` (${session.zone_range})`}
+                      {session.duration_min && `${session.duration_min} min`}
+                    </p>
+                  )}
+                  {session.notes && (
+                    <p className="text-sm text-muted-foreground/80 mt-0.5 italic">
+                      {session.notes}
                     </p>
                   )}
                 </div>

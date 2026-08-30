@@ -15,6 +15,7 @@ from health_os.core import db as db_module
 from health_os.core.models import DailyMetric
 
 _CONFIG = {
+    "profile": {"age": 24},
     "comp_prep": {
         "weekly_template": [
             {"day": "monday", "sessions": [{"type": "bjj", "subtype": "no_gi_technical"}]},
@@ -90,6 +91,27 @@ class TestBuildTodayPayload:
         )
         payload = build_today_payload(conn, _CONFIG, "2026-08-24")
         assert payload["weight"] is None
+
+    def test_strain_included_in_payload(self, conn: sqlite3.Connection) -> None:
+        payload = build_today_payload(conn, _CONFIG, "2026-08-24")
+        assert "strain" in payload
+        assert payload["strain"]["strain"] is None  # no activities/bjj logged that date
+
+    def test_strain_reflects_a_real_logged_bjj_session(self, conn: sqlite3.Connection) -> None:
+        db_module.upsert(
+            conn,
+            "bjj_sessions",
+            {
+                "date": "2026-08-24",
+                "session_type": "open_mat",
+                "duration_min": 90,
+                "session_rpe": 8,
+            },
+            ["date", "session_type"],
+        )
+        payload = build_today_payload(conn, _CONFIG, "2026-08-24")
+        assert payload["strain"]["strain"] is not None
+        assert payload["strain"]["components"][0]["method"] == "foster_estimated"
 
     def test_readiness_components_are_json_serializable_shape(
         self, conn: sqlite3.Connection

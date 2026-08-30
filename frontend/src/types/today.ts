@@ -35,8 +35,25 @@ export interface Session {
   subtype?: string
   format?: string
   notes?: string
+  duration_min?: number
+  distance_km_range?: [number, number]
+  zone_range?: string
   label: string
   instruction: string
+}
+
+export interface StrainComponent {
+  source: string
+  method: "trimp" | "foster_estimated"
+  raw_load: number
+  description: string
+}
+
+export interface Strain {
+  strain: number | null
+  zone: "light" | "moderate" | "high" | "all_out" | null
+  components: StrainComponent[]
+  total_raw_load: number | null
 }
 
 export interface StructuralFlags {
@@ -71,6 +88,7 @@ export interface CompCountdown {
 export interface TodayPayload {
   date: string
   weekday_name: string
+  strain: Strain
   readiness: Readiness
   sessions: Session[]
   structural_flags: StructuralFlags

@@ -14,6 +14,7 @@ from typing import Any
 
 from health_os.coach import briefing
 from health_os.metrics import body_comp
+from health_os.metrics import strain as strain_metrics
 
 
 def _format_hours_minutes(total_min: float | None) -> str | None:
@@ -57,6 +58,27 @@ def _annotate_components_with_display(components: dict[str, Any], daily_row: Any
             "excluded": comp.get("weight_used", 1.0) == 0.0,
         }
     return annotated
+
+
+def _strain_to_json(result: dict[str, Any]) -> dict[str, Any]:
+    """`build_daily_strain()`'s components are `StrainComponent` dataclass
+    instances -- not directly JSON-serializable, so converted here rather
+    than at the metrics layer (which stays a plain Python return value,
+    reusable outside an HTTP context, same separation as everywhere else
+    in this project).
+    """
+    return {
+        **result,
+        "components": [
+            {
+                "source": c.source,
+                "method": c.method,
+                "raw_load": round(c.raw_load, 1),
+                "description": c.description,
+            }
+            for c in result["components"]
+        ],
+    }
 
 
 def build_today_payload(
@@ -112,9 +134,12 @@ def build_today_payload(
             "red_flag": countdown["red_flag"],
         }
 
+    strain_result = strain_metrics.build_daily_strain(conn, today, config)
+
     return {
         "date": today,
         "weekday_name": plan["weekday_name"],
+        "strain": _strain_to_json(strain_result),
         "readiness": {
             "score": plan["score_result"]["score"],
             "band": plan["band"],

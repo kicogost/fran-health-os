@@ -1,19 +1,13 @@
 import { useEffect, useState } from "react"
-import { Moon, Scale, Target, TriangleAlert, Utensils } from "lucide-react"
+import { Utensils } from "lucide-react"
 import { ApiError, fetchToday } from "@/lib/api"
 import { BAND_COLORS } from "@/lib/band"
 import { CARD_CLASS } from "@/lib/styles"
 import type { TodayPayload } from "@/types/today"
 import { ReadinessRing } from "@/components/today/ReadinessRing"
+import { StrainRing } from "@/components/today/StrainRing"
 import { ComponentRing } from "@/components/today/ComponentRing"
 import { SessionCard } from "@/components/today/SessionCard"
-import { StatCard } from "@/components/today/StatCard"
-
-function formatMinutes(min: number): string {
-  const hours = Math.floor(min / 60)
-  const mins = Math.round(min % 60)
-  return `${hours}h ${mins}m`
-}
 
 function formatHeaderDate(isoDate: string, weekdayName: string): string {
   const [, month, day] = isoDate.split("-").map(Number)
@@ -67,7 +61,7 @@ export function TodayPage() {
 
   if (!data) return null
 
-  const { readiness, sleep, weight, comp_countdown: compCountdown } = data
+  const { readiness, strain } = data
   const bandColor = BAND_COLORS[readiness.band]
 
   return (
@@ -85,9 +79,11 @@ export function TodayPage() {
           </p>
         </div>
 
-        {/* Readiness: central ring + component breakdown. A subtle top accent
-            line + faint background wash in the band's own color mark this as
-            the hero card -- everything else on the page is downstream of it. */}
+        {/* Recovery + Strain, side by side -- the same peer relationship
+            WHOOP gives its own two headline rings (Recovery tells you what
+            you can handle, Strain tells you what you did with it). A
+            subtle top accent line + faint background wash in the
+            readiness band's color mark this as the hero card. */}
         <div className={`${CARD_CLASS} p-5 relative overflow-hidden`}>
           <div
             className="absolute inset-x-0 top-0 h-[3px]"
@@ -99,8 +95,8 @@ export function TodayPage() {
             style={{ background: `radial-gradient(circle at 15% 20%, ${bandColor}, transparent 60%)` }}
             aria-hidden
           />
-          <div className="relative flex flex-col md:flex-row items-center gap-8">
-            <div className="flex flex-col items-center gap-2 shrink-0">
+          <div className="relative grid grid-cols-1 sm:grid-cols-2 gap-6">
+            <div className="flex flex-col items-center gap-2">
               <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 Readiness
               </p>
@@ -110,29 +106,37 @@ export function TodayPage() {
                 {readiness.confidence}
               </p>
             </div>
-            <div className="flex-1 w-full">
-              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-4">
-                Components
+            <div className="flex flex-col items-center gap-2">
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Strain
               </p>
-              {Object.keys(readiness.components).length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No components have enough data yet for a readiness score.
-                </p>
-              ) : (
-                <div className="grid grid-cols-3 sm:grid-cols-5 gap-4">
-                  {Object.entries(readiness.components).map(([key, comp]) => (
-                    <ComponentRing
-                      key={key}
-                      componentKey={key}
-                      score={comp.score}
-                      displayRaw={comp.display_raw}
-                      excluded={comp.excluded}
-                    />
-                  ))}
-                </div>
-              )}
+              <StrainRing strain={strain.strain} zone={strain.zone} />
+              <p className="text-xs text-muted-foreground text-center max-w-[220px]">
+                {strain.components.length === 0
+                  ? "Nothing logged yet today."
+                  : strain.components.map((c) => c.description).join(" + ")}
+              </p>
             </div>
           </div>
+
+          {Object.keys(readiness.components).length > 0 && (
+            <div className="relative mt-6 pt-5 border-t border-border">
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-4">
+                Readiness components
+              </p>
+              <div className="grid grid-cols-3 sm:grid-cols-5 gap-4">
+                {Object.entries(readiness.components).map(([key, comp]) => (
+                  <ComponentRing
+                    key={key}
+                    componentKey={key}
+                    score={comp.score}
+                    displayRaw={comp.display_raw}
+                    excluded={comp.excluded}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <SessionCard
@@ -140,61 +144,6 @@ export function TodayPage() {
           sessions={data.sessions}
           structuralFlags={data.structural_flags}
         />
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <StatCard
-            icon={Moon}
-            label="Sleep (last night)"
-            value={sleep ? formatMinutes(sleep.total_min) : "--"}
-            caption={
-              sleep
-                ? [
-                    sleep.deep_min != null && `deep ${Math.round(sleep.deep_min)}m`,
-                    sleep.light_min != null && `light ${Math.round(sleep.light_min)}m`,
-                    sleep.rem_min != null && `rem ${Math.round(sleep.rem_min)}m`,
-                    sleep.awake_min != null && `awake ${Math.round(sleep.awake_min)}m`,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")
-                : "No sleep data for the most recent day."
-            }
-          />
-          <StatCard
-            icon={Scale}
-            label="Weight (7-day EWMA)"
-            value={weight ? `${weight.ewma_kg.toFixed(2)} kg` : "--"}
-            caption={
-              weight
-                ? `last real weigh-in: ${weight.latest_kg.toFixed(2)} kg on ${weight.latest_date}`
-                : "No weight data yet."
-            }
-          />
-          <StatCard
-            icon={Target}
-            label="Comp countdown"
-            value={compCountdown ? `${compCountdown.kg_remaining.toFixed(2)} kg to lose` : "--"}
-            caption={
-              compCountdown
-                ? `${compCountdown.weeks_remaining.toFixed(1)} weeks left`
-                : "No weight data yet."
-            }
-          >
-            {compCountdown?.required_kg_per_week != null && (
-              <p className="text-sm text-foreground mt-2">
-                Required:{" "}
-                <span className="font-medium">
-                  {compCountdown.required_kg_per_week.toFixed(2)} kg/wk
-                </span>
-                {compCountdown.red_flag && (
-                  <span className="inline-flex items-center gap-1 text-[var(--band-amber)] ml-1.5">
-                    <TriangleAlert className="h-3.5 w-3.5" strokeWidth={2.25} />
-                    over 0.7 red line
-                  </span>
-                )}
-              </p>
-            )}
-          </StatCard>
-        </div>
 
         {(data.nutrition_focus || data.trend_observation) && (
           <div className={`${CARD_CLASS} p-4`}>
