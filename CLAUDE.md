@@ -2153,6 +2153,115 @@ database: 2026-08-27 landed with weight+BMI only (no lean-mass reading that date
 expected), 2026-08-28 landed with all three; `compute_derived.py` still runs clean
 against the wider table.
 
+**Follow-up, same day**: Francisco enabled body fat % in Health Auto Export's own
+"Select Health Metrics" list and asked to re-check. Still absent from every real
+export file after a fresh sync — the real explanation, worth remembering: Health
+Auto Export can only export what's already IN Apple Health; toggling its own metric
+list controls what it *tries* to send, not what HealthKit actually has. Since no
+export from this account, ever, has contained `body_fat_percentage`, the real gap is
+one layer earlier — Renpho itself isn't writing a body-fat sample to HealthKit on
+this scale/account, a separate setting from Health Auto Export's toggle. Not fixable
+from this codebase; told Francisco to check Renpho's own HealthKit sync settings.
+
+## External repo review — earlyaidopters/health-os (2026-08-30)
+
+Francisco asked directly to read a real GitHub repo (github.com/earlyaidopters/
+health-os, verified real: 21 stars, TypeScript, not a huge/heavily-vetted project but
+legitimate working code) for inspiration, framed against his own stated goal:
+"historical tracking of my fitness, my performance, and a coach that tells me what to
+do, what to keep, what to change on my training and knows how i feel day to day."
+Delegated to a subagent with explicit instructions to compare against this project's
+actual current architecture, weigh every idea against this project's own design
+principles rather than recommend wholesale adoption, and flag anything the other repo
+does worse — read-only via `gh api`, no installers run (same discipline as every
+other external-repo review this session).
+
+**Core finding**: the two projects solve superficially similar problems with
+fundamentally different architectures. `earlyaidopters/health-os`'s entire "coaching
+layer" is an LLM (Claude/OpenCode) reading a data snapshot and improvising advice at
+chat time — zero deterministic rules engine anywhere in the repo. That's exactly what
+this project's own design principles and "Out of scope" section reject ("LLM calls
+inside the metrics layer... language generation happens only in the briefing layer,
+from rules-engine output"). Worth naming plainly where the other repo does *worse*,
+not just differently: no unique-constraint-backed upsert (a hand-rolled delete-then-
+insert can silently lose a day on a crash, unlike `core/db.py: upsert()`'s real
+`ON CONFLICT`), no audit-log table analogous to `ingest_runs`, no per-field
+provenance analogous to `daily_metrics.sources`, the same weight target hardcoded
+independently in three places, no confidence/CI concept on any derived number — and
+most relevantly, its daily "check-in" has the LLM asserting a causal story every
+single morning from one night's coincidence, no statistics behind it at all. That
+last one is the exact mistake design principle 6 and this project's own deferred
+correlation engine exist to prevent, happening by construction, daily, in the other
+repo.
+
+**Adopted, directly, same day**: the correlation engine (see below) was explicitly
+built with the "not a 2-week coincidence" discipline the review flagged as the other
+repo's core weakness. **Considered, not built** (see "Notably absent from both"):
+structured niggle/injury logging (body area + severity, replacing the blunt 7-day
+substring scan), structured protein-gram logging (a hard rule with no trend data
+today), a token-gated-cookie pattern for if/when phone access is revisited, timezone
+as config instead of hardcoded Madrid. None rejected outright — parked as real,
+scoped ideas for a future session, not acted on without being asked.
+
+## Readiness score trend chart + real correlation engine (2026-08-30)
+
+Francisco picked two things to build next out of the repo-review menu: historical
+tracking of the readiness composite itself, and a Q&A coach "which learns from
+historical data." On the Q&A scope question, his own words matter for how the
+correlation engine below was built: "I want it to do both, grounded in my history +
+actively detecting patterns / correlations in the data... not because 2 weeks in a
+row something happens means its because of something, you should have enough data to
+make an educated accurate decision."
+
+**Readiness trend chart**: `derived_daily` has persisted `readiness_score` per date
+since 2026-08-28, but nothing had ever charted it — backfilled the full available
+history first (`scripts/compute_derived.py --days 162`, matching how far back real
+HRV/RHR data actually goes, 2026-03-22) so the chart shows genuine ~5-month depth
+instead of 3 sparse days. New `api/trends.py: _build_readiness_history()` (a
+long/tall `derived_daily` query, separate from the wide-column `daily_metrics` loop
+the other series use) + a "Readiness score" card reusing the existing generic
+`TrendChart` component as-is. Confidence is carried through per point and summarized
+as a plain-text coverage note rather than hidden — most days read "partial" (missing
+only the subjective/Hooper component), never invented as full.
+
+**Correlation engine** (`metrics/correlations.py`) — the kickoff doc's originally-
+specced "Spearman rho with n/p," deferred multiple times, built now on Francisco's
+own explicit condition. Two honesty gates, not one: (1) `MIN_N = 30` real paired
+observations before a correlation is even attempted — Spearman's rho is genuinely
+unstable at small n regardless of what p-value it produces, an explicit, documented,
+revisable threshold in the same spirit as this project's other seed-phase numbers
+(HRV baseline's 21-day seed / 60-day computed baseline); (2) a **Bonferroni
+correction** applied only across pairs that actually had enough data to test —
+testing several candidate pairs and reporting whichever happens to clear p<0.05
+uncorrected is exactly how spurious findings get manufactured, and is precisely the
+failure mode the earlyaidopters/health-os review flagged. 4 candidate pairs, each
+grounded in already-logged fields with a documented reason: sleep_quality vs HRV,
+stress vs resting HR, fatigue vs sleep minutes, hooper_index vs readiness_score
+(flagged as ~10%-circular but kept, still informative on the other components) — a
+deliberately small, non-fishing-expedition list.
+
+New `GET /api/insights/correlations` + a "Detected patterns" card on Trends,
+surfacing real significant findings once they exist and an honest "N of M pairs have
+enough data" count otherwise. **Real current state, correctly displayed**: 0 of 4
+pairs have enough data yet (only one `subjective_log` row exists in the whole
+database) — this is the accurate, expected state to show, not a gap to hide or a bug
+to fix by lowering the bar.
+
+14 new/updated tests (correlations) + 9 (trends), including hand-verified exact
+values (a perfectly monotonic series gives rho of exactly 1.0/-1.0) and a real
+constructed borderline case proving the Bonferroni correction actually flips a
+result from significant to not, not just asserted in prose. 439 tests total, ruff
+clean. Both features verified visually via Chrome-headless screenshot against the
+real database, through the one-command-served build (port 8000).
+
+**Not yet built**: the Q&A coach interface itself (needs an Anthropic API key —
+Francisco asked about cost first; real current pricing checked: ~$1-5/month on Haiku
+for realistic personal-use volume, since the actual analysis stays in deterministic
+Python and the LLM's only job is narrating it — waiting on him to add a key to
+`.env` before wiring the actual chat endpoint). The correlation panel and readiness
+history are both already shaped to feed that interface directly once it exists — no
+rework anticipated.
+
 ## Definition of done for v1
 
 One command each morning: syncs Garmin + Strava, recomputes everything, prints a
