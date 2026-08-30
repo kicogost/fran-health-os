@@ -21,6 +21,10 @@ from health_os.api.today import build_today_payload
 from health_os.api.training import build_training_payload
 from health_os.api.trends import ALLOWED_WINDOW_DAYS, build_trends_payload
 from health_os.core import db
+from health_os.metrics.correlations import (
+    build_daily_metrics_correlation_panel,
+    correlation_result_to_dict,
+)
 
 CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "athlete.yaml"
 FRONTEND_DIST_DIR = Path(__file__).resolve().parents[3] / "frontend" / "dist"
@@ -99,6 +103,22 @@ def get_data_health() -> dict[str, Any]:
     conn = db.init_db()
     try:
         return build_data_health_payload(conn)
+    finally:
+        conn.close()
+
+
+@app.get("/api/insights/correlations")
+def get_correlations() -> list[dict[str, Any]]:
+    """Real, statistically-gated correlations between logged signals
+    (metrics/correlations.py) -- most will read "insufficient_data" until
+    enough wellness logging accumulates (MIN_N=30 real paired days), which
+    is the honest, expected state right now, not a bug. Feeds both a
+    dashboard surface and (once built) the Q&A coach's grounding context.
+    """
+    conn = db.init_db()
+    try:
+        results = build_daily_metrics_correlation_panel(conn)
+        return [correlation_result_to_dict(r) for r in results]
     finally:
         conn.close()
 

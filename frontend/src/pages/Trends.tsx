@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react"
-import { Activity, Gauge, HeartPulse, Moon, Scale } from "lucide-react"
-import { ApiError, fetchTrends } from "@/lib/api"
+import { Activity, Gauge, HeartPulse, Moon, Scale, Search } from "lucide-react"
+import { ApiError, fetchCorrelations, fetchTrends } from "@/lib/api"
 import { CARD_CLASS } from "@/lib/styles"
-import type { TrendsPayload } from "@/types/trends"
+import type { CorrelationResult, TrendsPayload } from "@/types/trends"
 import { TrendChart } from "@/components/charts/TrendChart"
 import { StackedBarChart } from "@/components/charts/StackedBarChart"
 
@@ -20,6 +20,7 @@ export function TrendsPage() {
   const [data, setData] = useState<TrendsPayload | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [correlations, setCorrelations] = useState<CorrelationResult[] | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -38,6 +39,23 @@ export function TrendsPage() {
       cancelled = true
     }
   }, [windowDays])
+
+  useEffect(() => {
+    // Not windowed like the charts above -- correlations use the FULL
+    // available history regardless of the 30/90/365d selector, since more
+    // real data only helps the sample-size gate, never hurts it.
+    let cancelled = false
+    fetchCorrelations()
+      .then((results) => {
+        if (!cancelled) setCorrelations(results)
+      })
+      .catch(() => {
+        if (!cancelled) setCorrelations(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-3">
@@ -147,7 +165,53 @@ export function TrendsPage() {
           >
             <StackedBarChart data={data.sleep_stages} bars={SLEEP_STAGE_BARS} />
           </ChartCard>
+
+          {correlations && <CorrelationsCard results={correlations} />}
         </>
+      )}
+    </div>
+  )
+}
+
+/** Detected patterns -- metrics/correlations.py's Spearman-rank engine,
+ * gated on real sample size (n>=30) and Bonferroni-corrected across every
+ * pair tested, so this only ever shows a "significant" result backed by
+ * actual statistics -- never a same-week coincidence dressed up as insight.
+ * Most days this will show "not enough data yet," which is the honest,
+ * expected state until wellness logging accumulates -- not a bug.
+ */
+function CorrelationsCard({ results }: { results: CorrelationResult[] }) {
+  const significant = results.filter((r) => r.confidence === "significant")
+  const tested = results.filter((r) => r.confidence !== "insufficient_data")
+
+  return (
+    <div className={`${CARD_CLASS} p-4`}>
+      <div className="flex items-center gap-2 mb-3">
+        <Search className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={2} />
+        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          Detected patterns
+        </p>
+      </div>
+
+      {significant.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          No statistically significant patterns yet ({tested.length} of {results.length} candidate
+          pairs have enough paired days to test — each needs 30+ real days logged on both sides).
+          Keep logging daily wellness and this fills in on its own; nothing gets claimed from a
+          short streak.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          {significant.map((r) => (
+            <div key={`${r.x_name}-${r.y_name}`} className="text-sm">
+              <p className="text-foreground">{r.description}</p>
+              <p className="text-xs text-muted-foreground">
+                rho = {r.rho?.toFixed(2)}, n = {r.n} days, p = {r.p_value?.toFixed(4)} (Bonferroni-
+                corrected threshold {r.alpha_used?.toFixed(4)})
+              </p>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   )

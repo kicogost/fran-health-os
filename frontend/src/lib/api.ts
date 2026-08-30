@@ -8,7 +8,7 @@ import type {
 } from "@/types/log"
 import type { TodayPayload } from "@/types/today"
 import type { TrainingPayload } from "@/types/training"
-import type { TrendsPayload } from "@/types/trends"
+import type { CorrelationResult, TrendsPayload } from "@/types/trends"
 
 // Relative path -- the Vite dev server proxies /api to the FastAPI backend
 // (vite.config.ts), and in production FastAPI serves this same built bundle
@@ -62,6 +62,10 @@ export function fetchCompPrep(): Promise<CompPrepPayload> {
 
 export function fetchDataHealth(): Promise<DataHealthPayload> {
   return getJson<DataHealthPayload>("/data-health")
+}
+
+export function fetchCorrelations(): Promise<CorrelationResult[]> {
+  return getJson<CorrelationResult[]>("/insights/correlations")
 }
 
 export function fetchPrescribedExercises(sessionType: string): Promise<string[]> {

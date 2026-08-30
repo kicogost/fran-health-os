@@ -39,3 +39,15 @@ export interface TrendsPayload {
   sleep_stages: SleepStageRow[]
   readiness: ReadinessHistory
 }
+
+// Mirrors metrics/correlations.py: correlation_result_to_dict()'s exact shape.
+export interface CorrelationResult {
+  x_name: string
+  y_name: string
+  description: string | null
+  n: number
+  rho: number | null
+  p_value: number | null
+  alpha_used: number | null
+  confidence: "insufficient_data" | "not_significant" | "significant"
+}

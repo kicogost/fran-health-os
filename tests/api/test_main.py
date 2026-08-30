@@ -54,6 +54,15 @@ class TestGetToday:
         assert "sessions" in body
 
 
+class TestGetCorrelations:
+    def test_returns_200_with_insufficient_data_on_an_empty_db(self, client: TestClient) -> None:
+        response = client.get("/api/insights/correlations")
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body) > 0
+        assert all(r["confidence"] == "insufficient_data" for r in body)
+
+
 class TestServeFrontend:
     """The catch-all that resolves ADR 0005's 'production serving' open item
     -- serves the built React bundle from this same process so
