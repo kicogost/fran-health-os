@@ -838,7 +838,7 @@ data/
 src/health_os/
   ingest/               strava_bulk.py, apple_health.py (historical XML), garmin_bulk.py (historical), garmin.py (Phase 6 live sync, ADR 0004), health_auto_export.py (Phase 6 live weight sync — different JSON format from apple_health.py, not the same pipeline), common.py (shared helpers) — bjj_manual.py not needed (log_bjj.py writes directly)
   core/                 db.py, timezones.py, dedupe.py (activities cross-source dedup, live), schema.sql (snapshot, v5), migrations/000{1,2,3,4,5}_*.sql (source of truth), models.py
-  metrics/              body_comp.py (weight trend + comp countdown), load.py (monotony/strain, CTL/ATL/TSB — no ACWR, ADR 0003), baselines.py (HRV/RHR baselines, sleep debt), readiness.py (0-100 composite), bjj_laps.py (HR-based sparring/rest lap classification), derived_daily.py (Phase 4 persistence — writes all of the above into `derived_daily`, with an honest "stale" confidence for CTL/ATL/TSB/weight when the underlying series doesn't reach today)
+  metrics/              body_comp.py (weight trend + comp countdown), load.py (monotony/strain, CTL/ATL/TSB — no ACWR, ADR 0003), baselines.py (HRV/RHR baselines, sleep debt), readiness.py (0-100 composite), correlations.py (Spearman correlation engine, MIN_N=30 + Bonferroni-corrected), strain.py (WHOOP-inspired 0-21 Daily Strain — TRIMP + Foster, saturating scale), bjj_laps.py (HR-based sparring/rest lap classification), derived_daily.py (Phase 4 persistence — writes all of the above into `derived_daily`, with an honest "stale" confidence for CTL/ATL/TSB/weight when the underlying series doesn't reach today)
   coach/                rules.py, briefing.py, weekly_retro.py
   dashboard/             app.py (Streamlit entrypoint, st.navigation), theme.py (dark theme + chart helpers), data.py (cached DB/config access), views/{today,trends,training,comp_prep,log,data_health}.py — stays in active use until the React migration (ADR 0005) is fully done
   api/                   main.py (FastAPI app, local-only, all 6 pages' routes), today.py/trends.py/training.py/comp_prep.py/data_health.py (one real read-only assembly fn per page), log.py (the one page with real POST mutation endpoints — reuses core/models.py's dataclasses for validation, never a second copy) — ADR 0005 frontend migration, 2026-08-28
@@ -2322,6 +2322,74 @@ condition being tested.
 15 new/updated tests, 449 total passing, ruff clean. Verified visually via Chrome-
 headless screenshot against the real database, through the one-command-served build
 — every ring's raw value now matches Francisco's real Garmin app exactly.
+
+## Today simplified into a WHOOP-style daily view + Daily Strain metric (2026-08-30)
+
+Francisco: "I feel like we really need to simplify what the front end shows... show
+me my strain every day, my workout for the day, and recommendation for the day...
+a breakdown for the exact workout I have on the day and how I should approach it,"
+pasting WHOOP's own public explanation of how their Strain metric works as reference.
+Confirmed scope first rather than guessing how much to cut: keep Trends/Training/
+Comp Prep/Data Health exactly as they are (secondary pages, reachable from the
+sidebar) — redesign only Today into the simple daily-driver view.
+
+**Daily Strain** (`metrics/strain.py`, new) — WHOOP's own article is explicit the
+complete formula and per-input weighting are proprietary and unpublished
+("interpret Strain as a personalized WHOOP metric rather than a directly
+reproducible physiological equation"), so this is a real, from-scratch, documented
+metric in the same spirit, not a claimed reproduction of their actual number. Two
+real, published methods do the work: **Banister TRIMP** (heart-rate-reserve method)
+wherever a real `avg_hr` exists — confirmed reliable going forward, every recent
+live Garmin sync activity checked has it, even though historical bulk-import
+coverage is patchy — and **Foster's method** (RPE × duration, already used for BJJ's
+`computed_load`) for BJJ/calisthenics sessions with no HR data yet. Once the Garmin
+HRM 600 chest strap (arriving 2026-08-31) is actually worn for BJJ, those sessions
+get real `avg_hr` via the matched Garmin activity and flow through TRIMP instead
+automatically — no code change needed for that transition, it falls out of the
+"TRIMP wherever avg_hr exists" rule. Both raw loads sum linearly across the day,
+then map through a saturating exponential onto WHOOP's own published 0-21 scale and
+band boundaries (light/moderate/high/all_out — these boundaries ARE public even
+though the formula isn't). The saturation constant is calibrated against one real
+reference point (Francisco's actual 2026-08-29 bike ride, avg_hr 143 over 107min
+lands at Strain~15) and documented as revisable, same spirit as this project's other
+seed-phase numbers. A real edge case guarded explicitly: a genuine 42-second BJJ
+"connectivity test" recording already exists in the real account data (see the
+custom-BJJ-profile section above) — a 5-minute floor on activity duration keeps it
+from being treated as a missed real session. A BJJ session with a real matching
+Garmin activity skips the Foster estimate entirely, avoiding double-counting one
+physical session as two load contributions. **Real output against the actual
+database**: 2026-08-28 (BJJ open mat, 90min RPE 8, no strap yet) → Strain 17.0/high;
+2026-08-29 (bike ride, 107min avg HR 143) → Strain 15.1/high — both land in a
+sensible, non-maxed-out range for real, solid-but-not-all-out sessions.
+
+**Today page redesign** — Recovery (renamed nowhere, still "Readiness" throughout
+this codebase's own terminology) and Strain now render as peer rings side by side,
+the same relationship WHOOP gives its own two headline numbers (Recovery tells you
+what you can handle, Strain tells you what you did with it). New `StrainRing.tsx`
+mirrors `ReadinessRing`'s gradient+glow treatment but stays a fixed blue hue
+regardless of magnitude (WHOOP's own real convention) rather than a red/green
+traffic-light scheme that would misleadingly imply "high strain = bad" (it isn't —
+a 17 before a planned hard day is fine). The Sleep/Weight/Comp-countdown stat-card
+row was removed entirely — not lost, already available on Trends and Comp Prep, and
+today's own sleep reading is still visible via the Sleep readiness component's
+raw-value display (added earlier this session's Garmin-comparison bug fix).
+`SessionCard.tsx` enhanced for "a breakdown of the exact workout and how to approach
+it": now shows the session's real clock-time format ("60min drilling + 30min
+rolling..."), duration/distance/zone range for bike and calisthenics days, AND its
+free-text notes together — all of this was already flowing through the API from
+`config/athlete.yaml`'s `weekly_template`, just never displayed (previously only one
+of format-or-notes rendered, silently dropping whichever wasn't shown, a real if
+minor bug fixed in passing). The readiness-band instruction now renders in its own
+accent-colored line as the explicit "recommendation," visually separated from the
+raw schedule detail.
+
+28 new/updated tests (21 for `metrics/strain.py`, 7 for the `api/today.py` wiring),
+472 total passing, ruff clean. Frontend typecheck/build/lint clean. Verified visually
+via Chrome-headless screenshot against the real database (today's actual rest-day
+state, correctly showing "no data yet" for Strain) and, separately, a temporarily-
+seeded preview of Aug 29's real bike-ride numbers to confirm the dual-ring layout
+renders correctly once data exists — reverted immediately after, never left in the
+committed code.
 
 ## Definition of done for v1
 
