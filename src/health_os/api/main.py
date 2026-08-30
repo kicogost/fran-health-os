@@ -86,10 +86,9 @@ def get_trends(window_days: int = 90) -> dict[str, Any]:
 def get_training() -> dict[str, Any]:
     conn = db.init_db()
     try:
-        # Same "latest daily_metrics date" convention as /api/today -- used
-        # here only to measure load-data staleness against, not to bound
-        # any query (build_training_payload's own queries are unbounded by
-        # design, same as before this param was added).
+        # Same "latest daily_metrics date" convention as /api/today -- this
+        # is the END date the activity-based load series walks through
+        # (metrics.strain.build_activity_based_load_series()).
         row = conn.execute("SELECT MAX(date) AS d FROM daily_metrics").fetchone()
         as_of_date = row["d"] if row and row["d"] else to_local_date(datetime.now(UTC))
         return build_training_payload(conn, _load_config(), as_of_date)

@@ -20,6 +20,7 @@ WEEK_ENDING = "2026-08-30"  # a Sunday
 WEEK_START = "2026-08-24"
 
 _CONFIG = {
+    "profile": {"age": 24},
     "comp_prep": {
         "weekly_template": [
             {

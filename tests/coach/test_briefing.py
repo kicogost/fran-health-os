@@ -16,6 +16,7 @@ from health_os.core.models import BjjSession, DailyMetric
 from health_os.metrics.baselines import DEFAULT_BASELINE_WINDOW_DAYS
 
 _CONFIG = {
+    "profile": {"age": 24},
     "comp_prep": {
         "weekly_template": [
             {"day": "monday", "sessions": [{"type": "bjj", "subtype": "no_gi_technical"}]},

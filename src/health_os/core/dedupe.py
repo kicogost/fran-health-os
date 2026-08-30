@@ -27,6 +27,38 @@ its own step after ingestion (mirrors the planned `scripts/sync.py`: sync, then
 recompute) — if a source gets re-ingested later and resurrects a merged-away row,
 the next dedup pass just merges it away again. Never run dedup logic inside the
 per-source upsert loop itself.
+
+**Second matching tier added 2026-08-30, a real gap found while investigating
+why bike rides don't show up on the Training page**: 8 real Strava/Garmin ride
+pairs in Francisco's actual account (May-Aug 2026, both auto-uploads of the
+same physical Garmin-recorded ride) never merged under the primary rule — start
+times differ by exactly 7200s (2 hours, confirmed a real cross-source
+discrepancy, not an ingestion bug: Strava's raw CSV genuinely states the local
+wall-clock time 2 hours earlier than Garmin's own `startTimeLocal`/`startTimeGMT`
+pair for the identical ride, verified directly against both the raw CSV and a
+live Garmin API call), and duration sometimes differs by much more than 60s too
+(Strava's `Elapsed Time` vs. whatever duration convention Garmin's live-sync
+endpoint uses). What's nearly identical across every single pair, confirmed
+directly: `avg_hr`, within a rounding difference of at most 1bpm (one real pair,
+2026-08-15, was 153 vs. 152 — presumably each platform rounding its own slightly
+different sample set the same real ride). A same-day, same-sport-family `avg_hr`
+match this close between two independently real sessions is a vanishingly
+unlikely coincidence, so a second, narrower rule now matches on same local date
++ same sport family + `avg_hr` within `AVG_HR_TOLERANCE` + start times within a
+generous `SECONDARY_START_TOLERANCE_S`, even when the primary start/duration
+check fails. First built with exact-equality only; widened to +-1bpm the same
+day after this exact 2026-08-15 pair was found still unmerged and visibly
+double-counting that day's training load on the Training page.
+
+**Real gap in `_SPORT_FAMILIES` found the same day, same investigation**: a
+2026-08-24 Strava "weight_training" + Garmin "strength_training" pair (same
+physical gym session — avg_hr 116 on both, duration within 1s, the same
+2-hour cross-source timestamp pattern above) never even reached either
+matching tier, because `strength_training` had no family mapping at all and
+so counted as its own, unmatched family. Added, along with a few other real
+Garmin-specific labels found the same way (`trail_running`/
+`treadmill_running` -> running, `lap_swimming` -> swimming) that were
+previously unmapped for the same underlying reason.
 """
 
 from __future__ import annotations
@@ -41,6 +73,18 @@ DEFAULT_PRECEDENCE = ("garmin", "strava", "apple_health")
 START_TOLERANCE_S = 120
 DURATION_TOLERANCE_S = 60
 
+# Secondary tier (see module docstring): generous purely as a sanity bound --
+# a near-exact avg_hr match already does almost all the real discriminating
+# work, this just guards against the theoretical case of two unrelated
+# same-day, same-sport-family sessions coincidentally sharing one bpm value.
+SECONDARY_START_TOLERANCE_S = 6 * 3600
+
+# +-1bpm, not exact equality -- a real pair (2026-08-15, 153 vs. 152) showed
+# each platform can round its own computed average slightly differently for
+# the identical physical ride. Still an extremely tight bound combined with
+# the same-date + same-sport-family gate above.
+AVG_HR_TOLERANCE = 1
+
 # Sport-family compatibility for matching, not a canonicalization of `sport`
 # itself (that column keeps each source's own normalized label). Unmapped sports
 # are their own family — conservative by default, so an unfamiliar sport string
@@ -52,14 +96,18 @@ _SPORT_FAMILIES = {
     "cycling": "cycling",
     "run": "running",
     "running": "running",
+    "trail_running": "running",
+    "treadmill_running": "running",
     "walk": "walking",
     "walking": "walking",
     "hike": "hiking",
     "hiking": "hiking",
     "swim": "swimming",
     "swimming": "swimming",
+    "lap_swimming": "swimming",
     "yoga": "yoga",
     "weight_training": "strength",
+    "strength_training": "strength",
     "traditional_strength_training": "strength",
     "functional_strength_training": "strength",
     "workout": "strength",
@@ -86,13 +134,14 @@ class _Row:
     start_utc: str
     duration_s: int | None
     sport: str | None
+    avg_hr: float | None
     merged_from: list[dict[str, str]]
 
 
 def _load_rows(conn: sqlite3.Connection) -> list[_Row]:
     rows = conn.execute(
         "SELECT activity_id, source, source_id, local_date, start_utc, "
-        "duration_s, sport, merged_from FROM activities"
+        "duration_s, sport, avg_hr, merged_from FROM activities"
     ).fetchall()
     result = []
     for r in rows:
@@ -106,6 +155,7 @@ def _load_rows(conn: sqlite3.Connection) -> list[_Row]:
                 start_utc=r["start_utc"],
                 duration_s=r["duration_s"],
                 sport=r["sport"],
+                avg_hr=r["avg_hr"],
                 merged_from=merged,
             )
         )
@@ -115,13 +165,23 @@ def _load_rows(conn: sqlite3.Connection) -> list[_Row]:
 def _is_match(a: _Row, b: _Row) -> bool:
     if a.local_date != b.local_date or a.source == b.source:
         return False
+    if _sport_family(a.sport) != _sport_family(b.sport):
+        return False
+
     start_diff = abs((parse_utc(a.start_utc) - parse_utc(b.start_utc)).total_seconds())
-    if start_diff > START_TOLERANCE_S:
-        return False
     dur_diff = abs((a.duration_s or 0) - (b.duration_s or 0))
-    if dur_diff > DURATION_TOLERANCE_S:
-        return False
-    return _sport_family(a.sport) == _sport_family(b.sport)
+    if start_diff <= START_TOLERANCE_S and dur_diff <= DURATION_TOLERANCE_S:
+        return True
+
+    # Secondary tier (module docstring): a near-exact avg_hr match is strong
+    # enough on its own to catch the real cross-source timezone-discrepancy
+    # case even when start time and/or duration don't line up.
+    return (
+        a.avg_hr is not None
+        and b.avg_hr is not None
+        and abs(a.avg_hr - b.avg_hr) <= AVG_HR_TOLERANCE
+        and start_diff <= SECONDARY_START_TOLERANCE_S
+    )
 
 
 def _find(parent: dict[str, str], x: str) -> str:

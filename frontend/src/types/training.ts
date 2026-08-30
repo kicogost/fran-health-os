@@ -44,14 +44,12 @@ export interface CalisthenicsRow {
 }
 
 export interface TrainingPayload {
+  // Rebuilt 2026-08-30: means "is there enough daily_metrics.resting_hr
+  // history to build a TRIMP-based load series at all" -- the real
+  // prerequisite now, since the series always answers every day in range
+  // (including genuine 0.0 rest days), not "did some activity happen to
+  // have Garmin/Strava's own training_load value" like it used to.
   has_load_data: boolean
-  // True when the load series' last real date is 3+ days before today --
-  // added 2026-08-30 because has_load_data alone is all-or-nothing (one
-  // real BJJ log flips it true even while training_load coverage is still
-  // months stale for everything else). See CLAUDE.md's training-load
-  // build-out notes for why this is a real, current data-coverage gap.
-  is_stale: boolean
-  days_stale: number
   ctl_atl_tsb: CtlAtlTsbPoint[]
   tsb_zscore: TsbZscore | null
   monotony_strain: MonotonyStrain | null

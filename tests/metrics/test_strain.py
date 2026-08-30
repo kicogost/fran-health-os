@@ -7,9 +7,12 @@ import pytest
 
 from health_os.core import db as db_module
 from health_os.metrics.strain import (
+    STRAIN_FOSTER_SCALE,
     STRAIN_SATURATION_K,
     StrainComponent,
+    build_activity_based_load_series,
     build_daily_strain,
+    build_load_by_sport_rows,
     combine_daily_strain,
     compute_foster_load,
     compute_trimp,
@@ -271,3 +274,144 @@ class TestBuildDailyStrain:
         )
         result = build_daily_strain(conn, "2026-08-30", _CONFIG)
         assert result["strain"] is None
+
+
+class TestBuildActivityBasedLoadSeries:
+    def test_no_resting_hr_anywhere_gives_empty_series(self, conn: sqlite3.Connection) -> None:
+        assert build_activity_based_load_series(conn, _CONFIG, "2026-08-30") == []
+
+    def test_walks_every_day_including_real_zero_load_days(self, conn: sqlite3.Connection) -> None:
+        # A rest day between two real resting_hr readings must appear as a
+        # genuine 0.0, not be skipped -- design principle 6, same "zero is a
+        # real value" contract metrics/load.py's build_daily_load_series()
+        # already established.
+        for d in ("2026-08-28", "2026-08-29", "2026-08-30"):
+            db_module.upsert(conn, "daily_metrics", {"date": d, "resting_hr": 49.0}, ["date"])
+        series = build_activity_based_load_series(conn, _CONFIG, "2026-08-30")
+        assert series == [
+            ("2026-08-28", 0.0),
+            ("2026-08-29", 0.0),
+            ("2026-08-30", 0.0),
+        ]
+
+    def test_includes_bjj_manual_log_scaled(self, conn: sqlite3.Connection) -> None:
+        db_module.upsert(
+            conn, "daily_metrics", {"date": "2026-08-28", "resting_hr": 49.0}, ["date"]
+        )
+        db_module.upsert(
+            conn,
+            "bjj_sessions",
+            {
+                "date": "2026-08-28",
+                "session_type": "open_mat",
+                "duration_min": 90,
+                "session_rpe": 8,
+            },
+            ["date", "session_type"],
+        )
+        series = build_activity_based_load_series(conn, _CONFIG, "2026-08-28")
+        assert series == [("2026-08-28", pytest.approx(90 * 8 * STRAIN_FOSTER_SCALE))]
+
+    def test_matches_daily_strain_raw_load_for_the_same_date(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # Consistency check, the whole point of the 2026-08-30 refactor:
+        # this series and build_daily_strain() must never independently
+        # disagree about the same date's real total raw load.
+        db_module.upsert(
+            conn, "daily_metrics", {"date": "2026-08-29", "resting_hr": 49.0}, ["date"]
+        )
+        db_module.upsert(
+            conn,
+            "activities",
+            {
+                "activity_id": "garmin:ride1",
+                "source": "garmin",
+                "source_id": "ride1",
+                "start_utc": "2026-08-29T06:00:00Z",
+                "local_date": "2026-08-29",
+                "sport": "cycling",
+                "duration_s": 6420,
+                "avg_hr": 143,
+            },
+            ["activity_id"],
+        )
+        strain_result = build_daily_strain(conn, "2026-08-29", _CONFIG)
+        series = build_activity_based_load_series(conn, _CONFIG, "2026-08-29")
+        # build_daily_strain()'s total_raw_load is rounded to 1dp for
+        # display; the series returns the unrounded sum -- compare with
+        # enough tolerance to absorb that rounding, not exact equality.
+        assert series == [("2026-08-29", pytest.approx(strain_result["total_raw_load"], abs=0.05))]
+
+
+class TestBuildLoadBySportRows:
+    def test_no_data_gives_empty_list(self, conn: sqlite3.Connection) -> None:
+        assert build_load_by_sport_rows(conn, _CONFIG, "2026-08-30") == []
+
+    def test_rest_day_contributes_no_row(self, conn: sqlite3.Connection) -> None:
+        # A real, computed zero must not become a fabricated "unknown: 0.0"
+        # row -- design principle 6, never invent a row for nothing real.
+        db_module.upsert(
+            conn, "daily_metrics", {"date": "2026-08-30", "resting_hr": 49.0}, ["date"]
+        )
+        assert build_load_by_sport_rows(conn, _CONFIG, "2026-08-30") == []
+
+    def test_two_sports_same_day_produce_two_rows(self, conn: sqlite3.Connection) -> None:
+        db_module.upsert(
+            conn, "daily_metrics", {"date": "2026-08-28", "resting_hr": 49.0}, ["date"]
+        )
+        db_module.upsert(
+            conn,
+            "activities",
+            {
+                "activity_id": "garmin:ride1",
+                "source": "garmin",
+                "source_id": "ride1",
+                "start_utc": "2026-08-28T06:00:00Z",
+                "local_date": "2026-08-28",
+                "sport": "cycling",
+                "duration_s": 3600,
+                "avg_hr": 140,
+            },
+            ["activity_id"],
+        )
+        db_module.upsert(
+            conn,
+            "bjj_sessions",
+            {
+                "date": "2026-08-28",
+                "session_type": "open_mat",
+                "duration_min": 90,
+                "session_rpe": 8,
+            },
+            ["date", "session_type"],
+        )
+        rows = build_load_by_sport_rows(conn, _CONFIG, "2026-08-28")
+        sports = {r["sport"] for r in rows}
+        assert sports == {"cycling", "bjj"}
+        assert all(r["date"] == "2026-08-28" for r in rows)
+
+    def test_bjj_recorded_activity_labeled_bjj_not_its_raw_sport(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        db_module.upsert(
+            conn, "daily_metrics", {"date": "2026-08-28", "resting_hr": 49.0}, ["date"]
+        )
+        db_module.upsert(
+            conn,
+            "activities",
+            {
+                "activity_id": "garmin:bjj1",
+                "source": "garmin",
+                "source_id": "bjj1",
+                "start_utc": "2026-08-28T18:00:00Z",
+                "local_date": "2026-08-28",
+                "sport": "other",
+                "sub_sport": "bjj",
+                "duration_s": 5400,
+                "avg_hr": 150,
+            },
+            ["activity_id"],
+        )
+        rows = build_load_by_sport_rows(conn, _CONFIG, "2026-08-28")
+        assert [r["sport"] for r in rows] == ["bjj"]

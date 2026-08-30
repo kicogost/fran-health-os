@@ -15,6 +15,7 @@ from health_os.metrics.baselines import DEFAULT_BASELINE_WINDOW_DAYS
 from health_os.metrics.derived_daily import compute_derived_metrics, store_derived_metrics
 
 _CONFIG = {
+    "profile": {"age": 24},
     "training_load": {"bjj_rpe_calibration_factor": 1.0},
     "readiness_score": {
         "weight_hrv": 0.35,
@@ -107,11 +108,15 @@ class TestDateBounding:
         assert metrics["tsb"].value is None
 
 
-class TestStaleness:
-    def test_stale_load_series_flagged_not_padded(self, conn: sqlite3.Connection) -> None:
-        # A BJJ session logged, but the as-of date is well past it -- must
-        # be reported as "stale" with the real days_stale count, never
-        # silently treated as if zero-load days since then were observed.
+class TestLoadSeriesNoLongerGoesStale:
+    def test_a_gap_since_last_training_is_a_real_confirmed_rest_not_stale(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # Rebuilt 2026-08-30: the OLD activities.training_load-based series
+        # would have flagged this "stale" (a real bug this project used to
+        # carry) -- the NEW activity-based series computes a genuine,
+        # confirmed 0.0 for every day between the BJJ log and as_of_date,
+        # so this is honestly "full" confidence, not "we don't know."
         db_module.upsert(
             conn,
             "bjj_sessions",
@@ -120,14 +125,17 @@ class TestStaleness:
             ).to_row(),
             ["date", "session_type"],
         )
-        as_of = "2026-07-10"  # 9 days later
+        as_of = "2026-07-10"  # 9 days later, no training logged since
         metrics = {m.metric_name: m for m in compute_derived_metrics(conn, _CONFIG, as_of)}
-        assert metrics["ctl"].confidence == "stale"
-        assert metrics["ctl"].inputs["days_stale"] == 9
-        assert metrics["ctl"].inputs["last_real_data_date"] == "2026-07-01"
-        # The value itself is still the last real computation, not None or a
-        # fabricated decayed-to-zero figure.
+        assert metrics["ctl"].confidence == "full"
         assert metrics["ctl"].value is not None
+        # CTL should have decayed some from the 42-day-tau EWMA over those
+        # 9 real, confirmed rest days -- a genuinely smaller number than the
+        # day training happened, not a carried-forward stale figure.
+        as_of_bjj_day = {
+            m.metric_name: m for m in compute_derived_metrics(conn, _CONFIG, "2026-07-01")
+        }
+        assert metrics["ctl"].value < as_of_bjj_day["ctl"].value
 
     def test_fresh_load_series_is_not_flagged_stale(self, conn: sqlite3.Connection) -> None:
         db_module.upsert(

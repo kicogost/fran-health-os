@@ -41,6 +41,8 @@ from __future__ import annotations
 import math
 import sqlite3
 from dataclasses import dataclass
+from datetime import date as date_cls
+from datetime import timedelta
 from typing import Any
 
 # Garmin sport/sub_sport values that mean "this is a BJJ session" --
@@ -140,6 +142,10 @@ class StrainComponent:
     method: str  # "trimp" | "foster_estimated"
     raw_load: float
     description: str
+    # A plain sport label for grouping -- e.g. "cycling", "bjj" -- added
+    # 2026-08-30 alongside build_activity_based_load_series() below, so a
+    # per-sport breakdown doesn't need to re-parse `source`'s "x:y" string.
+    sport: str = "unknown"
 
 
 def combine_daily_strain(components: list[StrainComponent]) -> dict[str, Any]:
@@ -177,22 +183,29 @@ def _strain_zone(strain: float) -> str:
     return "all_out"
 
 
-def build_daily_strain(
+def _gather_day_components(
     conn: sqlite3.Connection, date: str, config: dict[str, Any]
-) -> dict[str, Any]:
-    """DB-facing assembly for one calendar date: real `activities` (any
-    sport, >= 5 real minutes, with a real `avg_hr`) via TRIMP, plus any
-    `bjj_sessions` entry NOT already covered by a real BJJ-tagged activity
-    that day, via Foster's method. Calisthenics has no separate path here
-    -- it only contributes when actually recorded as a real Garmin
-    "Strength Training" activity with HR (the two-signal design already
-    established for calisthenics, CLAUDE.md's "Calisthenics tracking
-    closed" section), never estimated from RPE alone (no duration field
-    exists on `calisthenics_sessions` to run Foster's method against).
+) -> list[StrainComponent]:
+    """The actual per-day assembly: real `activities` (any sport, >= 5 real
+    minutes, with a real `avg_hr`) via TRIMP, plus any `bjj_sessions` entry
+    NOT already covered by a real BJJ-tagged activity that day, via Foster's
+    method. Calisthenics has no separate path here -- it only contributes
+    when actually recorded as a real Garmin "Strength Training" activity
+    with HR (the two-signal design already established for calisthenics,
+    CLAUDE.md's "Calisthenics tracking closed" section), never estimated
+    from RPE alone (no duration field exists on `calisthenics_sessions` to
+    run Foster's method against).
 
     Requires that date's own `resting_hr` -- without it there's no real
     HR-reserve baseline to compute TRIMP against, so activities that day
     are skipped entirely rather than falling back to a borrowed value.
+
+    Extracted 2026-08-30 from what used to be `build_daily_strain()`'s own
+    body, so `build_activity_based_load_series()` below can walk many days
+    and get EXACTLY this same per-day answer, rather than a second,
+    independently-drifting implementation of "what did today's training
+    load actually consist of." One source of truth, reused by the Strain
+    ring, the CTL/ATL/TSB trend, and the Training page's sport breakdown.
     """
     daily_row = conn.execute(
         "SELECT resting_hr FROM daily_metrics WHERE date = ?", (date,)
@@ -227,6 +240,7 @@ def build_daily_strain(
                     raw_load=trimp,
                     description=f"{row['sport']} ({row['duration_s'] / 60:.0f} min, "
                     f"avg HR {row['avg_hr']:.0f})",
+                    sport="bjj" if is_bjj else (row["sport"] or "unknown"),
                 )
             )
             if is_bjj:
@@ -248,7 +262,121 @@ def build_daily_strain(
                     raw_load=foster,
                     description=f"{row['session_type']} ({row['duration_min']} min, "
                     f"RPE {row['session_rpe']}) -- no HR data, estimated from RPE",
+                    sport="bjj",
                 )
             )
 
-    return combine_daily_strain(components)
+    return components
+
+
+def build_daily_strain(
+    conn: sqlite3.Connection, date: str, config: dict[str, Any]
+) -> dict[str, Any]:
+    """DB-facing assembly for one calendar date -- see
+    `_gather_day_components()` for what actually gets gathered.
+    """
+    return combine_daily_strain(_gather_day_components(conn, date, config))
+
+
+def _earliest_load_relevant_date(conn: sqlite3.Connection, as_of_date: str) -> str | None:
+    """The earliest date this module could possibly have anything real to
+    report for -- either a `resting_hr` reading (TRIMP's prerequisite) OR a
+    `bjj_sessions` log (Foster's method needs no HR at all, see
+    `_gather_day_components()`). Real bug caught in testing, not shipped:
+    an early version anchored the walk to `resting_hr` alone, so a BJJ
+    session logged for a date with no `daily_metrics` row at all (a real,
+    plausible case -- Garmin sync and manual BJJ logging are independent
+    habits) was silently invisible to the whole series, even though
+    `_gather_day_components()` itself never required resting_hr for BJJ's
+    Foster fallback.
+    """
+    candidates = []
+    for table, date_col, extra_where in (
+        ("daily_metrics", "date", "resting_hr IS NOT NULL"),
+        ("bjj_sessions", "date", "1=1"),
+    ):
+        row = conn.execute(
+            f"SELECT MIN({date_col}) AS d FROM {table} WHERE {extra_where} AND {date_col} <= ?",
+            (as_of_date,),
+        ).fetchone()
+        if row is not None and row["d"] is not None:
+            candidates.append(row["d"])
+    return min(candidates) if candidates else None
+
+
+def _dates_since_earliest_load_relevant_date(
+    conn: sqlite3.Connection, as_of_date: str
+) -> list[str]:
+    """Every ISO date from `_earliest_load_relevant_date()` through
+    `as_of_date`, inclusive. Shared by both activity-based-load functions
+    below so they walk the identical range.
+    """
+    earliest = _earliest_load_relevant_date(conn, as_of_date)
+    if earliest is None:
+        return []
+
+    start = date_cls.fromisoformat(earliest)
+    end = date_cls.fromisoformat(as_of_date)
+    dates = []
+    d = start
+    while d <= end:
+        dates.append(d.isoformat())
+        d += timedelta(days=1)
+    return dates
+
+
+def build_activity_based_load_series(
+    conn: sqlite3.Connection, config: dict[str, Any], as_of_date: str
+) -> list[tuple[str, float]]:
+    """A real, per-day training-load series -- TRIMP wherever a real
+    `avg_hr` exists, Foster's method (scaled) for BJJ manual logs not
+    already covered by a real matching activity -- walking every day from
+    `_earliest_load_relevant_date()` (the earliest `resting_hr` OR BJJ log,
+    whichever is earlier -- Foster's method needs no HR at all) through
+    `as_of_date`.
+
+    Built 2026-08-30, replacing this project's previous reliance on
+    `activities.training_load` (Garmin/Strava's own, largely NULL, opaque-
+    unit column -- see CLAUDE.md's training-load build-out notes) for the
+    CTL/ATL/TSB trend, monotony/strain, and the Training page's sport
+    breakdown. Real motivating gap: Francisco's bike rides and (once the
+    HRM 600 chest strap is in use) future BJJ sessions all have a real,
+    usable `avg_hr` on this account -- they just never had a Garmin/Strava-
+    reported `training_load` number, which was the only thing those charts
+    read before. TRIMP is the same real, cited method (Banister 1991)
+    Daily Strain already uses, reused here via `_gather_day_components()`
+    rather than re-derived, so the Strain ring and this series can never
+    independently disagree about what a given day's real training consisted
+    of.
+
+    Every day gets a real, computed answer (possibly 0.0, a genuine "no
+    HR-having activity and no BJJ log that day" result) -- this is a
+    stronger guarantee than the old `training_load`-based series ever had,
+    since it no longer depends on a column that's almost always NULL. Walks
+    one day at a time (not a single batch query) specifically so it reuses
+    `_gather_day_components()` exactly, not a second implementation of the
+    same per-day logic -- personal-database scale keeps this fast (a few
+    hundred small, indexed queries), verified directly rather than assumed.
+    """
+    return [
+        (iso, sum(c.raw_load for c in _gather_day_components(conn, iso, config)))
+        for iso in _dates_since_earliest_load_relevant_date(conn, as_of_date)
+    ]
+
+
+def build_load_by_sport_rows(
+    conn: sqlite3.Connection, config: dict[str, Any], as_of_date: str
+) -> list[dict[str, Any]]:
+    """`{"date", "sport", "load"}` rows -- the same components
+    `build_activity_based_load_series()` sums into one daily total, grouped
+    by sport instead. One real day can produce more than one row (e.g. a
+    ride AND a BJJ class the same day); a day with nothing real contributes
+    no rows at all (never a fabricated "unknown: 0.0" row).
+    """
+    rows: list[dict[str, Any]] = []
+    for iso in _dates_since_earliest_load_relevant_date(conn, as_of_date):
+        by_sport: dict[str, float] = {}
+        for c in _gather_day_components(conn, iso, config):
+            by_sport[c.sport] = by_sport.get(c.sport, 0.0) + c.raw_load
+        rows.extend({"date": iso, "sport": sport, "load": load} for sport, load in by_sport.items())
+    return rows

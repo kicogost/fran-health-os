@@ -31,6 +31,7 @@ from typing import Any
 from health_os.coach import rules
 from health_os.metrics import body_comp
 from health_os.metrics import load as load_metrics
+from health_os.metrics import strain as strain_metrics
 
 WEEK_DAYS = 7
 WAIST_LOOKBACK_DAYS = 21  # enough slack to catch last week's + this week's Sunday measurement
@@ -132,26 +133,13 @@ def compute_weekly_retro(
         if week_start_iso <= r["date"] <= week_end_iso and r["sleep_total_min"] is not None
     ]
 
-    bjj_cal = config["training_load"]["bjj_rpe_calibration_factor"]
-    activity_loads = [
-        (r["local_date"], r["training_load"])
-        for r in conn.execute(
-            "SELECT local_date, training_load FROM activities WHERE training_load IS NOT NULL "
-            "AND local_date <= ?",
-            (week_end_iso,),
-        ).fetchall()
-    ]
-    bjj_loads = [
-        (r["date"], r["computed_load"])
-        for r in conn.execute(
-            "SELECT date, computed_load FROM bjj_sessions WHERE computed_load IS NOT NULL "
-            "AND date <= ?",
-            (week_end_iso,),
-        ).fetchall()
-    ]
-    daily_load_series = load_metrics.build_daily_load_series(
-        activity_loads, bjj_loads, bjj_calibration_factor=bjj_cal
-    )
+    # Rebuilt 2026-08-30 to reuse metrics.strain.build_activity_based_load_
+    # series() -- the same TRIMP/Foster per-day computation the Training page
+    # and Daily Strain ring use — instead of activities.training_load
+    # (largely NULL, see CLAUDE.md's training-load build-out notes). Without
+    # this, the weekly retro's TSB/monotony numbers would keep reflecting a
+    # different, sparser picture of training load than the rest of the app.
+    daily_load_series = strain_metrics.build_activity_based_load_series(conn, config, week_end_iso)
     ctl_atl_tsb = load_metrics.compute_ctl_atl(daily_load_series)
     latest_tsb = ctl_atl_tsb[-1][3] if ctl_atl_tsb else None
     week_loads = [load for d, load in daily_load_series if week_start_iso <= d <= week_end_iso]

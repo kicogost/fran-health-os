@@ -24,6 +24,7 @@ from health_os.coach import rules
 from health_os.metrics import baselines, body_comp
 from health_os.metrics import load as load_metrics
 from health_os.metrics import readiness as readiness_metrics
+from health_os.metrics import strain as strain_metrics
 
 NIGGLE_LOOKBACK_DAYS = 7
 BAND_HISTORY_DAYS = 3
@@ -38,23 +39,21 @@ def _fetch_daily_metrics(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 
 def _fetch_load_series(
-    conn: sqlite3.Connection, bjj_calibration_factor: float
+    conn: sqlite3.Connection, config: dict[str, Any], as_of_date: str
 ) -> list[tuple[str, float]]:
-    activity_loads = [
-        (r["local_date"], r["training_load"])
-        for r in conn.execute(
-            "SELECT local_date, training_load FROM activities WHERE training_load IS NOT NULL"
-        ).fetchall()
-    ]
-    bjj_loads = [
-        (r["date"], r["computed_load"])
-        for r in conn.execute(
-            "SELECT date, computed_load FROM bjj_sessions WHERE computed_load IS NOT NULL"
-        ).fetchall()
-    ]
-    return load_metrics.build_daily_load_series(
-        activity_loads, bjj_loads, bjj_calibration_factor=bjj_calibration_factor
-    )
+    """Rebuilt 2026-08-30 to reuse `metrics.strain.build_activity_based_load_
+    series()` -- the same TRIMP/Foster per-day computation the Training page
+    and the Daily Strain ring use — instead of `activities.training_load`
+    (Garmin/Strava's own, largely NULL, opaque-unit column). Without this,
+    the `tsb_persistently_negative` structural trigger and `monotony_strain_
+    flag()` below would keep reading a different, sparser picture of
+    training load than what the Training page now shows, an inconsistency
+    this project's own discipline treats as a real bug, not a cosmetic one
+    (see api/training.py's 2026-08-30 rebuild for the original motivation).
+    Already bounded to `<= as_of_date` internally (walks from the earliest
+    real `resting_hr` date through `as_of_date`, never past it).
+    """
+    return strain_metrics.build_activity_based_load_series(conn, config, as_of_date)
 
 
 def _readiness_result_as_of(
@@ -136,8 +135,7 @@ def compute_daily_plan(
     downstream consumer in this function only ever sees data through `today`.
     """
     daily_rows = [r for r in _fetch_daily_metrics(conn) if r["date"] <= today]
-    bjj_cal = config["training_load"]["bjj_rpe_calibration_factor"]
-    daily_load_series = [(d, load) for d, load in _fetch_load_series(conn, bjj_cal) if d <= today]
+    daily_load_series = _fetch_load_series(conn, config, today)
     tsb_series = [
         (d, tsb) for d, _ctl, _atl, tsb in load_metrics.compute_ctl_atl(daily_load_series)
     ]

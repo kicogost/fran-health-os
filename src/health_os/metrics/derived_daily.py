@@ -22,24 +22,24 @@ gained 2026-08-28 after a real future-data-leakage bug was found there
 (see CLAUDE.md's "Deep review pass" entry). This module is built fresh
 with that lesson already applied, not retrofitted.
 
-**CTL/ATL/TSB honesty note**: `metrics.load.build_daily_load_series()`
-only walks from the first to the LAST OBSERVED date in its inputs — it does
-NOT extend to `as_of_date` with invented zero-load days if training/BJJ
-logging has gone stale (a real, already-documented condition in this
-project — CLAUDE.md's training-load build-out section). This module does
-NOT paper over that by padding with assumed zeros (an untracked training
-day is not the same as a genuine rest day, and inventing that distinction
-away would be exactly the kind of false precision design principle 6 warns
-against). Instead, when a series' last real date is more than
-`load_metrics.STALE_LOAD_THRESHOLD_DAYS` before `as_of_date` (checked via
-`load_metrics.load_staleness()` — promoted out of this module 2026-08-30 so
-the LIVE Training page can share the exact same staleness read instead of a
-second un-synced copy), the affected rows carry `confidence="stale"` and
-`inputs_json` records how many days stale, so a dashboard reading these
-rows can't mistake a stale carried-forward number for a fresh one. The same
-treatment applies to the weight/EWMA metrics for the identical reason (a
-gap in weigh-ins isn't a gap in load, but the principle — don't silently
-present old data as current — is the same).
+**CTL/ATL/TSB honesty note, updated 2026-08-30**: this module used to feed
+CTL/ATL/TSB/monotony/strain from `metrics.load.build_daily_load_series()`,
+which only walked from the first to the LAST OBSERVED date in its
+`activities.training_load` + `bjj_sessions.computed_load` inputs — a real
+problem, since that column is almost always NULL (CLAUDE.md's training-load
+build-out section) and the series could silently stop advancing for months.
+That's now fixed at the source: `metrics.strain.build_activity_based_load_
+series()` computes a REAL per-day value (TRIMP wherever `avg_hr` exists,
+Foster's method for BJJ) for every day through `as_of_date`, including
+genuine 0.0 rest days, so there's no gap left to silently pad with invented
+zeros — `_load_based_metrics()`/`_tsb_zscore_metric()` no longer have a
+"stale" branch at all (removed, not left dead — see their own docstrings).
+
+The weight/EWMA metrics below still use the ORIGINAL staleness mechanism
+(`load_metrics.load_staleness()`) — a gap in weigh-ins is a genuinely
+different, still-real problem (nothing about the load-series fix changes
+whether Francisco actually weighed himself recently), so that check remains
+exactly as it was.
 """
 
 from __future__ import annotations
@@ -52,6 +52,7 @@ from health_os.core.models import DerivedMetric
 from health_os.metrics import baselines, body_comp
 from health_os.metrics import load as load_metrics
 from health_os.metrics import readiness as readiness_metrics
+from health_os.metrics import strain as strain_metrics
 
 
 def _rows_to_tuples(rows: list[sqlite3.Row], value_col: str) -> list[tuple[str, float]]:
@@ -65,27 +66,18 @@ def _fetch_daily_metrics(conn: sqlite3.Connection, as_of_date: str) -> list[sqli
 
 
 def _fetch_load_series(
-    conn: sqlite3.Connection, bjj_calibration_factor: float, as_of_date: str
+    conn: sqlite3.Connection, config: dict[str, Any], as_of_date: str
 ) -> list[tuple[str, float]]:
-    activity_loads = [
-        (r["local_date"], r["training_load"])
-        for r in conn.execute(
-            "SELECT local_date, training_load FROM activities "
-            "WHERE training_load IS NOT NULL AND local_date <= ?",
-            (as_of_date,),
-        ).fetchall()
-    ]
-    bjj_loads = [
-        (r["date"], r["computed_load"])
-        for r in conn.execute(
-            "SELECT date, computed_load FROM bjj_sessions "
-            "WHERE computed_load IS NOT NULL AND date <= ?",
-            (as_of_date,),
-        ).fetchall()
-    ]
-    return load_metrics.build_daily_load_series(
-        activity_loads, bjj_loads, bjj_calibration_factor=bjj_calibration_factor
-    )
+    """Rebuilt 2026-08-30 to reuse `metrics.strain.build_activity_based_load_
+    series()` -- the same TRIMP/Foster per-day computation the Training page
+    and the Daily Strain ring use — instead of `activities.training_load`
+    (largely NULL, see CLAUDE.md's training-load build-out notes). Without
+    this, the persisted `derived_daily` CTL/ATL/TSB/monotony/strain history
+    would keep reflecting a sparser, different picture of training load than
+    the live Training page now shows. Already bounded to `<= as_of_date`
+    internally (see this module's own future-leakage discipline note above).
+    """
+    return strain_metrics.build_activity_based_load_series(conn, config, as_of_date)
 
 
 def _metric(
@@ -169,9 +161,20 @@ def _load_based_metrics(
     load_series: list[tuple[str, float]], as_of_date: str
 ) -> list[DerivedMetric]:
     """CTL/ATL/TSB/monotony/strain — all derived from the same bounded
-    `load_series`, all sharing the same staleness read (see module
-    docstring). Returns insufficient_data rows for all five if there's no
+    `load_series`. Returns insufficient_data rows for all five if there's no
     load data at all as of this date, rather than raising.
+
+    No "stale" confidence branch anymore (removed 2026-08-30, alongside the
+    switch to `strain.build_activity_based_load_series()`): that branch
+    existed because the OLD `activities.training_load`-based series could
+    silently stop updating for months while still reporting a non-empty
+    series (see git history / ADR-adjacent CLAUDE.md notes on the
+    training-load coverage gap). The new series always walks through to
+    `as_of_date` itself, computing a REAL, confirmed value for every day in
+    between (including genuine 0.0 rest days) — so `load_series[-1][0]` is
+    now always `as_of_date` whenever the series is non-empty, and the old
+    staleness check could structurally never fire again. Removed rather
+    than left in place looking like it still does something.
     """
     if not load_series:
         return [
@@ -179,53 +182,20 @@ def _load_based_metrics(
             for name in ("ctl", "atl", "tsb", "monotony", "strain")
         ]
 
-    is_stale, days_stale = load_metrics.load_staleness(load_series[-1][0], as_of_date)
-    stale_inputs = (
-        {"last_real_data_date": load_series[-1][0], "days_stale": days_stale} if is_stale else None
-    )
-
     _, ctl, atl, tsb = load_metrics.compute_ctl_atl(load_series)[-1]
-    ctl_confidence = "stale" if is_stale else "full"
-
     ms = load_metrics.compute_monotony_strain(load_series)
-    ms_confidence = "stale" if (is_stale and ms["confidence"] == "full") else ms["confidence"]
-    strain_inputs = dict(stale_inputs or {})
-    if ms["weekly_load"] is not None:
-        strain_inputs["weekly_load"] = ms["weekly_load"]
 
     return [
-        _metric(
-            as_of_date,
-            "ctl",
-            value=ctl,
-            unit="load",
-            confidence=ctl_confidence,
-            inputs=stale_inputs,
-        ),
-        _metric(
-            as_of_date,
-            "atl",
-            value=atl,
-            unit="load",
-            confidence=ctl_confidence,
-            inputs=stale_inputs,
-        ),
-        _metric(
-            as_of_date,
-            "tsb",
-            value=tsb,
-            unit="load",
-            confidence=ctl_confidence,
-            inputs=stale_inputs,
-        ),
+        _metric(as_of_date, "ctl", value=ctl, unit="load", confidence="full"),
+        _metric(as_of_date, "atl", value=atl, unit="load", confidence="full"),
+        _metric(as_of_date, "tsb", value=tsb, unit="load", confidence="full"),
         _metric(
             as_of_date,
             "monotony",
             value=ms["monotony"],
             window_days=7,
             n_days=ms["n_days"],
-            confidence=ms_confidence,
-            inputs=stale_inputs,
+            confidence=ms["confidence"],
         ),
         _metric(
             as_of_date,
@@ -233,8 +203,8 @@ def _load_based_metrics(
             value=ms["strain"],
             window_days=7,
             n_days=ms["n_days"],
-            confidence=ms_confidence,
-            inputs=strain_inputs or None,
+            confidence=ms["confidence"],
+            inputs={"weekly_load": ms["weekly_load"]} if ms["weekly_load"] is not None else None,
         ),
     ]
 
@@ -245,12 +215,11 @@ def _tsb_series(load_series: list[tuple[str, float]]) -> list[tuple[str, float]]
 
 
 def _tsb_zscore_metric(load_series: list[tuple[str, float]], as_of_date: str) -> DerivedMetric:
+    """No "stale" branch -- see `_load_based_metrics()`'s docstring for why
+    that's no longer reachable with the new activity-based load series.
+    """
     tsb_series = _tsb_series(load_series)
     result = load_metrics.compute_tsb_zscore(tsb_series)
-    is_stale, days_stale = load_metrics.load_staleness(
-        tsb_series[-1][0] if tsb_series else None, as_of_date
-    )
-    confidence = "stale" if (is_stale and result["confidence"] == "full") else result["confidence"]
     return _metric(
         as_of_date,
         "tsb_zscore",
@@ -258,8 +227,7 @@ def _tsb_zscore_metric(load_series: list[tuple[str, float]], as_of_date: str) ->
         unit="sd",
         window_days=load_metrics.DEFAULT_TSB_ZSCORE_WINDOW_DAYS,
         n_days=result["n_days"],
-        confidence=confidence,
-        inputs={"days_stale": days_stale} if is_stale else None,
+        confidence=result["confidence"],
     )
 
 
@@ -413,8 +381,7 @@ def compute_derived_metrics(
     computable data still gets an `insufficient_data` row, never a gap.
     """
     daily_rows = _fetch_daily_metrics(conn, as_of_date)
-    bjj_cal = config["training_load"]["bjj_rpe_calibration_factor"]
-    load_series = _fetch_load_series(conn, bjj_cal, as_of_date)
+    load_series = _fetch_load_series(conn, config, as_of_date)
 
     hooper_row = conn.execute(
         "SELECT hooper_index FROM subjective_log WHERE date = ? AND hooper_index IS NOT NULL",
