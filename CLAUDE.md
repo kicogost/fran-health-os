@@ -2391,6 +2391,44 @@ seeded preview of Aug 29's real bike-ride numbers to confirm the dual-ring layou
 renders correctly once data exists — reverted immediately after, never left in the
 committed code.
 
+## Sleep quality blended in, HRV/RHR hidden from Today (2026-08-30)
+
+Two direct follow-ups from Francisco looking at the redesigned Today page: "can we
+build our sleep score factoring in REM/deep/restlessness the way Garmin does" and
+"let's remove HRV/RHR from the screen, we don't need it there (we can use it for
+calculations)."
+
+**Sleep quality**: `metrics/readiness.py: _sleep_component_score()` now blends two
+halves — the existing quantity score (duration vs 8h need, 50/50 with 14-day debt)
+and **Garmin's own `sleep_score`**, which already factors in REM/deep/restlessness/
+timing. Deliberately reuses Garmin's real, tuned quality algorithm rather than
+inventing a stage-weighting formula from raw deep/light/rem/awake minutes —
+re-deriving a worse approximation of something already measured isn't adding real
+information. Quality is optional and additive: falls back to quantity-only when a
+date has no Garmin sleep_score, so this stays exactly backward-compatible. **Both**
+independent call sites that compute readiness (`coach/briefing.py` for the live
+Today page, `metrics/derived_daily.py` for the persisted history) needed the
+identical fix — the earlier TSB-staleness bug this session already taught this
+project these two call sites can silently drift apart, so both were updated and
+tested together, not just one. `api/today.py`'s sleep display now reads "7h29m ·
+Garmin 74" instead of just duration. **Real effect on the actual database**: sleep
+score dropped from 97 to 85 (blending in that night's real Garmin score of 74,
+which had flagged low REM), overall readiness from 59.2 to 55.4 — still Amber, but
+now honestly reflecting the lower sleep quality rather than only counting hours.
+Recomputed the full persisted `derived_daily` history (162 days) so the readiness
+trend chart reflects the corrected formula throughout, not just today forward.
+
+**HRV/RHR hidden from the Today page**: removed from the "Readiness components" row
+— still fully computed and returned by the API (they still drive the score
+underneath, and remain visible via the Sleep/HRV/RHR charts on Trends), just not
+rendered as rings on Today anymore, per Francisco's own call that they added
+confusion without adding value at a glance. Sleep and Freshness stay.
+
+9 new/updated tests, including two explicit wiring tests locking in that
+`sleep_score` actually reaches both independent call sites, not just the pure
+formula in isolation. 478 tests total, ruff clean. Verified visually — the
+Readiness components row now shows only Sleep and Freshness.
+
 ## Definition of done for v1
 
 One command each morning: syncs Garmin + Strava, recomputes everything, prints a
