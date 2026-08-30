@@ -2254,13 +2254,74 @@ result from significant to not, not just asserted in prose. 439 tests total, ruf
 clean. Both features verified visually via Chrome-headless screenshot against the
 real database, through the one-command-served build (port 8000).
 
-**Not yet built**: the Q&A coach interface itself (needs an Anthropic API key —
-Francisco asked about cost first; real current pricing checked: ~$1-5/month on Haiku
-for realistic personal-use volume, since the actual analysis stays in deterministic
-Python and the LLM's only job is narrating it — waiting on him to add a key to
-`.env` before wiring the actual chat endpoint). The correlation panel and readiness
-history are both already shaped to feed that interface directly once it exists — no
-rework anticipated.
+**Not yet built, and paused by choice (2026-08-30)**: the Q&A coach interface itself.
+Real current pricing was checked first (~$1-5/month on Haiku for realistic personal-
+use volume, since the actual analysis stays in deterministic Python and the LLM's
+only job is narrating it) and given to Francisco — he then said to hold off and
+revisit later, not blocked on anything technical. The correlation panel and readiness
+history are both already shaped to feed that interface directly whenever it does get
+built — no rework anticipated from the pause.
+
+## Real bugs found comparing the dashboard against Francisco's actual Garmin app
+(2026-08-30)
+
+Francisco opened the real Garmin app next to the dashboard and found concrete
+mismatches — not a vague complaint, specific wrong numbers (screenshots showed real
+HRV 90ms/RHR 52bpm/sleep score 74, dashboard showed component rings reading "HRV 47",
+"RHR 24", "Sleep 97"). Investigated both to real root cause before touching anything,
+starting by checking the raw ingested data byte-for-byte against his screenshots —
+100% correct (52bpm, 90ms, 449min sleep, deep/light/rem/awake all matched exactly).
+The bugs were downstream of correct raw data, not in ingestion.
+
+**Bug 1 — a real coverage-gap artifact was dragging readiness to RED.** TSB
+("Freshness") scored a flat 0/100. Root cause, reproduced directly: `activities.
+training_load` has near-zero coverage across this account's real activities
+(documented extensively elsewhere in this file), so `build_daily_load_series()`
+fills nearly every day for months with a literal `0.0` — not because Francisco
+rested, but because no source ever recorded a load value for what he actually did.
+When his first real BJJ log (2026-08-28, `computed_load=720`) landed against that
+artificially-flat backdrop, ATL spiked from a near-zero baseline (`ctl=38.8,
+atl=95.85, tsb=-57.05`) while CTL barely moved, producing a z-score of -3.08 against
+a trailing window that's almost entirely coverage-gap zeros, not real rest days — a
+data-coverage artifact wearing the shape of a real finding. **Fixed**:
+`config/athlete.yaml: readiness_score.weight_tsb` set to `0.0` (documented in-line
+with the exact numbers and the explicit condition for reverting — once load-data
+coverage/calibration is real, kickoff doc 2.4, not before). `metrics/readiness.py`'s
+existing `covered_weight <= 0` handling — already built during the earlier deep
+review pass specifically anticipating this exact scenario — safely drops TSB via the
+same "missing = renormalize the rest" path as any other absent component, rather
+than needing a new code path. **Verified**: today's score moved from 49.3 (RED) to
+59.2 (AMBER) — a materially more accurate read given HRV and sleep were both close to
+normal. Recomputed the full persisted `derived_daily` history (162 days) so the new
+readiness trend chart reflects the corrected weighting throughout, not just today
+forward.
+
+**Bug 2 — the component rings never showed the actual reading, only the abstracted
+score.** "HRV 47" was reasonably read as 47ms; it was always the 0-100 readiness
+sub-score (a clamped SD-deviation-from-baseline transform), never the raw sensor
+value, and the raw value was never displayed anywhere on the page. Purely
+presentational — the underlying computation was correct, just unlabeled next to a
+number that looked like it could be a raw reading. **Fixed**: `api/today.py` gained
+`_annotate_components_with_display()`, attaching a real `display_raw` string ("90ms",
+"52bpm", "7h29m") to each component plus an `excluded` flag (true when
+`weight_used == 0`, covering Bug 1's fix) so a zero-weight component renders visibly
+different — dashed, desaturated, "not counted" — from a genuine, counted low score
+rather than looking identical to one. `ComponentRing.tsx` updated to match.
+
+**Process note worth keeping**: one of the new `today.py` tests initially would have
+passed vacuously — seeded only one day of history, so `readiness.components` came
+back empty and an `if "hrv" in components` check never actually exercised anything.
+Caught before shipping by adding an explicit non-vacuous assertion
+(`assert "hrv" in components`) and then fixing the seed data (HRV specifically needs
+60+ real days before `compute_daily_plan()` includes it at all — a documented "seed"
+vs "computed" two-phase design, unlike RHR which has no such seed phase and reaches
+full confidence at 21 days). Worth remembering next time a test's assertions are
+wrapped in an `if` — that's often a sign the fixture isn't actually producing the
+condition being tested.
+
+15 new/updated tests, 449 total passing, ruff clean. Verified visually via Chrome-
+headless screenshot against the real database, through the one-command-served build
+— every ring's raw value now matches Francisco's real Garmin app exactly.
 
 ## Definition of done for v1
 
