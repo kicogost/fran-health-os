@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from health_os.coach.rules import (
+    calisthenics_exercise_breakdown,
     classify_readiness_band,
     has_recent_neck_niggle,
     hooper_sustained_high,
@@ -109,6 +110,70 @@ class TestSessionGuidance:
         assert "progression" in result.lower()
 
 
+class TestCalisthenicsExerciseBreakdown:
+    _CONFIG = {
+        "comp_prep": {
+            "strength_sessions": {
+                "strength_a": {
+                    "exercises": [
+                        "weighted or slow-tempo pull-ups: 4x5 (superset with next)",
+                        "pseudo-planche push-ups: 3x8",
+                    ]
+                },
+                "strength_b": {"exercises": []},
+                "no_exercises_key": {"day": "monday"},
+            }
+        }
+    }
+
+    def test_matching_subtype_joins_exercises(self) -> None:
+        result = calisthenics_exercise_breakdown(self._CONFIG, "strength_a")
+        assert result == (
+            "weighted or slow-tempo pull-ups: 4x5 (superset with next); "
+            "pseudo-planche push-ups: 3x8"
+        )
+
+    def test_unknown_subtype_returns_none_not_invented(self) -> None:
+        # Design principle 6: never invent data -- e.g. a holiday-week
+        # substitution logged under a subtype with no config entry at all.
+        assert calisthenics_exercise_breakdown(self._CONFIG, "push_and_abs_holiday") is None
+
+    def test_empty_exercises_list_returns_none(self) -> None:
+        assert calisthenics_exercise_breakdown(self._CONFIG, "strength_b") is None
+
+    def test_subtype_present_but_no_exercises_key_returns_none(self) -> None:
+        assert calisthenics_exercise_breakdown(self._CONFIG, "no_exercises_key") is None
+
+    def test_none_subtype_returns_none(self) -> None:
+        assert calisthenics_exercise_breakdown(self._CONFIG, None) is None
+
+    def test_missing_strength_sessions_config_does_not_crash(self) -> None:
+        assert calisthenics_exercise_breakdown({}, "strength_a") is None
+
+    def test_against_the_real_config_shape(self) -> None:
+        # Verified 2026-08-31 against the actual config/athlete.yaml: real
+        # exercise entries never contain a semicolon, so "; " is an
+        # unambiguous separator -- locked in here so a future exercise
+        # string containing one would be caught by this test failing to
+        # round-trip cleanly, not silently.
+        config = {
+            "comp_prep": {
+                "strength_sessions": {
+                    "strength_b": {
+                        "exercises": [
+                            "dips, weighted if bodyweight is easy: 4x6",
+                            "Copenhagen plank: 3x20s/side (adductors — guard retention transfer)",
+                        ]
+                    }
+                }
+            }
+        }
+        result = calisthenics_exercise_breakdown(config, "strength_b")
+        assert result is not None
+        assert result.count("; ") == 1
+        assert ";" not in result.replace("; ", "")
+
+
 class TestShouldDowngradeToRest:
     def test_two_consecutive_red_triggers(self) -> None:
         assert should_downgrade_to_rest(["green", "red", "red"])
@@ -154,19 +219,62 @@ class TestHrvSustainedLow:
 
 
 class TestTsbPersistentlyNegative:
-    def test_four_negative_days_triggers(self) -> None:
-        series = [(f"d{i}", -5.0) for i in range(4)]
-        assert tsb_persistently_negative(series)
+    """Rewritten 2026-08-31: this trigger switched from a raw-sign check
+    ("TSB negative at all") to a self-relative z-score check
+    (`metrics.load.compute_tsb_zscore()`, >= 1 SD below the athlete's own
+    trailing 90-day TSB distribution, for `window_days` days straight) —
+    see `coach/rules.py: TSB_ZSCORE_NEGATIVE_THRESHOLD`'s docstring for the
+    real-data justification (the old check fired on 59% of real days / a
+    17-day streak; the new one fires on ~4% of the same real history).
+    """
 
-    def test_one_positive_day_breaks_it(self) -> None:
-        series = [("d0", -5.0), ("d1", -5.0), ("d2", 1.0), ("d3", -5.0)]
-        assert not tsb_persistently_negative(series)
+    @staticmethod
+    def _dated(values: list[float]) -> list[tuple[str, float]]:
+        return [(f"d{i:03d}", v) for i, v in enumerate(values)]
 
     def test_insufficient_days_is_false(self) -> None:
         assert not tsb_persistently_negative([("d0", -5.0), ("d1", -5.0)])
 
-    def test_zero_is_not_negative(self) -> None:
-        series = [(f"d{i}", 0.0) for i in range(4)]
+    def test_mildly_negative_every_day_does_not_trigger(self) -> None:
+        # 30 days oscillating around -5 (mean -5, small noise) -- every
+        # single day is "negative" under the old raw-sign check, but none of
+        # the last 4 days sits >= 1 SD below ITS OWN trailing distribution
+        # (hand-verified: the last 4 days' z-scores are -1.22, 0.0, +1.19,
+        # -1.22 -- one day is even ABOVE its own recent mean). This is
+        # exactly the real-world case the old check got wrong: routine
+        # noise around a stable, mildly-negative level, not real
+        # accumulating fatigue.
+        mild = [-5.0, -4.0, -6.0, -5.0, -4.0, -6.0] * 5
+        series = self._dated(mild)
+        assert not tsb_persistently_negative(series)
+
+    def test_genuine_sustained_deep_dip_triggers(self) -> None:
+        # 30 days oscillating near 0 (mean 0, small noise, an established
+        # "normal" range), then a real, sustained deep dip for the last 4
+        # days -- a genuine multi-day fatigue spike, not noise. Hand-
+        # verified z-scores for the last 4 days: -5.42, -3.98, -2.91, -2.80
+        # -- all comfortably past the 1 SD threshold every single day.
+        stable = [0.0, 1.0, -1.0, 0.0, 1.0, -1.0] * 5
+        dip_tail = [-30.0, -32.0, -28.0, -31.0]
+        series = self._dated(stable + dip_tail)
+        assert tsb_persistently_negative(series)
+
+    def test_one_day_recovering_above_threshold_breaks_the_streak(self) -> None:
+        # Same deep-dip setup as above, but the 3rd of the 4 days recovers
+        # to within 1 SD of normal (a real one-day rebound) -- the
+        # "sustained" requirement means this must NOT trigger, same
+        # discipline as hrv_sustained_low()'s "one day breaks it".
+        stable = [0.0, 1.0, -1.0, 0.0, 1.0, -1.0] * 5
+        dip_tail = [-30.0, -32.0, 0.5, -31.0]
+        series = self._dated(stable + dip_tail)
+        assert not tsb_persistently_negative(series)
+
+    def test_constant_series_has_undefined_variance_and_does_not_trigger(self) -> None:
+        # All-identical TSB values -> compute_tsb_zscore()'s own SD is zero
+        # ("undefined_zero_variance", not "full") -- treated as not-firing,
+        # same "don't invent a reading you don't have" rule as everywhere
+        # else, not a fabricated "very high" z-score.
+        series = [(f"d{i:03d}", -5.0) for i in range(20)]
         assert not tsb_persistently_negative(series)
 
 
@@ -387,3 +495,48 @@ class TestShouldDeload:
         )
         assert len(result["markers_fired"]) == 5
         assert result["recommended"] is True
+
+    def test_new_tsb_trigger_plus_one_other_marker_still_recommends_deload(self) -> None:
+        # End-to-end wiring check, not just the isolated bool: a genuinely
+        # deep, sustained TSB dip (same series as
+        # TestTsbPersistentlyNegative.test_genuine_sustained_deep_dip_triggers)
+        # feeds tsb_persistently_negative() for real, and combined with one
+        # other real marker still clears the "2 of 5" gate exactly as before
+        # the z-score rewrite -- the gate itself didn't need to change, only
+        # what counts as the TSB marker being true.
+        stable = [0.0, 1.0, -1.0, 0.0, 1.0, -1.0] * 5
+        dip_tail = [-30.0, -32.0, -28.0, -31.0]
+        series = TestTsbPersistentlyNegative._dated(stable + dip_tail)
+        tsb_flag = tsb_persistently_negative(series)
+        assert tsb_flag is True
+
+        result = should_deload(
+            hrv_deviation=False,
+            rhr_sustained_rise=True,
+            sleep_debt_elevated=False,
+            hooper_sustained_high=False,
+            tsb_persistently_negative=tsb_flag,
+        )
+        assert result["recommended"] is True
+        assert set(result["markers_fired"]) == {"rhr_sustained_rise", "tsb_persistently_negative"}
+
+    def test_only_mildly_negative_tsb_alone_does_not_reach_the_gate(self) -> None:
+        # The routine-noise case from TestTsbPersistentlyNegative -- real
+        # data that would have counted as a fired marker under the old
+        # raw-sign check -- correctly contributes nothing here now, so a
+        # second real marker firing alone (below markers_required=2) does
+        # not recommend a deload.
+        mild = [-5.0, -4.0, -6.0, -5.0, -4.0, -6.0] * 5
+        series = TestTsbPersistentlyNegative._dated(mild)
+        tsb_flag = tsb_persistently_negative(series)
+        assert tsb_flag is False
+
+        result = should_deload(
+            hrv_deviation=False,
+            rhr_sustained_rise=True,
+            sleep_debt_elevated=False,
+            hooper_sustained_high=False,
+            tsb_persistently_negative=tsb_flag,
+        )
+        assert result["recommended"] is False
+        assert result["markers_fired"] == ["rhr_sustained_rise"]

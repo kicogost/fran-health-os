@@ -147,6 +147,43 @@ def session_guidance(
     return table[band]
 
 
+def calisthenics_exercise_breakdown(config: dict[str, Any], subtype: str | None) -> str | None:
+    """The real, prescribed exercise breakdown for a calisthenics session —
+    `config/athlete.yaml: comp_prep.strength_sessions[subtype].exercises` —
+    formatted into one readable line for Today's session card.
+
+    **Real gap closed 2026-08-31**: `strength_sessions` already had a full,
+    real per-exercise prescription (6 exercises with sets/reps/coaching
+    notes per subtype) since the comp-prep plan was entered into config —
+    confirmed by grep that neither this module, `coach/briefing.py`, nor
+    `api/today.py` ever read it before this. Only `scripts/log_calisthenics.py`
+    (the manual logger, `_load_prescribed_exercises()`) ever looked at it, so
+    Today's session card showed a calisthenics day's type and duration only,
+    never what the session actually consists of — contradicting Francisco's
+    own stated goal for Today ("a breakdown for the exact workout I have on
+    the day and how I should approach it").
+
+    Returns `None` — never an invented placeholder — when `subtype` doesn't
+    match a configured key (design principle 6: never invent data; e.g. a
+    holiday-week substitution logged under a session type with no config
+    entry, same gap already handled the same way by the manual logger).
+
+    Joined with "; " into one line rather than one-per-line: each entry is
+    already a short, self-contained "exercise: sets x reps (note)" string
+    (verified against the real config — none contain a semicolon), and
+    `SessionCard.tsx`'s `notes` slot renders a single paragraph, no
+    multi-line support needed for a list this short.
+    """
+    strength_sessions = config.get("comp_prep", {}).get("strength_sessions", {})
+    session_config = strength_sessions.get(subtype or "") if subtype else None
+    if not session_config:
+        return None
+    exercises = session_config.get("exercises") or []
+    if not exercises:
+        return None
+    return "; ".join(exercises)
+
+
 def should_downgrade_to_rest(recent_bands: list[str]) -> bool:
     """True once the readiness signal has been persistently bad enough to
     justify downgrading a scheduled session toward rest — kickoff doc
@@ -179,18 +216,69 @@ def hrv_sustained_low(hrv_observations: list[tuple[str, float]], *, window_days:
     return True
 
 
+# Self-relative magnitude threshold for "meaningfully negative" TSB, in SD
+# units against the athlete's OWN trailing 90-day TSB distribution
+# (`metrics.load.compute_tsb_zscore()`) — mirrors this project's existing
+# ~1 SD convention for "a real signal, not noise" (the HRV/RHR baseline
+# balanced/low split, ADR 0006/0007's noise-floor work), applied here
+# instead of a borrowed absolute TSB number (none exists — ADR 0003/0007).
+#
+# **Real fix, 2026-08-31**: this used to be a raw-sign check ("TSB negative
+# at all" — the kickoff doc's own placeholder, "TBD once load-unit
+# calibration exists"). Checked against the real account (2026-08-31, 164
+# days of TRIMP/Foster-based load, `metrics/strain.py`'s ADR-0008 series):
+# raw TSB was negative on 97/164 days (59%) and sitting on a 17-day
+# consecutive streak the day this was checked — so desensitized it barely
+# functioned as a signal, sitting next to a healthy green/amber readiness
+# score with no explanation of the apparent contradiction. At
+# `z_threshold=1.0` with the existing 4-day window, the same real history
+# fires on only 6 of 148 days with a computable z-score (4.1%) — and still
+# correctly fires on the day this was checked, which really was a genuine,
+# sustained load spike (BJJ + bike days stacking up), z-scores around -2 to
+# -3.5 across the trailing few days, not routine noise. A documented,
+# revisable default, same spirit as this project's other seed-phase numbers
+# (the HRV seed thresholds, the strain saturation constant) — not a
+# literature-validated number, since none exists for TSB magnitude at all.
+TSB_ZSCORE_NEGATIVE_THRESHOLD = 1.0
+
+
 def tsb_persistently_negative(
-    tsb_series: list[tuple[str, float]], *, window_days: int = STRUCTURAL_TSB_NEGATIVE_DAYS
+    tsb_series: list[tuple[str, float]],
+    *,
+    window_days: int = STRUCTURAL_TSB_NEGATIVE_DAYS,
+    z_threshold: float = TSB_ZSCORE_NEGATIVE_THRESHOLD,
 ) -> bool:
-    """True if the last `window_days` days of TSB (from `compute_ctl_atl()`'s
-    output) are all negative — deep accumulated fatigue without recovery.
-    Kickoff doc section 7 flags the exact numeric threshold as "TBD once real
-    load-unit calibration exists" — "negative" (any freshness deficit at all)
-    is the documented placeholder condition here, not a made-up magnitude.
+    """True if each of the last `window_days` days' TSB sat at least
+    `z_threshold` SD below its OWN trailing 90-day distribution, as of that
+    day — the same "recompute for each of the last N days by truncating the
+    series" approach `hrv_sustained_low()`/`hrv_sustained_deviation()`
+    already use for HRV, applied here to `metrics.load.compute_tsb_zscore()`
+    instead of a raw sign check (see the module-level constant above for the
+    real-data justification for both the switch and the threshold).
+
+    Truncates the already-computed `tsb_series` itself (not the underlying
+    daily load series) at each evaluation point, rather than recomputing
+    `compute_ctl_atl()` from scratch each time — equivalent, since a given
+    day's TSB value never depends on later days, and simpler: `compute_tsb_
+    zscore()` already only looks at its own trailing window of whatever
+    series it's handed.
+
+    A day where the z-score isn't computable yet (`confidence !=
+    "full"`, e.g. still in `compute_tsb_zscore()`'s own 14-day minimum) means
+    "not enough history to call this a real signal," not "confirmed calm" —
+    treated as not-firing either way (design principle 6: never invent a
+    reading you don't have).
     """
     if len(tsb_series) < window_days:
         return False
-    return all(tsb < 0 for _, tsb in tsb_series[-window_days:])
+    for i in range(len(tsb_series) - window_days, len(tsb_series)):
+        as_of = tsb_series[: i + 1]
+        result = load_metrics.compute_tsb_zscore(as_of)
+        if result["confidence"] != "full" or result["z_score"] is None:
+            return False
+        if result["z_score"] > -z_threshold:
+            return False
+    return True
 
 
 def monotony_strain_flag(

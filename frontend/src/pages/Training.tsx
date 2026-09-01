@@ -247,6 +247,16 @@ export function TrainingPage() {
                     {data.tsb_zscore.z_score?.toFixed(2)}
                   </p>
                 )}
+                {data.tsb_zscore?.confidence === "full" &&
+                  data.tsb_zscore.z_score != null &&
+                  Math.abs(data.tsb_zscore.z_score) >= 2 && (
+                    <p className="text-xs text-[var(--band-amber)] mt-1">
+                      A swing this big isn&apos;t necessarily a problem on its own -- no study
+                      has validated what size of freshness swing should be considered
+                      concerning, for any sport (see ADR 0003/0007). Shown for transparency,
+                      not as an alarm.
+                    </p>
+                  )}
               </div>
               {data.monotony_strain?.confidence === "full" && (
                 <div className="grid grid-cols-3 gap-3">

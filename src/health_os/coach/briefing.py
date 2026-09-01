@@ -209,7 +209,22 @@ def compute_daily_plan(
         if session.get("subtype"):
             label += f" ({session['subtype'].replace('_', ' ')})"
         instruction = rules.session_guidance(session, band, recent_neck_niggle=recent_neck_niggle)
-        sessions_with_guidance.append({**session, "label": label, "instruction": instruction})
+        session_out = {**session, "label": label, "instruction": instruction}
+        # Real gap closed 2026-08-31: join a calisthenics session against
+        # its real prescribed exercise list (config/athlete.yaml:
+        # comp_prep.strength_sessions) -- see rules.calisthenics_exercise_
+        # breakdown()'s own docstring. Combined with (never overwriting) the
+        # session's own real `notes`, if it has any -- weekly_template's
+        # calisthenics entries don't carry `notes` today, but a future one
+        # (or an injury-guardrail note) must not be silently dropped.
+        if session.get("type") == "calisthenics":
+            breakdown = rules.calisthenics_exercise_breakdown(config, session.get("subtype"))
+            if breakdown:
+                existing_notes = session.get("notes")
+                session_out["notes"] = (
+                    f"{existing_notes} — {breakdown}" if existing_notes else breakdown
+                )
+        sessions_with_guidance.append(session_out)
 
     hrv_obs_full = _rows_to_tuples(daily_rows, "hrv_overnight_ms")
     rhr_obs_full = _rows_to_tuples(daily_rows, "resting_hr")
@@ -307,7 +322,8 @@ def build_briefing(conn: sqlite3.Connection, config: dict[str, Any], today: str)
         )
     if flags["tsb_persistently_negative"]:
         lines.append(
-            "  ⚠ You've been carrying fatigue for over 4 days without a real freshness rebound."
+            "  ⚠ Your training freshness has been well below your own normal range for "
+            "4 days straight — real accumulated fatigue, not just an off day."
         )
     if flags["monotony_strain"]:
         lines.append(
@@ -349,7 +365,7 @@ def _notable_trend_observation(
     rhr_obs = _rows_to_tuples(daily_rows, "resting_hr")
     rhr_result = baselines.compute_rhr_baseline(rhr_obs)
     if rhr_result.get("sustained_rise_flag"):
-        return "Resting HR has been sustained-elevated (>1 SD above baseline) for 3 straight days."
+        return "Your resting heart rate has been higher than usual for 3 days in a row."
 
     weight_obs = _rows_to_tuples(daily_rows, "weight_kg")
     if weight_obs:

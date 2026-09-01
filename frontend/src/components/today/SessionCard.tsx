@@ -13,7 +13,7 @@ const WARNING_MESSAGES: Record<keyof StructuralFlags, string> = {
   hrv_sustained_low:
     "Your HRV has been below your normal range for 3 days straight -- a sign your body could use more recovery.",
   tsb_persistently_negative:
-    "You've been carrying fatigue for over 4 days without a real freshness rebound.",
+    "Your training freshness has been well below your own normal range for 4 days straight -- real accumulated fatigue, not just an off day.",
   monotony_strain:
     "This week's training has been both hard and repetitive -- a combination linked to higher burnout/injury risk. Worth an easier day.",
 }

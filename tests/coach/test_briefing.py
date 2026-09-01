@@ -124,6 +124,44 @@ class TestComputeDailyPlanDateBounding:
         assert plan["structural_flags"]["monotony_strain"] is False
 
 
+class TestNotableTrendObservationPlainLanguage:
+    def test_rhr_sustained_rise_observation_is_plain_language(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # Real gap found 2026-08-31: this specific message still said
+        # "Resting HR has been sustained-elevated (>1 SD above baseline) for
+        # 3 straight days" -- raw jargon, inconsistent with every sibling
+        # structural-warning message in this file (build_briefing()'s own
+        # hrv_sustained_low/tsb_persistently_negative/monotony_strain lines),
+        # which were rewritten into plain English 2026-08-30.
+        as_of = date(2026, 8, 4)
+        for d in _date_range(as_of, 60):
+            db_module.upsert(
+                conn,
+                "daily_metrics",
+                DailyMetric(date=d.isoformat(), resting_hr=50.0).to_row(),
+                ["date"],
+            )
+        # Overwrite the last 3 days (ending today) with a clear, sustained rise.
+        for offset in (-2, -1, 0):
+            d = as_of + timedelta(days=offset)
+            db_module.upsert(
+                conn,
+                "daily_metrics",
+                DailyMetric(date=d.isoformat(), resting_hr=70.0).to_row(),
+                ["date"],
+            )
+
+        plan = compute_daily_plan(conn, _CONFIG, as_of.isoformat())
+
+        assert plan["trend_observation"] is not None
+        observation = plan["trend_observation"].lower()
+        assert "sd" not in observation.split()
+        assert "baseline" not in observation
+        assert "resting heart rate" in observation
+        assert "3 days in a row" in observation
+
+
 class TestComputeDailyPlanShape:
     def test_basic_smoke(self, conn: sqlite3.Connection) -> None:
         plan = compute_daily_plan(conn, _CONFIG, "2026-08-24")  # a Monday
@@ -235,6 +273,64 @@ class TestComputeDailyPlanShape:
         assert "rhr_sustained_rise" in plan["deload"]["markers_fired"]
         assert "hooper_sustained_high" in plan["deload"]["markers_fired"]
         assert plan["deload"]["recommended"] is True
+
+
+class TestCalisthenicsSessionGetsExerciseBreakdown:
+    """Real gap closed 2026-08-31: neither this module nor `coach/rules.py`
+    nor `api/today.py` ever read `comp_prep.strength_sessions` before this,
+    so a scheduled calisthenics session's guidance never showed what the
+    session actually consists of, despite that being a full, real
+    prescription already sitting in config -- contradicting Francisco's own
+    stated Today-page goal ("a breakdown for the exact workout I have on the
+    day and how I should approach it").
+    """
+
+    _CONFIG_WITH_STRENGTH = {
+        **_CONFIG,
+        "comp_prep": {
+            **_CONFIG["comp_prep"],
+            "weekly_template": [
+                {
+                    "day": "monday",
+                    "sessions": [
+                        {"type": "bjj", "subtype": "no_gi_technical", "notes": "positional focus"},
+                        {"type": "calisthenics", "subtype": "strength_a", "duration_min": 25},
+                        # A session type/subtype with NO matching strength_sessions
+                        # entry -- must degrade gracefully, never crash or invent.
+                        {"type": "calisthenics", "subtype": "holiday_substitution"},
+                    ],
+                }
+            ],
+            "strength_sessions": {
+                "strength_a": {
+                    "exercises": [
+                        "weighted or slow-tempo pull-ups: 4x5 (superset with next)",
+                        "pseudo-planche push-ups: 3x8",
+                    ]
+                }
+            },
+        },
+    }
+
+    def test_matching_subtype_gets_real_exercises_in_notes(self, conn: sqlite3.Connection) -> None:
+        plan = compute_daily_plan(conn, self._CONFIG_WITH_STRENGTH, "2026-08-24")  # a Monday
+        calisthenics = next(s for s in plan["sessions"] if s["subtype"] == "strength_a")
+        assert calisthenics["notes"] == (
+            "weighted or slow-tempo pull-ups: 4x5 (superset with next); "
+            "pseudo-planche push-ups: 3x8"
+        )
+
+    def test_non_calisthenics_sessions_notes_are_left_alone(self, conn: sqlite3.Connection) -> None:
+        plan = compute_daily_plan(conn, self._CONFIG_WITH_STRENGTH, "2026-08-24")
+        bjj = next(s for s in plan["sessions"] if s["type"] == "bjj")
+        assert bjj["notes"] == "positional focus"
+
+    def test_unmatched_subtype_degrades_gracefully_no_crash_no_invented_notes(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        plan = compute_daily_plan(conn, self._CONFIG_WITH_STRENGTH, "2026-08-24")
+        holiday = next(s for s in plan["sessions"] if s["subtype"] == "holiday_substitution")
+        assert holiday.get("notes") is None
 
 
 class TestBuildBriefing:
