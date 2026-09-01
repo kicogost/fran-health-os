@@ -1137,6 +1137,48 @@ the dashboard existed. Worth a Training-page addition once a real multi-round
 class gets recorded, since the 2-lap test above only checks the mechanism
 works, not what a real sparring session's round-by-round data looks like.
 
+**First real multi-round session + ground-truth check (2026-08-31)** — the
+Garmin HRM 600 chest strap arrived and got its first real class recording
+(`garmin:24187211582`, 90min, avg_hr 118, 5 laps: 64.3min drilling then 4
+round laps). Manually linked to the same-day `bjj_sessions` manual log entry
+via `linked_activity_id` (the design `docs/bjj_recording_workflow.md`
+specified back in migration 0002 but that nothing had ever actually set until
+now — confirmed by grep this field was schema-only, never written by any
+code path). Francisco then gave real ground truth for what each round
+actually was: lap 2 technical spar, lap 3 hard spar, lap 4 rest, lap 5 hard
+spar. `classify_bjj_laps()` got **3 of 4 right** — lap 4 (rest) and both
+lap 2/3 (sparring) correctly read, but lap 5 (a real hard spar, avg_hr 161)
+was misclassified `likely_rest`. Root cause, not just "noise": with only 4
+round laps to compare against, lap 4's genuine rest (114bpm) pulls the
+comparison median down to 166 — just above lap 5's 161 — so a real hard
+round landed on the "below median" side purely because of what else was in
+the small sample, not because 161bpm looks like rest on its own. A real,
+structural limitation of comparing against a small, mixed-intensity sample,
+worth watching for a repeat pattern across future sessions before touching
+the median logic on this single data point (same "don't recalibrate off
+n=1" discipline this project applies everywhere else). **Also confirmed
+working exactly as designed, no code change needed**: `metrics/strain.py`'s
+Daily Strain automatically used real TRIMP (avg_hr 118) for this session
+instead of the manual log's Foster/RPE estimate, and correctly skipped the
+Foster estimate entirely to avoid double-counting — the documented "falls
+out of the TRIMP-wherever-avg_hr-exists rule, no code change needed"
+transition from the 2026-08-30 Daily Strain section, now verified against a
+real chest-strap recording rather than just stated as a future guarantee.
+
+**Real, previously-undocumented `db.upsert()` limitation found while linking
+the two records above**: passing a minimal partial row (just the natural key
+plus `linked_activity_id`) to `upsert()` against an *already-existing* row
+failed with `NOT NULL constraint failed: bjj_sessions.duration_min` — SQLite's
+`INSERT ... ON CONFLICT DO UPDATE` still validates the INSERT's VALUES clause
+against every NOT NULL column without a default before the conflict path ever
+engages, even though the end result is just an UPDATE. This means `db.upsert()`'s
+"partial upserts don't clobber other columns" guarantee (true for the SET
+clause on conflict) does NOT extend to "you can omit a NOT NULL column when
+updating an existing row" — the full row must be passed regardless. Worked
+around here by reading the existing row back and passing it through with just
+the one field changed; worth a docstring note on `upsert()` itself next time
+that file is touched, not fixed as part of this aside.
+
 ## Deep review pass across the whole session's build, real bugs fixed (2026-08-28)
 
 Francisco asked for a genuine adversarial review of everything built this
@@ -3115,6 +3157,329 @@ Training (pill toggle button, plus a temporarily-seeded `showTechnical=true`
 screenshot confirming the surface-ladder panel — reverted immediately after,
 never left in committed code), and Data Health (row banding across the real
 34-row dedupe log) against the real running app.
+
+## Multi-agent review pass across the whole app, real bugs found and fixed (2026-08-31)
+
+Francisco asked for a genuine adversarial review of everything built so far, not a
+self-check — six parallel review agents, each a different lens (backend correctness +
+security, backend architecture, database/schema, frontend, scheduling/reliability, UX
+against Francisco's own stated goals), each told to actually run the tests, execute
+constructed inputs, query the real `data/health.db` read-only, and cross-check every
+CLAUDE.md claim against what the code actually does rather than trust the prose — same
+methodology as the 2026-08-28 "Deep review pass," now applied to everything built since
+(the TRIMP migration, ADR 0006/0007, taper/deload, the plain-language rework, the
+Spotify/Linear design passes). Two findings were independently confirmed by two
+agents working from completely different angles, the same "not review noise" signal
+the first deep-review pass relied on. Fixed the following (three parallel fixer
+passes on a strict non-overlapping file split — backend, frontend, then a final pass
+for the two items needing Francisco's own judgment call — 613 tests passing, up from
+590, ruff/ruff-format/`tsc -b` all clean):
+
+- **`core/dedupe.py`'s new avg_hr-based secondary matching tier had a real,
+  reproduced false-positive risk** — confirmed by execution: two genuinely distinct
+  real rides 5 hours apart with similar avg_hr (a realistic Z2-training scenario)
+  were silently merged, deleting one. This directly reversed the project's own
+  original dedup philosophy ("better to under-merge than incorrectly conflate two
+  real sessions"). Fixed by narrowing the secondary tier's time window to a tight
+  band around the one documented real case it exists for (~2-hour Garmin/Strava
+  local-time offset, ±5 minutes) instead of a blanket 0–6 hour window. Regression
+  tests added for both the false-positive case (must NOT merge) and the original
+  real 2-hour-offset case (must still merge). **Separately, and not yet fixed**: the
+  database review agent found 80 real cross-source duplicate activity pairs
+  (160 rows, 2018–2025) that structurally can never merge under the current logic —
+  Apple Health's `avg_hr` is unconditionally `NULL` on every one of its rows, which
+  permanently blocks the secondary tier from ever catching those pairs. Not currently
+  corrupting Daily Strain/CTL/ATL/TSB (the null-HR side already gets filtered out of
+  the TRIMP calculation), but a real, uncorrected violation of "one canonical row per
+  activity" — flagged for a future session, not acted on here.
+- **`scripts/check_secrets.py` exempted every `.md` file from the credential
+  scanner, including `CLAUDE.md` itself** — confirmed live: staged a real
+  credential-shaped string inside a markdown file and watched the actual pre-commit
+  hook wave it through clean. A real, elevated risk specifically for this project,
+  since CLAUDE.md is a large, constantly-edited file that regularly quotes real
+  command output and config. Fixed by removing the blanket `.md` exclusion (only the
+  specific files that genuinely need it — `.env.example`, the scanner's own test
+  fixtures — stay excluded); re-verified the same live reproduction now correctly
+  blocks the commit.
+- **Two jargon leaks the 2026-08-30 plain-language rework missed**:
+  `coach/briefing.py: _notable_trend_observation()` still said "sustained-elevated
+  (>1 SD above baseline)" verbatim on the live Today page (its sibling structural
+  messages in the same file were rewritten the same day; this one function was
+  missed); `metrics/insights.py: hrv_insight()` still said "HRV" literally in every
+  headline while its sibling `rhr_insight()` correctly spelled out "resting heart
+  rate." Both fixed to plain English; a new test locks in that "HRV"/"RHR" as bare
+  words can't silently reappear in Trends' insight text, extending the existing
+  acronym-regression test that only covered Training's payload.
+- **`metrics/insights.py: correlation_insight()` would have produced a
+  backwards-sounding sentence** for two of the four candidate pairs
+  (`sleep_quality`, `hooper_index`) once they reach real significance —  both fields
+  are stored "lower = better," but their plain-English descriptions read naturally
+  as "higher = better," so a genuine "better sleep → higher HRV" finding would have
+  rendered as "when one goes up, the other goes down" — readable as the opposite of
+  the true finding. Confirmed by constructing a realistic correlated dataset and
+  reading the generated sentence. Fixed by re-signing the correlation before
+  choosing direction wording, rather than patching the two affected description
+  strings — closes the whole category for any future pair added to the panel, not
+  just these two.
+- **The TSB "carrying fatigue" structural trigger was firing on raw sign with no
+  magnitude threshold** (its own docstring already admitted this was a placeholder)
+  — checked against the real database: negative on 59% of the last 164 days, 15
+  straight at the time of this review. This desensitized the deload gate (2 of 5
+  markers effectively became "1 more, beyond the one that's almost always already
+  on") and produced a Today-page banner and a Training-page "Fatigued" card that sat
+  next to a healthy green readiness score with zero explanation. **Francisco's
+  explicit call**: switch to the existing, already-computed `compute_tsb_zscore()`
+  (self-relative against the athlete's own trailing 90-day distribution, the same
+  treatment already given to HRV/RHR deviations) rather than raw sign. Real
+  before/after against the live database: **46–59% firing rate → 3.7–4.1%**, and it
+  correctly still fires today given a genuine recent load spike (z-scores around
+  −2 to −3.5) — a real signal, not noise. Plain-language banner text kept
+  word-for-word identical between `coach/briefing.py`'s CLI formatter and
+  `SessionCard.tsx`'s warning map, same discipline as every other structural
+  message. Also closed a real doc/reality gap found in the same pass: the Training
+  page's `|z_score| >= 2` "no validated magnitude threshold" caveat, which this file
+  already claimed was built in the "Training page made honest" section above, did
+  not actually exist in the running code — added for real this time.
+- **Calisthenics sessions on Today got no real workout breakdown**, despite full
+  6-exercise prescriptions (sets/reps/coaching notes) already sitting unused in
+  `config/athlete.yaml: comp_prep.strength_sessions` — confirmed via grep that
+  neither `coach/rules.py` nor `coach/briefing.py` nor `api/today.py` read that
+  config block at all; only the calisthenics logger did. Directly contradicted
+  Francisco's own repeatedly-stated ask for Today to show "a breakdown for the exact
+  workout I have on the day and how I should approach it." **Francisco's explicit
+  call**: build it now. New `coach/rules.py: calisthenics_exercise_breakdown()`
+  joins a scheduled calisthenics session against its `strength_sessions[subtype]`
+  entry and attaches the formatted exercise list to the session's existing `notes`
+  field (combined with, never overwriting, any real notes already there) —
+  backend-only, confirmed `SessionCard.tsx` already had a working render slot for
+  `notes`, no frontend change needed. Degrades gracefully (no crash, nothing
+  invented) for a subtype with no config match, e.g. a holiday substitution.
+- **UTC-vs-local date bug, duplicated across all 4 Log tabs**: every tab's default
+  date defaulted via `new Date().toISOString().slice(0, 10)`, which renders the
+  UTC calendar date, not Europe/Madrid's — wrong for the first 1-2 hours after local
+  midnight, silently defaulting to yesterday. A real design-principle-7 violation
+  with real downstream effects (the deload gate's Hooper-streak and HRV-deviation
+  checks need genuinely consecutive days). Fixed with one shared
+  `frontend/src/lib/date.ts: todayLocal()` (plain `getFullYear()`/`getMonth()`/
+  `getDate()`, no new dependency) replacing all 4 duplicated copies.
+- **Data-loss bug in the Calisthenics log tab**: changing the date field before
+  submitting silently wiped every entered set/rep/custom-exercise value, because the
+  exercise-reset effect's dependency array incorrectly included `date` alongside
+  `sessionType`. Split into two effects — reset only on `sessionType` change, fetch
+  the existing-entry check on both, as it should.
+- **File permissions gap wider than the 2026-08-28 hardening pass reached**: the raw
+  export directories (`data/raw/{garmin,apple_health,strava}/`, including the 464MB
+  native `export.xml`) and both daily log files were still world-readable (644/755)
+  despite that pass explicitly targeting personal-data files — `data/logs/*.log`
+  even carries what this file's own Phase 8 section calls "real personal health
+  numbers in plain text." `chmod 600`/`700` applied across `data/raw/` and
+  `data/logs/`.
+- **Smaller fixes, all verified**: added `PRAGMA busy_timeout = 30000` to
+  `core/db.py: connect()` (no write-write contention protection existed before, low
+  probability given this app's actual schedule but free to add); missing `.catch()`
+  added to all 4 Log tabs' "existing entry" checks (silent failure of the overwrite
+  warning on a network hiccup); `frontend/src/lib/api.ts`'s error handler now
+  formats FastAPI's native array-shaped Pydantic validation `detail` into a real
+  readable message instead of stringifying an array of objects; Comp Prep's weight-
+  trajectory chart was squeezing the entire comp-relevant window into ~5% of its
+  width (a category x-axis fed the full 2021–2026 history in the same series as the
+  8-week projection) — fixed by windowing the raw/EWMA series to a trailing 150 days
+  before charting, leaving the projection/required-path lines untouched; stale
+  `metrics/readiness.py` docstring claiming a comparison to Garmin's Training
+  Readiness (permanently impossible on this hardware, confirmed elsewhere in this
+  file) rewritten to reflect reality; stale `core/schema.sql` comment still
+  mentioning ACWR (removed by ADR 0003) corrected.
+
+**Findings surfaced but deliberately not acted on this pass** (real, lower-priority,
+or needing more judgment than a bug-fix pass warrants): the always-on API service has
+no exception handling/alerting — a review agent found a real, already-resolved
+`weight_tsb` `KeyError` sitting dormant in `data/logs/api_server_stderr.log`,
+demonstrating that a bug like it would 500 every request indefinitely with zero
+signal beyond noticing the page looks broken; no log rotation exists anywhere,
+so `data/logs/*.log` grow unbounded; the Streamlit dashboard's Training page
+(`dashboard/views/training.py`) was never migrated to ADR 0008's TRIMP-based load
+series and still computes training load the old, near-always-stale way — a real,
+live architectural fork between the Streamlit and React Training pages, but the
+Streamlit dashboard is already a known-unsynced fallback per ADR 0005, so this may
+not be worth chasing; `metrics/correlations.py`'s join anchors on `daily_metrics`,
+which could silently exclude a real wellness-only day with no Garmin sync that
+date (zero practical impact today — only 3 `subjective_log` rows exist); a
+low-probability TOCTOU race in `db.upsert()`'s `merge_json_columns` path (two truly
+concurrent writers could clobber each other's provenance merge); Data Health's
+"Training Readiness: no data" field doesn't visually distinguish a permanent,
+confirmed hardware gap (this file already documents Francisco's Forerunner 165
+never computing it) from a genuine pipeline break.
+
+## First real HRM 600 session ingested, and a sparring-intensity metric built from it (2026-08-31)
+
+Francisco's first real chest-strap-recorded class landed the same day the review
+pass above wrapped — `garmin:24187211582`, 90min, avg_hr 118, 5 laps (64.3min
+drilling then 4 round laps). Manually linked to the same-day `bjj_sessions` manual
+log entry via `linked_activity_id` — the design `docs/bjj_recording_workflow.md`
+specified back in migration 0002 but that no code had ever actually set until now
+(confirmed by grep: schema-only, never written). Full detail, including the real
+ground-truth check against Francisco's own round-by-round labels (`classify_bjj_laps()`
+got 3 of 4 right, with the one miss explained as a small-sample median artifact, not
+a broken heuristic) and a real, previously-undocumented `db.upsert()` limitation
+found while linking the two records, is recorded in the "Round-by-round BJJ lap
+ingestion" section above.
+
+**Francisco asked a direct methodology question**: is TRIMP/Foster (this app's
+existing Daily Strain calculation) actually how combat-sport scientists measure
+BJJ/MMA training load, and should he record full sessions or just sparring? A real,
+citation-verified research pass (explicitly warned to check for the two fabricated
+"studies" the taper/deload research already caught once — none recurred; all 18
+primary sources independently confirmed to actually exist via PubMed ID/DOI/full-text
+retrieval, not just search snippets) found:
+
+- **No BJJ-specific TRIMP validation study exists** — judo and MMA are the closest
+  real evidence (Francisco explicitly accepted these as close-enough analogues).
+  A direct mechanistic study (Akubat & Abt 2011, *J Sci Med Sport*) found the
+  HR-lactate relationship TRIMP's math depends on genuinely shifts under intermittent
+  effort vs. the steady-state exercise it was designed for — real, if not
+  combat-sport-specific, evidence the current whole-session TRIMP is an imperfect fit.
+- **Keep recording whole sessions, don't isolate sparring** — both validated methods
+  (session-RPE's own foundational protocol, and every real MMA/BJJ study found) rate
+  or measure the entire session including drilling, which is real training stress.
+  This was a real option on the table and the evidence came down clearly against it.
+- **The concrete, adopted recommendation**: real MMA training-load research (Kirk
+  et al. 2024, *Int J Sports Physiol Perform*, 20 MMA athletes) found segmenting a
+  session's internal load by activity type preserves real signal a single whole-session
+  number loses — directly matching what happened with Francisco's own session (a
+  64-minute low-intensity block diluted the whole-session average down to "light" even
+  though the actual sparring rounds were clearly hard). Fix: add a SECOND, distinct
+  number computed only from sparring-classified laps, shown alongside — never
+  replacing — the existing whole-session Daily Strain (design principle: whole-session
+  TRIMP/Foster stays the sole CTL/ATL/TSB/monotony/weekly-summary input; the new
+  number is a same-day intensity read only).
+
+**Real design flaw caught and corrected during the build, not shipped broken**: the
+first implementation computed the sparring-only number as a SECOND accumulated-load
+figure (TRIMP over just the sparring laps, mapped through the same 0-21 saturating
+scale the whole-session Strain uses) — sanity-checked against Francisco's real
+session and found to produce **4.9 ("light")**, LOWER than the whole session's 9.1,
+despite those 12 minutes clearly being the hardest part of the class. Root cause,
+not a tunable-constant bug: TRIMP is duration-weighted accumulated dose, and the
+saturation constant is calibrated against 60-107-minute whole sessions — 12 minutes
+of even brutal effort mathematically cannot out-accumulate 90 minutes of continuous
+movement on that scale. Accumulated dose and intensity are different quantities;
+a second dose-scale number can never honestly answer an intensity question. **The
+agent building this correctly declined to fudge a second constant to force a
+bigger-looking number** and flagged it for a real fix instead.
+
+**Corrected to a genuine intensity measure**: `metrics/bjj_laps.py:
+compute_sparring_intensity()` — duration-weighted Karvonen %HRR
+(`(avg_hr - resting_hr) / (max_hr - resting_hr)`) across sparring-classified laps,
+banded into standard Karvonen/Zoladz training zones (Zone 0 "minimal" &lt;50%, Zone 1
+"very light" 50-60%, Zone 2 "light" 60-70%, Zone 3 "moderate" 70-80%, Zone 4 "hard"
+80-90%, Zone 5 "max" ≥90%, lower edge inclusive) — a well-established, standard
+formula, not another bespoke constant. Returns `None` for zero sparring-classified
+laps or missing resting/max HR (never invents a number), raises on `max_hr <=
+resting_hr` (a real data-integrity problem, distinct from missing data). Wired into
+`build_daily_strain()`'s `sparring_intensity` field, `api/today.py`, and a caption
+under the Strain ring on Today ("Sparring rounds: Zone 4 (hard) · 86% of heart-rate
+reserve") — absent entirely on days without a qualifying BJJ session, same "never
+invent, never show a placeholder" discipline as everywhere else. Confirmed the
+whole-session Strain (still the CTL/ATL/TSB/monotony/weekly-summary input,
+untouched) and the new intensity read never share a code path — dedicated regression
+tests lock in that `build_activity_based_load_series()`/`build_load_by_sport_rows()`/
+`build_weekly_summary()` are unaffected.
+
+**Real output against Francisco's actual session**: the same 2 laps that produced
+the wrong-direction 4.9 under the first (incorrect) design now correctly read
+**85.8% HRR, Zone 4 ("hard"), avg_hr 170.6, 12.1 min** — the intuitively correct
+answer, and one that actually matches what Francisco described feeling.
+
+**Two honest, stated evidence gaps, not glossed over**: no BJJ-specific validation
+exists for TRIMP itself (judo/MMA extrapolation, Francisco's own explicit call to
+accept); the standard Karvonen zone boundaries are genuine sports-science convention,
+not something invented for this app, but no study validates them specifically for
+grappling either — same "reasoned, standard, but not sport-specific" caveat as the
+underlying TRIMP formula it sits next to.
+
+43 new/updated tests across `tests/metrics/test_bjj_laps.py`,
+`tests/metrics/test_strain.py`, `tests/api/test_today.py` (hand-computed %HRR/zone
+values, duration-weighting behavior specifically, a zone-boundary edge case, the
+missing-resting/max-HR and zero-sparring-laps `None` cases, and the CTL/ATL/TSB
+non-leakage guarantee). 633 tests total, ruff/ruff-format clean, frontend `tsc -b`
+clean.
+
+## Sleep debt could fully cushion a bad night — researched and fixed (2026-09-01)
+
+Real trigger: Francisco caught an early flight, slept 5h50m (Garmin's own quality
+score for that night: 64/100), and the app's sleep readiness component scored **85**
+— because he'd banked a real surplus over the prior two weeks, and the sleep
+component blended last-night's duration score (~83, penalized for the short night)
+50/50 with a debt/surplus score (~100, maxed out by the surplus) before folding in
+Garmin's quality score at 25%. He asked directly whether letting a rolling surplus
+cushion an acutely bad night is actual best practice, for athletes and in general —
+a real research pass, not assumed.
+
+**What the research found** (same anti-fabrication discipline as every prior
+research pass this session — every citation independently confirmed via a real
+PubMed ID/DOI/full-text retrieval; neither of the two previously-caught fabricated
+papers recurred):
+
+- Two real controlled "sleep banking" studies exist and directly test this exact
+  question (Rupp, Wesensten, Bliese & Balkin 2009, *Sleep* 32(3):311–321; Arnal,
+  Sauvet, Léger et al. 2015, *Sleep* 38(12):1935–1943) — a pre-existing surplus DOES
+  measurably reduce next-day impairment from subsequent sleep loss, but **only
+  partially, and Rupp's own banking advantage was "largely erased by day 3"** of
+  continued restriction. Neither study supports a surplus near-fully offsetting a
+  single bad night the way the old 50/50 average did.
+- The two-process model of sleep regulation (Borbély, Daan, Wirz-Justice & Deboer
+  2016, *J Sleep Res*) gives the mechanistic reason: sleep pressure builds and
+  resets on a saturating curve, not a linear bank — there's no real physiological
+  "reserve" a 13-day-old good night should still be drawing down from today.
+- Knufinke et al. 2018 (n=98 elite athletes, already cited in ADR 0007) found the
+  immediately-preceding night has its own direct, independent effect on next-day
+  performance — supporting last-night duration as a strong anchor a rolling average
+  shouldn't be allowed to dilute away.
+- A real, checkable detail: WHOOP's own patent filing describes their debt
+  calculation as continuously decaying older days' influence — explicitly not a
+  flat window/symmetric credit like this app's — though itself an unvalidated
+  company disclosure, not peer-reviewed evidence.
+- No study validates any specific window length (7/14/21/30 days) for a rolling
+  sleep debt calculation — confirms ADR 0007's own "genuinely unresolved" finding
+  still holds; nothing here argues for changing the 14-day window itself.
+- The research's own highest-confidence recommendation: stop letting debt/surplus
+  act as an upward credit at all — let it only ever reflect a chronic-deficit
+  penalty or a neutral pass-through, never something that rescues a bad night. A
+  more elaborate small-and-decaying-credit alternative (closer to what the banking
+  studies actually found) was explicitly flagged as unvalidated in its exact
+  magnitude — adopting it would mean inventing a new unproven constant on top of
+  already-thin evidence, so the simpler, highest-confidence option was built
+  instead.
+
+**Fixed**: `metrics/readiness.py: _sleep_component_score()` — the quantity half of
+the blend changed from `average(duration_score, debt_score)` to
+`min(duration_score, debt_score)`. A strong recent-sleep history can no longer pull
+a genuinely bad night's score up (Francisco's real case: debt_score ~100 can no
+longer average against duration_score ~83 to produce ~91.65 — it's now capped at
+83, the worse of the two), while a real chronic deficit still correctly drags the
+score down even on a night where last night alone was fine (`min(100, 40) = 40`,
+verified by test) — the exact "penalize, never credit" asymmetry the research
+called for, with zero new invented parameters. Everything else (the 7-9h band, the
+debt-hours-to-score mapping itself, the 75/25 Garmin-quality blend, the 14-day
+window) left untouched — no evidence supported changing any of those.
+
+Confirmed only one shared function needed the fix — both `coach/briefing.py` and
+`metrics/derived_daily.py` already route through the same
+`compute_readiness_score()` → `_sleep_component_score()` call path, so no
+dual-call-site drift risk this time (unlike several earlier fixes this session).
+Confirmed no frontend file independently duplicates this blending logic either.
+
+**Real before/after for 2026-09-01**: sleep component **84.75 → 78.5**; overall
+readiness **58.9 → 57.3** (confidence stayed "full," coverage 1.0) — a real, honest
+five-point night correction, not dramatic, but no longer mostly hiding behind two
+weeks of banked sleep. Historical `derived_daily` recomputed for the full existing
+167-day span (2026-03-19 through 2026-09-01, 2171 rows) so the Trends readiness
+chart reflects the corrected formula throughout, same rollout pattern as every
+prior readiness-formula change this session.
+
+4 new/updated tests in `tests/metrics/test_readiness.py`, including the exact real
+scenario (asserts `min()` precisely, not just "moved in the right direction") and
+the reverse chronic-deficit case. 637 tests total, ruff/ruff-format clean.
 
 ## Definition of done for v1
 
