@@ -5,6 +5,7 @@ import {
   fetchPrescribedExercises,
   saveCalisthenics,
 } from "@/lib/api"
+import { todayLocal } from "@/lib/date"
 import { CARD_CLASS } from "@/lib/styles"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -17,10 +18,6 @@ const SESSION_TYPES = [
   { value: "strength_a", label: "Strength A" },
   { value: "strength_b", label: "Strength B" },
 ]
-
-function todayLocal(): string {
-  return new Date().toISOString().slice(0, 10)
-}
 
 interface ExerciseInput {
   name: string
@@ -54,25 +51,55 @@ export function LogCalisthenicsTab() {
   const [notes, setNotes] = useState("")
   const [existing, setExisting] = useState<{ session_rpe: number | null } | null>(null)
   const [status, setStatus] = useState<{ kind: "success" | "error"; message: string } | null>(null)
+  const [existingCheckError, setExistingCheckError] = useState<string | null>(null)
 
+  // Resets the prescribed-exercise rows and any in-progress custom rows.
+  // Deliberately keyed on `sessionType` ONLY, not `date` -- fetching the
+  // prescribed list only ever depends on the session type. Real bug fixed
+  // 2026-08-31: this used to also run on every `date` change, which
+  // unconditionally wiped `exerciseInputs`/`customExercises` back to
+  // blank/zero -- so backdating a forgotten entry (changing just the date
+  // field) silently discarded whatever the user had already entered for
+  // today, right before they'd submit it.
   useEffect(() => {
     let cancelled = false
-    fetchPrescribedExercises(sessionType).then((exercises) => {
-      if (cancelled) return
-      setPrescribed(exercises)
-      setExerciseInputs(
-        exercises.map((raw) => ({
-          name: raw.split(":")[0].trim(),
-          sets: 0,
-          reps: 0,
-          addedWeight: 0,
-        })),
-      )
-      setCustomExercises([])
-    })
-    fetchExistingCalisthenics(date, sessionType).then((r) => {
-      if (!cancelled) setExisting(r)
-    })
+    fetchPrescribedExercises(sessionType)
+      .then((exercises) => {
+        if (cancelled) return
+        setPrescribed(exercises)
+        setExerciseInputs(
+          exercises.map((raw) => ({
+            name: raw.split(":")[0].trim(),
+            sets: 0,
+            reps: 0,
+            addedWeight: 0,
+          })),
+        )
+        setCustomExercises([])
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) console.error("Failed to load prescribed exercises:", err)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [sessionType])
+
+  // Checks for an already-logged entry for this exact (date, sessionType) --
+  // correctly depends on both, unlike the reset effect above.
+  useEffect(() => {
+    let cancelled = false
+    setExistingCheckError(null)
+    fetchExistingCalisthenics(date, sessionType)
+      .then((r) => {
+        if (!cancelled) setExisting(r)
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        console.error("Failed to check for an existing calisthenics entry:", err)
+        setExisting(null)
+        setExistingCheckError(err instanceof Error ? err.message : "Could not reach the API.")
+      })
     return () => {
       cancelled = true
     }
@@ -176,6 +203,12 @@ export function LogCalisthenicsTab() {
           />
         </div>
       </div>
+
+      {existingCheckError && (
+        <p className="text-xs text-muted-foreground">
+          Couldn&apos;t check for an existing entry: {existingCheckError}
+        </p>
+      )}
 
       {existing && (
         <p className="text-sm text-[var(--band-amber)] rounded-lg border border-[var(--band-amber)]/30 bg-[var(--band-amber)]/10 px-3 py-2">

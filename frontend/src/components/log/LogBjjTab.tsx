@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { fetchExistingBjj, saveBjj } from "@/lib/api"
+import { todayLocal } from "@/lib/date"
 import { CARD_CLASS } from "@/lib/styles"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,10 +15,6 @@ const SESSION_TYPES = [
   { value: "gi_drilling", label: "Gi drilling" },
 ]
 const SESSION_FEELINGS = ["dizzy", "gassed", "tired", "okay"] // worst to best, matches core/models.py
-
-function todayLocal(): string {
-  return new Date().toISOString().slice(0, 10)
-}
 
 export function LogBjjTab() {
   const [date, setDate] = useState(todayLocal())
@@ -36,14 +33,23 @@ export function LogBjjTab() {
   } | null>(null)
   const [status, setStatus] = useState<{ kind: "success" | "error"; message: string } | null>(null)
   const [dizzyWarning, setDizzyWarning] = useState(false)
+  const [existingCheckError, setExistingCheckError] = useState<string | null>(null)
 
   const rolling = sessionType === "class" || sessionType === "open_mat"
 
   useEffect(() => {
     let cancelled = false
-    fetchExistingBjj(date, sessionType).then((r) => {
-      if (!cancelled) setExisting(r)
-    })
+    setExistingCheckError(null)
+    fetchExistingBjj(date, sessionType)
+      .then((r) => {
+        if (!cancelled) setExisting(r)
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        console.error("Failed to check for an existing BJJ entry:", err)
+        setExisting(null)
+        setExistingCheckError(err instanceof Error ? err.message : "Could not reach the API.")
+      })
     return () => {
       cancelled = true
     }
@@ -104,6 +110,12 @@ export function LogBjjTab() {
           />
         </div>
       </div>
+
+      {existingCheckError && (
+        <p className="text-xs text-muted-foreground">
+          Couldn&apos;t check for an existing entry: {existingCheckError}
+        </p>
+      )}
 
       {existing && (
         <p className="text-sm text-[var(--band-amber)] rounded-lg border border-[var(--band-amber)]/30 bg-[var(--band-amber)]/10 px-3 py-2">

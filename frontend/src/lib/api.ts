@@ -24,10 +24,35 @@ export class ApiError extends Error {
   }
 }
 
+/** FastAPI route code in this project always raises `HTTPException(422,
+ * detail=str(exc))` -- a plain string. But native Pydantic request-
+ * validation errors (422s FastAPI raises itself, before any of our route
+ * code runs -- e.g. a malformed request body) come back with `detail` as an
+ * array of `{loc, msg, type}` objects instead. Passed straight through,
+ * `Error`'s own message stringification renders that as the useless
+ * "[object Object]". Detect the array shape and join each item's `msg`
+ * into one readable string; anything else falls back to the original
+ * string/statusText behavior unchanged.
+ */
+function formatErrorDetail(detail: unknown): string | undefined {
+  if (typeof detail === "string") return detail
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) =>
+        item && typeof item === "object" && "msg" in item
+          ? String((item as { msg: unknown }).msg)
+          : null,
+      )
+      .filter((m): m is string => m !== null)
+    if (messages.length > 0) return messages.join("; ")
+  }
+  return undefined
+}
+
 async function handle<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => ({}))
-    throw new ApiError(response.status, body.detail ?? response.statusText)
+    throw new ApiError(response.status, formatErrorDetail(body.detail) ?? response.statusText)
   }
   return response.json() as Promise<T>
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { fetchExistingWellness, saveWellness } from "@/lib/api"
+import { todayLocal } from "@/lib/date"
 import { CARD_CLASS } from "@/lib/styles"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -9,10 +10,6 @@ import { Textarea } from "@/components/ui/textarea"
 import { SliderField } from "@/components/log/SliderField"
 
 type TriState = boolean | null
-
-function todayLocal(): string {
-  return new Date().toISOString().slice(0, 10)
-}
 
 function TriStateSelect({
   label,
@@ -58,12 +55,21 @@ export function LogWellnessTab() {
   const [dayNote, setDayNote] = useState("")
   const [existing, setExisting] = useState<{ hooper_index: number | null } | null>(null)
   const [status, setStatus] = useState<{ kind: "success" | "error"; message: string } | null>(null)
+  const [existingCheckError, setExistingCheckError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
-    fetchExistingWellness(date).then((r) => {
-      if (!cancelled) setExisting(r)
-    })
+    setExistingCheckError(null)
+    fetchExistingWellness(date)
+      .then((r) => {
+        if (!cancelled) setExisting(r)
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        console.error("Failed to check for an existing wellness entry:", err)
+        setExisting(null)
+        setExistingCheckError(err instanceof Error ? err.message : "Could not reach the API.")
+      })
     return () => {
       cancelled = true
     }
@@ -109,6 +115,12 @@ export function LogWellnessTab() {
           className="mt-1 max-w-xs"
         />
       </div>
+
+      {existingCheckError && (
+        <p className="text-xs text-muted-foreground">
+          Couldn&apos;t check for an existing entry: {existingCheckError}
+        </p>
+      )}
 
       {existing && (
         <p className="text-sm text-[var(--band-amber)] rounded-lg border border-[var(--band-amber)]/30 bg-[var(--band-amber)]/10 px-3 py-2">
