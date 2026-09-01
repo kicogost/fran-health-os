@@ -95,10 +95,47 @@ class TestComputeReadinessScore:
         assert worst["components"]["subjective"]["score"] == pytest.approx(0.0)
 
     def test_sleep_component_blends_last_night_and_debt(self) -> None:
-        # last_night=8h (>= the 7h band floor) -> 100; debt=5h -> 100-50=50.
-        # Blend -> 75.
+        # 2026-08-31: debt can only ever act as a penalty, never a credit
+        # (see _sleep_component_score's docstring) -- quantity is min(),
+        # not an average. last_night=8h (>= the 7h band floor) -> 100;
+        # debt=5h -> 100-50=50. min(100, 50) -> 50, not the old 75 average.
         result = compute_readiness_score(last_night_sleep_hours=8.0, sleep_debt_hours=5.0)
-        assert result["components"]["sleep"]["score"] == pytest.approx(75.0)
+        assert result["components"]["sleep"]["score"] == pytest.approx(50.0)
+
+    def test_sleep_debt_credit_cannot_rescue_a_bad_night(self) -> None:
+        # The exact real 2026-08-31 case that prompted this fix: a 5h50m
+        # night (duration_score ~83) plus a real banked 14-day surplus
+        # (debt_score ~100) must land at min(83, 100) = 83, NOT the ~91.65
+        # a 50/50 average would have given. duration_score for 5h50m
+        # (5.8333h) below the 7h band floor: 5.8333/7*100 = 83.3333...
+        # debt=-2.0h (a 2h surplus) -> clamp(100 - (-2.0)*10, 0, 100) = 100.
+        last_night_hours = 5.0 + 50.0 / 60.0
+        expected_duration_score = last_night_hours / 7.0 * 100.0
+        result = compute_readiness_score(
+            last_night_sleep_hours=last_night_hours, sleep_debt_hours=-2.0
+        )
+        assert result["components"]["sleep"]["score"] == pytest.approx(expected_duration_score)
+        # Explicitly NOT the old symmetric-average value.
+        assert result["components"]["sleep"]["score"] != pytest.approx(91.65, abs=0.5)
+
+    def test_sleep_debt_still_works_as_a_real_penalty(self) -> None:
+        # Reverse case: a genuinely bad debt/surplus history (real chronic
+        # deficit, debt=6h -> debt_score=40) alongside a perfectly fine last
+        # night (8h -> duration_score=100) must still correctly drag the
+        # score down to min(100, 40) = 40 -- debt is a real penalty signal,
+        # not neutered by this change.
+        result = compute_readiness_score(last_night_sleep_hours=8.0, sleep_debt_hours=6.0)
+        assert result["components"]["sleep"]["score"] == pytest.approx(40.0)
+
+    def test_sleep_component_both_good_stays_good(self) -> None:
+        result = compute_readiness_score(last_night_sleep_hours=8.0, sleep_debt_hours=-3.0)
+        assert result["components"]["sleep"]["score"] == pytest.approx(100.0)
+
+    def test_sleep_component_both_bad_stays_bad(self) -> None:
+        # last_night=3h -> 3/7*100 = 42.857...; debt=8h -> clamp(100-80,0,100)=20.
+        # min -> 20.
+        result = compute_readiness_score(last_night_sleep_hours=3.0, sleep_debt_hours=8.0)
+        assert result["components"]["sleep"]["score"] == pytest.approx(20.0)
 
     def test_sleep_component_within_band_scores_full_credit(self) -> None:
         # ADR 0007: any night in the 7-9h band scores 100 for quantity, not

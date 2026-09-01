@@ -4,8 +4,19 @@ for the whole architecture to be re-derived from research rather than kept
 as originally specced.
 
 Pure function, deterministic, hand-verifiable (design principle 9, section 12).
-Computed alongside Garmin's own Training Readiness so disagreement is visible
-— this is Francisco's own composite, not a replacement for Garmin's.
+
+**Not "computed alongside Garmin's own Training Readiness" — confirmed
+permanently false, not just currently unbuilt.** That was the original
+kickoff-doc framing; investigated directly against Francisco's real account
+(see CLAUDE.md's "Garmin live sync built" section, 2026-08-28) and confirmed
+his hardware (a Forerunner 165) never computes Training Readiness at all — a
+deliberate Garmin device-tier limitation (market segmentation, not a
+history-length gap this project could wait out), corroborated by Garmin's own
+manuals, Garmin's own community forum, and an independent device-support
+tracker. `daily_metrics.training_readiness` will stay permanently NULL on
+this account's current hardware, so there is no Garmin composite to compare
+against or disagree with. This project's own score is the only readiness
+composite that exists for Francisco unless the watch changes.
 
 Deliberately takes already-computed component values, not raw observation
 histories — callers get those from `metrics/baselines.py`
@@ -195,14 +206,14 @@ def _sleep_component_score(
     quality_score: float | None = None,
 ) -> float | None:
     """Blend of two halves: **quantity** (last night's duration vs a 7-9h
-    band, 50/50 with the 14-day rolling debt — the kickoff doc doesn't
-    specify an exact split, a documented default, not a given number) and
-    **quality** (Garmin's own `sleep_score`, which factors in REM/deep/
-    restlessness/timing — something this project's own duration+debt math
-    never looked at until Francisco asked directly, 2026-08-30, why our
-    sleep score read 97 the same night Garmin's read 74 "Fair" for low REM),
-    weighted at `SLEEP_QUALITY_BLEND_WEIGHT` rather than an even half (see
-    that constant's docstring for why it's no longer 50/50).
+    band, combined with the 14-day rolling debt/surplus via `min()` — see
+    below) and **quality** (Garmin's own `sleep_score`, which factors in
+    REM/deep/restlessness/timing — something this project's own
+    duration+debt math never looked at until Francisco asked directly,
+    2026-08-30, why our sleep score read 97 the same night Garmin's read 74
+    "Fair" for low REM), weighted at `SLEEP_QUALITY_BLEND_WEIGHT` rather than
+    an even half (see that constant's docstring for why it's no longer
+    50/50).
 
     Deliberately reuses Garmin's own quality algorithm rather than inventing
     a stage-weighting formula from raw deep/light/rem/awake minutes — Garmin
@@ -216,17 +227,49 @@ def _sleep_component_score(
     than a hard new dependency. Returns `None` only when there is truly
     nothing to build any of this from.
     """
-    quantity_parts = []
+    duration_score = None
     if last_night_hours is not None:
         if last_night_hours >= SLEEP_BAND_LOW_HOURS:
-            quantity_parts.append(100.0)
+            duration_score = 100.0
         else:
-            quantity_parts.append(
-                _clamp(last_night_hours / SLEEP_BAND_LOW_HOURS * 100.0, 0.0, 100.0)
-            )
+            duration_score = _clamp(last_night_hours / SLEEP_BAND_LOW_HOURS * 100.0, 0.0, 100.0)
+
+    debt_score = None
     if debt_hours is not None:
-        quantity_parts.append(_clamp(100.0 - debt_hours * 10.0, 0.0, 100.0))
-    quantity_score = sum(quantity_parts) / len(quantity_parts) if quantity_parts else None
+        debt_score = _clamp(100.0 - debt_hours * 10.0, 0.0, 100.0)
+
+    # ADR 0007 follow-up, 2026-08-31: this used to be a 50/50 AVERAGE of
+    # duration_score and debt_score. Real trigger: a 5h50m night before an
+    # early flight (Garmin's own quality score 64/100) landed a banked
+    # 14-day surplus (debt_score ~100) averaged against the bad night
+    # (duration_score ~83) into a quantity_score of ~91.65 -- a rolling
+    # surplus effectively bought back most of a genuinely rough night's
+    # score. Two real controlled studies that directly tested "banking"
+    # sleep before subsequent restriction (Rupp et al. 2009, Sleep
+    # 32(3):311-321; Arnal et al. 2015, Sleep 38(12):1935-1943) found the
+    # advantage is real but PARTIAL, and "largely erased by day 3" -- no
+    # study supports a surplus fully or near-fully offsetting a bad night's
+    # score the way a symmetric average does. The two-process model of sleep
+    # regulation (Borbely et al. 2016) gives the mechanistic reason: sleep
+    # pressure builds/resets on a saturating curve, not a linear bank --
+    # there's no real "reserve" a 13-day-old good night should still be
+    # drawing down from today. Changed to `min()`: debt can only ever act as
+    # a downward penalty (a real chronic deficit still correctly drags the
+    # score down even on a night whose own duration was fine) or a neutral
+    # pass-through -- never an upward credit that rescues a bad night. This
+    # is the deliberately conservative choice: a more elaborate small-and-
+    # decaying-credit alternative exists in principle (mirroring WHOOP's own
+    # patent-disclosed, continuously-decaying debt shape) but has no specific
+    # magnitude or decay window validated by anything found in this research
+    # pass, so it isn't built -- `min()` needs no new invented parameter.
+    if duration_score is not None and debt_score is not None:
+        quantity_score = min(duration_score, debt_score)
+    elif duration_score is not None:
+        quantity_score = duration_score
+    elif debt_score is not None:
+        quantity_score = debt_score
+    else:
+        quantity_score = None
 
     if quantity_score is None:
         return quality_score
