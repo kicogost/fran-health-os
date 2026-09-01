@@ -61,6 +61,13 @@ def connect(db_path: str | Path | None = None) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
+    # A scheduled sync (launchd) and a manually-run CLI logger can rarely
+    # write at the same moment. Without a busy timeout, SQLite raises
+    # `sqlite3.OperationalError: database is locked` immediately on any
+    # write-write contention; this makes SQLite retry internally for up to
+    # 30s first, so a rare overlap resolves itself instead of surfacing an
+    # avoidable, confusing error.
+    conn.execute("PRAGMA busy_timeout = 30000")
     return conn
 
 

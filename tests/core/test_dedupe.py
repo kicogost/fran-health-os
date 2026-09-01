@@ -166,6 +166,23 @@ class TestIsMatch:
         )
         assert _is_match(a, b) is False
 
+    def test_similar_avg_hr_five_hours_apart_does_not_match(self) -> None:
+        # Real false-positive found in review, 2026-08-31: the original
+        # secondary tier used a blanket 0-6h start-time window with no other
+        # corroborating signal. Two genuinely distinct real rides ~5 hours
+        # apart, both sitting at a similar Z2 heart rate (a realistic
+        # scenario for this athlete's prescribed Z2 rides,
+        # config/athlete.yaml: comp_prep's Saturday sessions), landed inside
+        # that window and were silently merged, deleting a real session. The
+        # tier now only matches a start-time offset close to the one
+        # documented, confirmed-real 2-hour Strava/Garmin discrepancy, so
+        # this must NOT match.
+        a = self._row(source="strava", sport="ride", avg_hr=140, start_utc="2026-08-27T08:00:00Z")
+        b = self._row(
+            source="garmin", sport="cycling", avg_hr=141, start_utc="2026-08-27T13:00:00Z"
+        )
+        assert _is_match(a, b) is False
+
 
 class TestDedupeActivities:
     def test_merges_real_duplicate_pattern(self, conn: sqlite3.Connection) -> None:
@@ -345,6 +362,37 @@ class TestDedupeActivities:
         remaining = conn.execute("SELECT * FROM activities").fetchall()
         assert len(remaining) == 1
         assert remaining[0]["source"] == "garmin"  # garmin outranks strava
+
+    def test_does_not_merge_distinct_rides_five_hours_apart_with_similar_hr(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # End-to-end version of the false-positive case above, through the
+        # full dedupe_activities() pipeline -- two real, distinct rides must
+        # both survive.
+        _insert(
+            conn,
+            source="strava",
+            source_id="ride1",
+            sport="ride",
+            start_utc="2026-08-27T08:00:00Z",
+            duration_s=3600,
+            avg_hr=140,
+        )
+        _insert(
+            conn,
+            source="garmin",
+            source_id="ride2",
+            sport="cycling",
+            start_utc="2026-08-27T13:00:00Z",
+            duration_s=3600,
+            avg_hr=141,
+        )
+
+        result = dedupe_activities(conn)
+
+        assert result.groups_merged == 0
+        assert result.rows_deleted == 0
+        assert conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0] == 2
 
     def test_fk_conflicts_empty_when_no_conflict(self, conn: sqlite3.Connection) -> None:
         _insert(conn, source="strava", source_id="s1")

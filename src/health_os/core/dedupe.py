@@ -41,14 +41,27 @@ live Garmin API call), and duration sometimes differs by much more than 60s too
 endpoint uses). What's nearly identical across every single pair, confirmed
 directly: `avg_hr`, within a rounding difference of at most 1bpm (one real pair,
 2026-08-15, was 153 vs. 152 — presumably each platform rounding its own slightly
-different sample set the same real ride). A same-day, same-sport-family `avg_hr`
-match this close between two independently real sessions is a vanishingly
-unlikely coincidence, so a second, narrower rule now matches on same local date
-+ same sport family + `avg_hr` within `AVG_HR_TOLERANCE` + start times within a
-generous `SECONDARY_START_TOLERANCE_S`, even when the primary start/duration
-check fails. First built with exact-equality only; widened to +-1bpm the same
-day after this exact 2026-08-15 pair was found still unmerged and visibly
-double-counting that day's training load on the Training page.
+different sample set the same real ride). So a second, narrower rule now
+matches on same local date + same sport family + `avg_hr` within
+`AVG_HR_TOLERANCE` + a start-time offset close to that documented exactly-2-hour
+discrepancy (`SECONDARY_TIME_OFFSET_TARGET_S` +- `SECONDARY_TIME_OFFSET_TOLERANCE_S`),
+even when the primary start/duration check fails. First built with exact-equality
+only; widened to +-1bpm the same day after this exact 2026-08-15 pair was found
+still unmerged and visibly double-counting that day's training load on the
+Training page.
+
+**Narrowed 2026-08-31, a real false-positive found in review**: the original
+version of this tier used a blanket 0-6 hour start-time window with no other
+corroborating signal, on the theory that a same-day, same-sport-family,
+near-exact `avg_hr` match was already discriminating enough on its own. It
+wasn't — reproduced directly: two genuinely distinct real rides ~5 hours apart,
+both sitting at a similar Z2 heart rate (~140bpm, a realistic scenario for this
+athlete's prescribed rides, see `config/athlete.yaml: comp_prep`'s Saturday Z2
+sessions), landed inside that 6-hour window and got silently merged, deleting
+one of two real training sessions. The tier only actually needs to catch start
+times a fixed ~2 hours apart (the one specific, confirmed real discrepancy
+above) — not "anywhere in a 6-hour span" — so the window is now a narrow band
+centered on that exact offset instead of a blanket bound from zero.
 
 **Real gap in `_SPORT_FAMILIES` found the same day, same investigation**: a
 2026-08-24 Strava "weight_training" + Garmin "strength_training" pair (same
@@ -73,11 +86,16 @@ DEFAULT_PRECEDENCE = ("garmin", "strava", "apple_health")
 START_TOLERANCE_S = 120
 DURATION_TOLERANCE_S = 60
 
-# Secondary tier (see module docstring): generous purely as a sanity bound --
-# a near-exact avg_hr match already does almost all the real discriminating
-# work, this just guards against the theoretical case of two unrelated
-# same-day, same-sport-family sessions coincidentally sharing one bpm value.
-SECONDARY_START_TOLERANCE_S = 6 * 3600
+# Secondary tier (see module docstring): a narrow band centered on the one
+# documented, confirmed-real discrepancy (Strava vs. Garmin local time off by
+# exactly 2 hours for the same physical ride) -- NOT a blanket window from
+# zero. A blanket 0-6h window was tried first and produced a real false
+# positive (two distinct real rides ~5 hours apart, similar avg_hr, silently
+# merged) -- narrowed 2026-08-31 once that was reproduced. The tolerance
+# around the exact 2h offset is deliberately small: just enough slack for
+# rounding/logging jitter, not a second wide window in disguise.
+SECONDARY_TIME_OFFSET_TARGET_S = 2 * 3600
+SECONDARY_TIME_OFFSET_TOLERANCE_S = 5 * 60
 
 # +-1bpm, not exact equality -- a real pair (2026-08-15, 153 vs. 152) showed
 # each platform can round its own computed average slightly differently for
@@ -173,14 +191,16 @@ def _is_match(a: _Row, b: _Row) -> bool:
     if start_diff <= START_TOLERANCE_S and dur_diff <= DURATION_TOLERANCE_S:
         return True
 
-    # Secondary tier (module docstring): a near-exact avg_hr match is strong
-    # enough on its own to catch the real cross-source timezone-discrepancy
-    # case even when start time and/or duration don't line up.
+    # Secondary tier (module docstring): a near-exact avg_hr match PLUS a
+    # start-time offset close to the one documented, confirmed-real 2-hour
+    # Strava/Garmin discrepancy -- not just "any near-exact avg_hr match,"
+    # which a real false positive (two distinct rides ~5 hours apart, similar
+    # avg_hr) showed isn't discriminating enough on its own.
     return (
         a.avg_hr is not None
         and b.avg_hr is not None
         and abs(a.avg_hr - b.avg_hr) <= AVG_HR_TOLERANCE
-        and start_diff <= SECONDARY_START_TOLERANCE_S
+        and abs(start_diff - SECONDARY_TIME_OFFSET_TARGET_S) <= SECONDARY_TIME_OFFSET_TOLERANCE_S
     )
 
 

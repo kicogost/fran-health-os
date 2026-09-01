@@ -115,8 +115,26 @@ class TestIsExcluded:
         # needs the same exclusion as the script itself.
         assert check_secrets._is_excluded("tests/scripts/test_check_secrets.py") is True
 
-    def test_markdown_files_excluded(self) -> None:
-        assert check_secrets._is_excluded("docs/decisions/0001-foo.md") is True
+    def test_markdown_files_are_no_longer_blanket_excluded(self) -> None:
+        # Real gap found 2026-08-31: a blanket "*.md" exclusion let a real
+        # credential-shaped string through in CLAUDE.md (a large, constantly
+        # -edited file that quotes real command output and config). Markdown
+        # files are now scanned like any other file.
+        assert check_secrets._is_excluded("docs/decisions/0001-foo.md") is False
+        assert check_secrets._is_excluded("CLAUDE.md") is False
 
     def test_ordinary_source_file_not_excluded(self) -> None:
         assert check_secrets._is_excluded("src/health_os/ingest/garmin.py") is False
+
+
+class TestMarkdownFilesAreScanned:
+    def test_credential_shaped_line_in_markdown_is_detected(self) -> None:
+        # The exact live reproduction that found the bug, 2026-08-31: a fake
+        # GARMIN_PASSWORD line staged inside a .md file used to pass clean
+        # because of the (now removed) blanket "*.md" exclusion.
+        path = "CLAUDE.md"
+        diff_text = _diff('+GARMIN_PASSWORD = "hunter2superreal"')
+        assert check_secrets._is_excluded(path) is False
+        matches = check_secrets.find_secret_matches(diff_text)
+        assert len(matches) == 1
+        assert "GARMIN_PASSWORD" in matches[0]

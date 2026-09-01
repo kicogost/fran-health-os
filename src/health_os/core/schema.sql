@@ -202,14 +202,16 @@ CREATE TABLE IF NOT EXISTS body_measurements (
 );
 
 -- Every computed metric from the kickoff doc's "Derived metrics" section (HRV
--- baseline, ACWR, monotony/strain, sleep debt, weight trend, comp countdown,
--- readiness score + components, ...). Long/tidy format — one row per (date,
--- metric_name) — so every metric self-documents the inputs and window size that
--- produced it (design principle 9), without a wide table growing a column per metric
--- across every future phase.
+-- baseline, CTL/ATL/TSB, monotony/strain, sleep debt, weight trend, comp countdown,
+-- readiness score + components, ...) -- NOT ACWR, which was built then dropped
+-- entirely per ADR 0003 (mathematical coupling, inconsistent injury association in
+-- the literature) and never shipped to this table. Long/tidy format — one row per
+-- (date, metric_name) — so every metric self-documents the inputs and window size
+-- that produced it (design principle 9), without a wide table growing a column per
+-- metric across every future phase.
 CREATE TABLE IF NOT EXISTS derived_daily (
     date         TEXT NOT NULL,
-    metric_name  TEXT NOT NULL,                -- e.g. "hrv_baseline_status", "acwr", "readiness_score"
+    metric_name  TEXT NOT NULL,                -- e.g. "hrv_baseline_status", "tsb", "readiness_score"
     value        REAL,
     unit         TEXT,
     window_days  INTEGER,

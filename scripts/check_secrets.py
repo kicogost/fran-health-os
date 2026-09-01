@@ -26,11 +26,18 @@ import sys
 #   - .env.example: shows placeholder key NAMES only, real values are never
 #     committed there (documented in the file itself and in CLAUDE.md).
 #   - this script: contains the patterns themselves as literal strings.
-#   - any *.md file: docs may legitimately show a placeholder example.
 #   - tests/scripts/test_check_secrets.py: this module's own test file has
 #     to embed secret-*shaped* strings as synthetic fixture data to test the
 #     detector at all (found the hard way: this file's own first commit
 #     attempt was blocked by its own hook on exactly this file).
+#
+# A blanket "any *.md file" exclusion used to live here too -- removed
+# 2026-08-31, a real gap confirmed by direct reproduction: staging a fake
+# `GARMIN_PASSWORD = "hunter2superreal"` line inside a .md file passed the
+# hook clean. This project's own CLAUDE.md is a large, constantly-edited
+# file that quotes real command output and config verbatim, so excluding
+# every .md file blindly was a real, live risk, not a theoretical one --
+# .md files are now scanned exactly like any other file.
 _EXCLUDED_EXACT_PATHS = {
     ".env.example",
     "scripts/check_secrets.py",
@@ -104,8 +111,6 @@ def find_secret_matches(diff_text: str) -> list[str]:
 
 def _is_excluded(path: str) -> bool:
     if path in _EXCLUDED_EXACT_PATHS:
-        return True
-    if path.endswith(".md"):
         return True
     return ".git/" in path
 

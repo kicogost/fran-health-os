@@ -42,6 +42,12 @@ class TestMigrations:
     def test_foreign_keys_enabled(self, conn: sqlite3.Connection) -> None:
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
+    def test_busy_timeout_set(self, conn: sqlite3.Connection) -> None:
+        # A scheduled sync and a manually-run CLI logger can rarely write at
+        # the same moment; without this, SQLite raises `database is locked`
+        # immediately on any write-write contention instead of retrying.
+        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 30000
+
 
 class TestMigrationAtomicity:
     """Real bug found 2026-08-28, confirmed by direct reproduction:
