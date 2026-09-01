@@ -162,17 +162,21 @@ class TestCorrelationInsight:
         assert correlation_insight({"confidence": "not_significant", "rho": 0.1}) is None
 
     def test_significant_positive_uses_plain_pair_text(self) -> None:
+        # "fatigue"/"sleep_total_min" -- neither field has inverted storage
+        # polarity (see TestCorrelationInsightPolarity below for the pairs
+        # that do), so this exercises plain pair-text substitution and the
+        # positive-direction wording with no sign normalization in play.
         result = correlation_insight(
             {
                 "confidence": "significant",
                 "rho": 0.6,
                 "n": 40,
-                "x_name": "sleep_quality",
-                "y_name": "hrv_overnight_ms",
+                "x_name": "fatigue",
+                "y_name": "sleep_total_min",
             }
         )
         assert result is not None
-        assert "how well you say you slept" in result["headline"]
+        assert "how tired you feel tracks how much you actually sleep" in result["headline"]
         assert "more one goes up" in result["headline"]
         assert "40 real days" in result["detail"]
 
@@ -202,6 +206,88 @@ class TestCorrelationInsight:
         )
         assert result is not None
         assert "foo vs bar" in result["headline"]
+
+
+class TestCorrelationInsightPolarity:
+    """`sleep_quality` (1=best..10=worst) and `hooper_index` (4=excellent..
+    40=terrible, migration 0002) are both stored on a "lower = better"
+    scale, but their `_PLAIN_PAIR_TEXT` descriptions read naturally as
+    "higher = better" to an English reader ("how well you say you slept,"
+    "your daily wellness check-in"). Real bug found 2026-08-31: the
+    direction sentence used raw `rho`'s sign directly, so a genuine,
+    physiologically correct inverse relationship (worse sleep_quality SCORE
+    <-> higher HRV, i.e. better sleep <-> higher HRV) rendered backwards --
+    "when one goes up, the other tends to go down" reads as "better sleep ->
+    worse HRV" to an English reader, the opposite of the true finding.
+    """
+
+    def test_sleep_quality_inverse_raw_rho_reads_as_moving_together(self) -> None:
+        # Real scenario: better sleep -> higher HRV. Since sleep_quality is
+        # stored worst-high (1=best), "better sleep" means a LOWER raw
+        # score, so the real, physiologically correct raw correlation with
+        # HRV is NEGATIVE.
+        result = correlation_insight(
+            {
+                "confidence": "significant",
+                "rho": -0.6,
+                "n": 40,
+                "x_name": "sleep_quality",
+                "y_name": "hrv_overnight_ms",
+            }
+        )
+        assert result is not None
+        assert "how well you say you slept" in result["headline"]
+        # Plain reading: "how well you slept" and "your HRV" should move
+        # TOGETHER (better sleep, higher HRV) -- not "the other goes down."
+        assert "the more one goes up, the more the other does too" in result["headline"]
+
+    def test_hooper_index_inverse_raw_rho_reads_as_moving_together(self) -> None:
+        # Real scenario: better daily wellness (lower hooper_index) goes
+        # with a higher computed readiness_score (not inverted -- higher is
+        # already better) -- the real, physiologically correct raw
+        # correlation is NEGATIVE.
+        result = correlation_insight(
+            {
+                "confidence": "significant",
+                "rho": -0.5,
+                "n": 35,
+                "x_name": "hooper_index",
+                "y_name": "readiness_score",
+            }
+        )
+        assert result is not None
+        assert "your daily wellness check-in" in result["headline"]
+        assert "the more one goes up, the more the other does too" in result["headline"]
+
+    def test_inverted_field_as_y_name_also_normalizes(self) -> None:
+        # The normalization must apply regardless of which side of the pair
+        # the inverted-polarity field lands on.
+        result = correlation_insight(
+            {
+                "confidence": "significant",
+                "rho": -0.5,
+                "n": 30,
+                "x_name": "readiness_score",
+                "y_name": "hooper_index",
+            }
+        )
+        assert result is not None
+        assert "the more one goes up, the more the other does too" in result["headline"]
+
+    def test_non_inverted_pair_unaffected_by_normalization(self) -> None:
+        # Sanity check: a pair with neither field inverted (e.g. stress /
+        # resting_hr) must read exactly off the raw rho sign, unchanged.
+        result = correlation_insight(
+            {
+                "confidence": "significant",
+                "rho": 0.5,
+                "n": 30,
+                "x_name": "stress",
+                "y_name": "resting_hr",
+            }
+        )
+        assert result is not None
+        assert "the more one goes up, the more the other does too" in result["headline"]
 
 
 def _ctl_series(last_value: float, *, n_days: int = 25, base_value: float = 20.0) -> list:

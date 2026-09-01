@@ -125,12 +125,18 @@ def hrv_insight(baseline: dict[str, Any]) -> dict[str, Any]:
     60-day computed baseline exists (`confidence == "full"`), never off the
     provisional seed-phase thresholds, since those are placeholders, not a
     real personal baseline yet.
+
+    Headlines say "your recovery signal" rather than the acronym "HRV" — a
+    real gap found 2026-08-31: every branch here still literally said "HRV,"
+    inconsistent with `rhr_insight()` below, which correctly spells out
+    "resting heart rate" instead of "RHR." Same "no fluff no acronyms" ask
+    that already drove the rest of this module.
     """
     if baseline.get("confidence") != "full":
         return {
             "metric": "hrv",
             "tone": "unknown",
-            "headline": "Still building your HRV baseline (needs 60 days of history).",
+            "headline": "Still building your recovery-signal baseline (needs 60 days of history).",
             "detail": None,
         }
 
@@ -138,18 +144,18 @@ def hrv_insight(baseline: dict[str, Any]) -> dict[str, Any]:
     value = baseline["value"]
     if status == "high":
         headline = (
-            f"Your HRV has been above your normal range lately ({value:.0f}ms) — "
+            f"Your recovery signal has been above your normal range lately ({value:.0f}ms) — "
             "a good recovery sign."
         )
         tone = "good"
     elif status == "low":
         headline = (
-            f"Your HRV has been below your normal range lately ({value:.0f}ms) — "
+            f"Your recovery signal has been below your normal range lately ({value:.0f}ms) — "
             "you may need more recovery."
         )
         tone = "bad"
     else:
-        headline = f"Your HRV has been right around normal ({value:.0f}ms)."
+        headline = f"Your recovery signal has been right around normal ({value:.0f}ms)."
         tone = "neutral"
 
     return {"metric": "hrv", "tone": tone, "headline": headline, "detail": None}
@@ -207,6 +213,41 @@ _PLAIN_PAIR_TEXT = {
         "readiness_score",
     ): "your daily wellness check-in tracks the computed readiness score",
 }
+
+# Fields stored on a "lower = better" scale -- sleep_quality (1=best..10=worst)
+# and hooper_index (4=excellent..40=terrible, migration 0002) -- the OPPOSITE
+# of how their `_PLAIN_PAIR_TEXT` descriptions above naturally read to an
+# English reader ("how well you say you slept," "your daily wellness
+# check-in," both read as "higher = better"). Real bug found 2026-08-31: the
+# direction sentence below used to be worded straight off `rho`'s raw sign,
+# so a genuine inverse relationship between sleep_quality and HRV (the
+# physiologically correct direction -- a WORSE sleep_quality score, i.e. a
+# LOWER number, goes with a HIGHER HRV) rendered as "when one goes up, the
+# other tends to go down," which reads backwards to an English reader
+# ("better sleep -> worse HRV," the opposite of the true finding).
+# Normalizing the sign here (once per inverted-polarity field in the pair,
+# so two inverted fields cancel out) makes the direction wording correct
+# regardless of a field's underlying storage polarity -- picked over
+# rewording `_PLAIN_PAIR_TEXT` itself since it protects any future pair
+# added to `metrics/correlations.py: _CANDIDATE_PAIRS` too, not just these
+# two known ones today.
+_INVERTED_POLARITY_FIELDS = {"sleep_quality", "hooper_index"}
+
+
+def _plain_language_rho(rho: float, x_name: str | None, y_name: str | None) -> float:
+    """`rho`, re-signed so its direction always matches how an English
+    reader would parse the pair's plain-language description (see
+    `_INVERTED_POLARITY_FIELDS`'s docstring above) -- used only to choose the
+    direction sentence's wording, never as a replacement for the real,
+    reported `rho` (which stays exactly what `metrics/correlations.py`
+    computed, for anyone checking the math).
+    """
+    sign = 1.0
+    if x_name in _INVERTED_POLARITY_FIELDS:
+        sign *= -1.0
+    if y_name in _INVERTED_POLARITY_FIELDS:
+        sign *= -1.0
+    return rho * sign
 
 
 FITNESS_TREND_LOOKBACK_DAYS = 21
@@ -367,11 +408,13 @@ def correlation_insight(result: dict[str, Any]) -> dict[str, Any] | None:
     if result.get("confidence") != "significant" or result.get("rho") is None:
         return None
 
-    key = (result.get("x_name"), result.get("y_name"))
+    x_name, y_name = result.get("x_name"), result.get("y_name")
+    key = (x_name, y_name)
     plain = _PLAIN_PAIR_TEXT.get(key, result.get("description") or "a real pattern")
+    plain_rho = _plain_language_rho(result["rho"], x_name, y_name)
     direction = (
         "the more one goes up, the more the other does too"
-        if result["rho"] > 0
+        if plain_rho > 0
         else "when one goes up, the other tends to go down"
     )
     return {

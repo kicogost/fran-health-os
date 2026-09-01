@@ -205,3 +205,38 @@ class TestInsights:
         weight_30 = next(i for i in payload_30["insights"] if i["metric"] == "weight")
         weight_365 = next(i for i in payload_365["insights"] if i["metric"] == "weight")
         assert weight_30 == weight_365
+
+    def test_headline_and_detail_never_say_bare_hrv_or_rhr(self, conn: sqlite3.Connection) -> None:
+        # Real gap found 2026-08-31: hrv_insight()'s headline literally said
+        # "HRV" in every branch, inconsistent with rhr_insight() (which
+        # correctly spells out "resting heart rate") -- same "no fluff no
+        # acronyms" discipline Training's own acronym-lock test already
+        # enforces for ctl/atl/tsb/monotony. Checked only against the
+        # user-facing headline/detail prose, not the internal "metric" key
+        # (which is a real, intentional identifier the frontend keys icons
+        # off of, e.g. "hrv"/"rhr" in frontend/src/types/trends.ts -- not
+        # prose a reader ever sees).
+        import datetime
+        import re
+
+        start = datetime.date(2026, 1, 1)
+        for i in range(65):
+            d = (start + datetime.timedelta(days=i)).isoformat()
+            db_module.upsert(
+                conn,
+                "daily_metrics",
+                DailyMetric(date=d, hrv_overnight_ms=90.0, resting_hr=50.0).to_row(),
+                ["date"],
+            )
+        payload = build_trends_payload(conn, 90, _CONFIG)
+        by_metric = {i["metric"]: i for i in payload["insights"]}
+        # Confirms the "full baseline" branches (not the seed/insufficient
+        # placeholder text) actually ran -- a constant series deviates 0 SD
+        # from its own baseline, i.e. "balanced"/neutral.
+        assert by_metric["hrv"]["tone"] == "neutral"
+        assert by_metric["rhr"]["tone"] == "neutral"
+
+        for insight in payload["insights"]:
+            text = " ".join(filter(None, [insight.get("headline"), insight.get("detail")]))
+            assert not re.search(r"\bhrv\b", text, re.IGNORECASE), text
+            assert not re.search(r"\brhr\b", text, re.IGNORECASE), text
