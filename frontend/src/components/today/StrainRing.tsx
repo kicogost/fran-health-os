@@ -1,6 +1,9 @@
 import { useCountUp } from "@/hooks/useCountUp"
 
-const ZONE_LABELS: Record<string, string> = {
+// Exported so a secondary caption (e.g. the sparring-only read on the
+// Today page) can use the exact same zone vocabulary as the ring itself,
+// rather than a second, drifting copy of these labels.
+export const ZONE_LABELS: Record<string, string> = {
   light: "Light",
   moderate: "Moderate",
   high: "High",

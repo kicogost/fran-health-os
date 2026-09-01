@@ -12,7 +12,7 @@ from health_os.api.today import (
     build_today_payload,
 )
 from health_os.core import db as db_module
-from health_os.core.models import DailyMetric
+from health_os.core.models import ActivityLap, DailyMetric
 
 _CONFIG = {
     "profile": {"age": 24},
@@ -118,6 +118,91 @@ class TestBuildTodayPayload:
         payload = build_today_payload(conn, _CONFIG, "2026-08-24")
         assert payload["strain"]["strain"] is not None
         assert payload["strain"]["components"][0]["method"] == "foster_estimated"
+
+    def test_strain_sparring_intensity_absent_when_no_bjj_laps(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # A regular rest day (no activities/BJJ logged at all) -- the
+        # `sparring_intensity` key must be present and explicitly None,
+        # never absent or fabricated.
+        payload = build_today_payload(conn, _CONFIG, "2026-08-24")
+        assert payload["strain"]["sparring_intensity"] is None
+
+    def test_strain_sparring_intensity_present_for_a_real_bjj_lap_session(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # End-to-end: a chest-strap-recorded BJJ activity with laps, some of
+        # which classify likely_sparring, must surface a real, distinct
+        # sparring-only %HRR/zone intensity read in the payload -- alongside,
+        # not instead of, the whole-session Strain number.
+        db_module.upsert(
+            conn, "daily_metrics", {"date": "2026-08-24", "resting_hr": 49.0}, ["date"]
+        )
+        db_module.upsert(
+            conn,
+            "activities",
+            {
+                "activity_id": "garmin:bjj1",
+                "source": "garmin",
+                "source_id": "bjj1",
+                "start_utc": "2026-08-24T18:00:00Z",
+                "local_date": "2026-08-24",
+                "sport": "other",
+                "sub_sport": "bjj",
+                "duration_s": 5400,
+                "avg_hr": 118,
+            },
+            ["activity_id"],
+        )
+        laps = [
+            ActivityLap(
+                activity_id="garmin:bjj1", lap_index=1, start_utc="2026-08-24T18:00:00Z", avg_hr=95
+            ),
+            ActivityLap(
+                activity_id="garmin:bjj1",
+                lap_index=2,
+                start_utc="2026-08-24T19:04:00Z",
+                avg_hr=165,
+                duration_s=400,
+            ),
+            ActivityLap(
+                activity_id="garmin:bjj1",
+                lap_index=3,
+                start_utc="2026-08-24T19:11:00Z",
+                avg_hr=110,
+                duration_s=360,
+            ),
+            ActivityLap(
+                activity_id="garmin:bjj1",
+                lap_index=4,
+                start_utc="2026-08-24T19:17:00Z",
+                avg_hr=172,
+                duration_s=400,
+            ),
+            ActivityLap(
+                activity_id="garmin:bjj1",
+                lap_index=5,
+                start_utc="2026-08-24T19:24:00Z",
+                avg_hr=105,
+                duration_s=360,
+            ),
+        ]
+        for lap in laps:
+            db_module.upsert(conn, "activity_laps", lap.to_row(), ["activity_id", "lap_index"])
+
+        payload = build_today_payload(conn, _CONFIG, "2026-08-24")
+        sparring = payload["strain"]["sparring_intensity"]
+        assert sparring is not None
+        # Already a plain, JSON-ready dict of floats/ints/strings -- no
+        # StrainComponent instances to convert, unlike the old shape this
+        # replaced.
+        assert sparring["zone"] == 4
+        assert sparring["zone_label"] == "hard"
+        assert isinstance(sparring["pct_hrr"], float)
+        assert isinstance(sparring["avg_hr"], float)
+        # A different KIND of number from the whole-session Strain -- never
+        # compare the two directly, but confirm both are present together.
+        assert payload["strain"]["strain"] is not None
 
     def test_readiness_components_are_json_serializable_shape(
         self, conn: sqlite3.Connection

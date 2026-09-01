@@ -51,11 +51,37 @@ export interface StrainComponent {
   description: string
 }
 
+// A genuine INTENSITY read (not another accumulated-load number) computed
+// only from a BJJ activity's `likely_sparring`-classified laps
+// (metrics/bjj_laps.py: compute_sparring_intensity(), added 2026-08-31,
+// corrected same day). Standard Karvonen %HRR, duration-weighted across
+// the sparring laps, banded into standard Karvonen/Zoladz zones (1-5;
+// `zone: 0`/`zone_label: "minimal"` for a rare sub-50%-HRR reading). Shown
+// ALONGSIDE the whole-session Strain below, on a DIFFERENT scale entirely
+// -- never compare `pct_hrr`/`zone` directly against `Strain.strain`/
+// `Strain.zone`. `null` when not available (a rest day, a non-BJJ day, a
+// BJJ day with no laps, no sparring-classified laps, or missing resting/
+// max HR that day) -- never invented (design principle 6).
+//
+// A first version of this field (`SparringStrain`, since removed) put a
+// second Strain number here on the SAME 0-21 accumulated-load scale as
+// `Strain` below -- that was the wrong kind of metric for "how hard were
+// the rounds" (see metrics/bjj_laps.py's module docstring for the full
+// account) and is not what this shape represents.
+export interface SparringIntensity {
+  pct_hrr: number
+  zone: number
+  zone_label: string
+  avg_hr: number
+  sparring_duration_min: number
+}
+
 export interface Strain {
   strain: number | null
   zone: "light" | "moderate" | "high" | "all_out" | null
   components: StrainComponent[]
   total_raw_load: number | null
+  sparring_intensity: SparringIntensity | null
 }
 
 export interface StructuralFlags {

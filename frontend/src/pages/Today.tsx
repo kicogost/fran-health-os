@@ -164,6 +164,23 @@ export function TodayPage() {
                   ? "Nothing logged yet today."
                   : strain.components.map((c) => c.description).join(" + ")}
               </p>
+              {/* Secondary, same-day-only INTENSITY read from just the
+                  likely_sparring-classified laps (metrics/bjj_laps.py:
+                  compute_sparring_intensity(), 2026-08-31, corrected same
+                  day) -- deliberately a small caption, not a second ring,
+                  per this page's own "don't over-clutter Today" precedent.
+                  Deliberately NOT the ZONE_LABELS/0-21 vocabulary the ring
+                  above uses -- this is a different kind of number (average
+                  %HRR, Karvonen zone 1-5), not a second Strain value, so it
+                  gets its own wording. Absent entirely when not available
+                  for the day, never a placeholder. */}
+              {strain.sparring_intensity && (
+                <p className="text-xs font-medium text-[var(--band-blue)] text-center">
+                  Sparring rounds: Zone {strain.sparring_intensity.zone} (
+                  {strain.sparring_intensity.zone_label}) &middot;{" "}
+                  {strain.sparring_intensity.pct_hrr.toFixed(0)}% of heart-rate reserve
+                </p>
+              )}
             </div>
           </div>
 

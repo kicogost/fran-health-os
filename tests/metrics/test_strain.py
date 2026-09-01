@@ -6,6 +6,7 @@ import sqlite3
 import pytest
 
 from health_os.core import db as db_module
+from health_os.core.models import ActivityLap
 from health_os.metrics.strain import (
     STRAIN_FOSTER_SCALE,
     STRAIN_SATURATION_K,
@@ -21,6 +22,67 @@ from health_os.metrics.strain import (
 )
 
 _CONFIG = {"profile": {"age": 24}}
+
+
+def _seed_bjj_activity_with_laps(
+    conn: sqlite3.Connection, date: str, activity_id: str = "garmin:bjj1"
+) -> None:
+    """A real-shaped chest-strap BJJ recording: 90min whole session (avg_hr
+    118, mirroring the real 2026-08-31 ground-truth session), 5 laps (1
+    drilling + 4 round laps, 2 of which classify `likely_sparring` -- the
+    same fixture used in tests/metrics/test_bjj_laps.py's
+    TestComputeSparringStrain, kept in sync deliberately so the hand-
+    verified numbers there are directly reusable here).
+    """
+    db_module.upsert(
+        conn,
+        "activities",
+        {
+            "activity_id": activity_id,
+            "source": "garmin",
+            "source_id": activity_id.split(":", 1)[1],
+            "start_utc": f"{date}T18:00:00Z",
+            "local_date": date,
+            "sport": "other",
+            "sub_sport": "bjj",
+            "duration_s": 5400,
+            "avg_hr": 118,
+        },
+        ["activity_id"],
+    )
+    laps = [
+        ActivityLap(activity_id=activity_id, lap_index=1, start_utc=f"{date}T18:00:00Z", avg_hr=95),
+        ActivityLap(
+            activity_id=activity_id,
+            lap_index=2,
+            start_utc=f"{date}T19:04:00Z",
+            avg_hr=165,
+            duration_s=400,
+        ),
+        ActivityLap(
+            activity_id=activity_id,
+            lap_index=3,
+            start_utc=f"{date}T19:11:00Z",
+            avg_hr=110,
+            duration_s=360,
+        ),
+        ActivityLap(
+            activity_id=activity_id,
+            lap_index=4,
+            start_utc=f"{date}T19:17:00Z",
+            avg_hr=172,
+            duration_s=400,
+        ),
+        ActivityLap(
+            activity_id=activity_id,
+            lap_index=5,
+            start_utc=f"{date}T19:24:00Z",
+            avg_hr=105,
+            duration_s=360,
+        ),
+    ]
+    for lap in laps:
+        db_module.upsert(conn, "activity_laps", lap.to_row(), ["activity_id", "lap_index"])
 
 
 class TestEstimateMaxHr:
@@ -275,6 +337,179 @@ class TestBuildDailyStrain:
         )
         result = build_daily_strain(conn, "2026-08-30", _CONFIG)
         assert result["strain"] is None
+
+    def test_no_bjj_activity_gives_no_sparring_intensity_field(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # A non-BJJ day (e.g. a bike ride) must not carry a fabricated
+        # sparring number.
+        db_module.upsert(
+            conn, "daily_metrics", {"date": "2026-08-30", "resting_hr": 49.0}, ["date"]
+        )
+        db_module.upsert(
+            conn,
+            "activities",
+            {
+                "activity_id": "garmin:ride1",
+                "source": "garmin",
+                "source_id": "ride1",
+                "start_utc": "2026-08-30T06:00:00Z",
+                "local_date": "2026-08-30",
+                "sport": "cycling",
+                "duration_s": 6420,
+                "avg_hr": 143,
+            },
+            ["activity_id"],
+        )
+        result = build_daily_strain(conn, "2026-08-30", _CONFIG)
+        assert result["sparring_intensity"] is None
+
+    def test_bjj_activity_with_no_laps_gives_no_sparring_intensity_field(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        db_module.upsert(
+            conn, "daily_metrics", {"date": "2026-08-30", "resting_hr": 49.0}, ["date"]
+        )
+        db_module.upsert(
+            conn,
+            "activities",
+            {
+                "activity_id": "garmin:bjj1",
+                "source": "garmin",
+                "source_id": "bjj1",
+                "start_utc": "2026-08-30T18:00:00Z",
+                "local_date": "2026-08-30",
+                "sport": "other",
+                "sub_sport": "bjj",
+                "duration_s": 5400,
+                "avg_hr": 118,
+            },
+            ["activity_id"],
+        )
+        result = build_daily_strain(conn, "2026-08-30", _CONFIG)
+        assert result["sparring_intensity"] is None
+
+    def test_bjj_activity_with_too_few_round_laps_gives_no_sparring_intensity_field(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # Only one round lap after drilling -- classify_bjj_laps() can't
+        # attempt a median split (MIN_ROUND_LAPS_FOR_SPLIT), so it reads
+        # insufficient_data, never likely_sparring. Must not be dressed up
+        # as a sparring number.
+        db_module.upsert(
+            conn, "daily_metrics", {"date": "2026-08-30", "resting_hr": 49.0}, ["date"]
+        )
+        db_module.upsert(
+            conn,
+            "activities",
+            {
+                "activity_id": "garmin:bjj1",
+                "source": "garmin",
+                "source_id": "bjj1",
+                "start_utc": "2026-08-30T18:00:00Z",
+                "local_date": "2026-08-30",
+                "sport": "other",
+                "sub_sport": "bjj",
+                "duration_s": 5400,
+                "avg_hr": 100,
+            },
+            ["activity_id"],
+        )
+        for lap in [
+            ActivityLap(
+                activity_id="garmin:bjj1", lap_index=1, start_utc="2026-08-30T18:00:00Z", avg_hr=90
+            ),
+            ActivityLap(
+                activity_id="garmin:bjj1",
+                lap_index=2,
+                start_utc="2026-08-30T19:00:00Z",
+                avg_hr=150,
+                duration_s=300,
+            ),
+        ]:
+            db_module.upsert(conn, "activity_laps", lap.to_row(), ["activity_id", "lap_index"])
+        result = build_daily_strain(conn, "2026-08-30", _CONFIG)
+        assert result["sparring_intensity"] is None
+
+    def test_missing_resting_hr_gives_no_sparring_intensity_field_even_with_real_laps(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # No daily_metrics row at all -- no HR-reserve baseline to compute
+        # %HRR against, same rule the whole-session component already
+        # follows (test_missing_resting_hr_skips_hr_based_activities_entirely
+        # above).
+        _seed_bjj_activity_with_laps(conn, "2026-08-31")
+        result = build_daily_strain(conn, "2026-08-31", _CONFIG)
+        assert result["sparring_intensity"] is None
+
+    def test_real_bjj_session_with_sparring_laps_produces_hand_verified_value(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        db_module.upsert(
+            conn, "daily_metrics", {"date": "2026-08-31", "resting_hr": 49.0}, ["date"]
+        )
+        _seed_bjj_activity_with_laps(conn, "2026-08-31")
+
+        result = build_daily_strain(conn, "2026-08-31", _CONFIG)
+
+        # Whole-session number: unchanged, still driven only by the
+        # activity's own avg_hr=118/90min -- same hand-verified value as
+        # test_real_activity_with_hr_produces_trimp_component's sibling
+        # calculation (avg_hr=143 there; recomputed separately for 118 here
+        # via the same standalone script). Confirms the sparring intensity
+        # field does NOT alter the existing whole-session total.
+        assert result["total_raw_load"] == pytest.approx(71.0, abs=0.1)
+        assert result["strain"] == pytest.approx(8.8, abs=0.05)
+
+        # Sparring-only INTENSITY read: same hand-verified %HRR/zone value
+        # as tests/metrics/test_bjj_laps.py::TestComputeSparringIntensity
+        # (identical fixture, deliberately kept in sync) -- a DIFFERENT kind
+        # of number from the accumulated-load total_raw_load/strain above,
+        # not a second value on the same 0-21 scale.
+        sparring = result["sparring_intensity"]
+        assert sparring is not None
+        assert sparring["pct_hrr"] == pytest.approx(84.0, abs=0.05)
+        assert sparring["zone"] == 4
+        assert sparring["zone_label"] == "hard"
+        assert sparring["avg_hr"] == pytest.approx(168.5)
+
+
+class TestBuildDailyStrainSparringDoesNotLeakIntoLoadSeries:
+    """The sparring-only add-on must never double-count into the
+    periodization inputs -- ADR 0008's whole-session TRIMP/Foster series
+    stays the sole feed for CTL/ATL/TSB/monotony/the weekly summary.
+    """
+
+    def test_activity_based_load_series_unaffected_by_sparring_laps(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        db_module.upsert(
+            conn, "daily_metrics", {"date": "2026-08-31", "resting_hr": 49.0}, ["date"]
+        )
+        _seed_bjj_activity_with_laps(conn, "2026-08-31")
+
+        series = build_activity_based_load_series(conn, _CONFIG, "2026-08-31")
+        assert series == [("2026-08-31", pytest.approx(71.0, abs=0.1))]
+
+    def test_load_by_sport_rows_unaffected_by_sparring_laps(self, conn: sqlite3.Connection) -> None:
+        db_module.upsert(
+            conn, "daily_metrics", {"date": "2026-08-31", "resting_hr": 49.0}, ["date"]
+        )
+        _seed_bjj_activity_with_laps(conn, "2026-08-31")
+
+        rows = build_load_by_sport_rows(conn, _CONFIG, "2026-08-31")
+        assert len(rows) == 1  # one activity, one row -- laps never add extra rows
+        assert rows[0]["sport"] == "bjj"
+        assert rows[0]["load"] == pytest.approx(71.0, abs=0.1)
+
+    def test_weekly_summary_unaffected_by_sparring_laps(self, conn: sqlite3.Connection) -> None:
+        db_module.upsert(
+            conn, "daily_metrics", {"date": "2026-08-31", "resting_hr": 49.0}, ["date"]
+        )
+        _seed_bjj_activity_with_laps(conn, "2026-08-31")
+
+        summary = build_weekly_summary(conn, _CONFIG, "2026-08-31")
+        assert summary["session_count"] == 1  # one activity -- laps never count as sessions
 
 
 class TestBuildActivityBasedLoadSeries:

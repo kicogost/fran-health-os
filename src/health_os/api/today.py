@@ -74,24 +74,36 @@ def _annotate_components_with_display(components: dict[str, Any], daily_row: Any
     return annotated
 
 
+def _components_to_json(components: list[Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "source": c.source,
+            "method": c.method,
+            "raw_load": round(c.raw_load, 1),
+            "description": c.description,
+        }
+        for c in components
+    ]
+
+
 def _strain_to_json(result: dict[str, Any]) -> dict[str, Any]:
-    """`build_daily_strain()`'s components are `StrainComponent` dataclass
+    """`build_daily_strain()`'s `components` are `StrainComponent` dataclass
     instances -- not directly JSON-serializable, so converted here rather
     than at the metrics layer (which stays a plain Python return value,
-    reusable outside an HTTP context, same separation as everywhere else
-    in this project).
+    reusable outside an HTTP context, same separation as everywhere else in
+    this project).
+
+    `sparring_intensity` (the sparring-only %HRR/zone read, 2026-08-31, see
+    `metrics.bjj_laps.compute_sparring_intensity()`) needs no equivalent
+    conversion -- unlike the old `sparring` field it replaced (which nested
+    its own `StrainComponent` list on the accumulated-load 0-21 scale), its
+    shape is already a flat dict of plain floats/ints/strings, so it passes
+    through `**result` untouched. Stays `None` when absent -- never invented
+    (design principle 6).
     """
     return {
         **result,
-        "components": [
-            {
-                "source": c.source,
-                "method": c.method,
-                "raw_load": round(c.raw_load, 1),
-                "description": c.description,
-            }
-            for c in result["components"]
-        ],
+        "components": _components_to_json(result["components"]),
     }
 
 

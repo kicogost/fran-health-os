@@ -34,6 +34,30 @@ mapped through a saturating exponential onto the 0-21 display scale — this
 is what produces the "compression" WHOOP describes (two hard efforts don't
 roughly double Day Strain, moving from 16 to 17 takes far more than 4 to
 5) without needing their private formula.
+
+**Sparring intensity (added 2026-08-31, corrected same day)**:
+`build_daily_strain()` also attaches a `sparring_intensity` sub-result — a
+same-day INTENSITY read (not another accumulated-load number) computed only
+from a BJJ activity's `likely_sparring`-classified laps (`metrics.bjj_laps.
+classify_bjj_laps()`/`compute_sparring_intensity()`), shown ALONGSIDE the
+whole-session Strain, never replacing it or feeding into CTL/ATL/TSB/
+monotony/the weekly summary. Motivated by real MMA training-load research
+(Kirk et al. 2024, *Int J Sports Physiol Perform*): segmenting a session's
+internal load by activity type preserves signal a single whole-session
+blended number loses — confirmed directly against Francisco's own real
+2026-08-31 session, whose whole-session Strain (9.1, "light") undersold how
+hard its actual sparring rounds were.
+
+**A first attempt at this got the KIND of number wrong, not just a
+constant** — the original `compute_sparring_strain()` summed TRIMP across
+just the sparring laps and mapped it through this same module's saturating-
+exponential-to-0-21 scale, which scored those same rounds even LOWER (4.9,
+still "light") than the whole session, because TRIMP is a duration-weighted
+accumulated dose and 12 minutes of sparring can never accumulate as much
+dose as 90 minutes of the whole class on a scale calibrated against whole
+sessions. `compute_sparring_intensity()` replaced it with the standard
+Karvonen %HRR formula banded into Karvonen/Zoladz zones — see `metrics.
+bjj_laps`'s module docstring for the full account.
 """
 
 from __future__ import annotations
@@ -44,6 +68,9 @@ from dataclasses import dataclass
 from datetime import date as date_cls
 from datetime import timedelta
 from typing import Any
+
+from health_os.core.models import ActivityLap
+from health_os.metrics.bjj_laps import compute_sparring_intensity
 
 # Garmin sport/sub_sport values that mean "this is a BJJ session" --
 # matches the same vocabulary already established in core/dedupe.py and
@@ -231,6 +258,18 @@ def _gather_day_components(
             is_bjj = row["sub_sport"] == _BJJ_SUB_SPORT or row["sport"] in _BJJ_SPORT_MARKERS
             if row["avg_hr"] is None:
                 continue
+            # A BJJ activity's whole-session avg_hr/duration is used here
+            # deliberately, even though `activity_laps` may hold real
+            # per-round detail for the same activity (metrics/bjj_laps.py:
+            # compute_sparring_intensity()) -- do NOT swap this for a
+            # sparring-only lap read. Whole-session TRIMP/Foster is the sole
+            # input to CTL/ATL/TSB/monotony/the weekly summary (ADR 0008;
+            # both validated methods this project uses are built around
+            # rating/measuring the ENTIRE session, drilling included, which
+            # is real training stress). The sparring-only read is a separate,
+            # same-day intensity number (not a load number at all) surfaced
+            # only via `build_daily_strain()`'s `sparring_intensity` field --
+            # never merged back in here.
             trimp = compute_trimp(
                 avg_hr=row["avg_hr"],
                 resting_hr=resting_hr,
@@ -280,8 +319,80 @@ def build_daily_strain(
 ) -> dict[str, Any]:
     """DB-facing assembly for one calendar date -- see
     `_gather_day_components()` for what actually gets gathered.
+
+    Also attaches a `sparring_intensity` sub-result (added 2026-08-31, see
+    `metrics.bjj_laps.compute_sparring_intensity()`) whenever this date's
+    real BJJ activity has laps AND at least one lap classifies as
+    `likely_sparring` -- `None` otherwise (a normal rest day, a non-BJJ day,
+    or a BJJ day with no laps/no sparring-classified laps). This is a
+    same-day %HRR/zone intensity read shown ALONGSIDE the whole-session
+    accumulated-load number above -- a different KIND of number, not a
+    replacement or a second value on the same scale.
     """
-    return combine_daily_strain(_gather_day_components(conn, date, config))
+    result = combine_daily_strain(_gather_day_components(conn, date, config))
+    result["sparring_intensity"] = _sparring_intensity_for_date(conn, date, config)
+    return result
+
+
+def _sparring_intensity_for_date(
+    conn: sqlite3.Connection, date: str, config: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Looks up this date's real BJJ activity (if any) and its laps, then
+    delegates the actual sparring-vs-rest classification and %HRR math to
+    `metrics.bjj_laps.compute_sparring_intensity()` -- reusing the SAME
+    `resting_hr`/`max_hr` lookup `_gather_day_components()` already uses for
+    the whole-session TRIMP call above, not a second, divergent one.
+
+    Deliberately NOT folded into `_gather_day_components()` itself -- that
+    function is also what `build_activity_based_load_series()`/
+    `build_load_by_sport_rows()` walk to feed CTL/ATL/TSB/monotony/the
+    weekly summary (ADR 0008), and this sparring-only number is a same-day
+    intensity read (average %HRR, not a load contribution at all) -- it
+    must never be summed into those series on top of the whole-session
+    component that already covers the same physical laps. Keeping the
+    lookup here, reachable only through `build_daily_strain()`, enforces
+    that boundary by construction rather than by a comment alone.
+
+    `metrics.bjj_laps` no longer imports anything from this module (the
+    corrected `compute_sparring_intensity()` needs no Strain-scale
+    machinery at all), so `compute_sparring_intensity` is imported at the
+    top of this module now -- unlike the original version of this function,
+    which had to defer the equivalent import to call time to break a
+    two-module cycle that no longer exists.
+    """
+    activity_rows = conn.execute(
+        "SELECT activity_id, sport, sub_sport FROM activities "
+        "WHERE local_date = ? AND duration_s >= ?",
+        (date, MIN_ACTIVITY_DURATION_S_FOR_STRAIN),
+    ).fetchall()
+    bjj_activity_ids = [
+        row["activity_id"]
+        for row in activity_rows
+        if row["sub_sport"] == _BJJ_SUB_SPORT or row["sport"] in _BJJ_SPORT_MARKERS
+    ]
+    if not bjj_activity_ids:
+        return None
+
+    # In practice this account has never had more than one real BJJ activity
+    # on the same date -- if that ever changes, the first one found is used
+    # rather than silently combining laps across two separate sessions.
+    lap_rows = conn.execute(
+        "SELECT * FROM activity_laps WHERE activity_id = ? ORDER BY lap_index",
+        (bjj_activity_ids[0],),
+    ).fetchall()
+    if not lap_rows:
+        return None
+
+    daily_row = conn.execute(
+        "SELECT resting_hr FROM daily_metrics WHERE date = ?", (date,)
+    ).fetchone()
+    resting_hr = daily_row["resting_hr"] if daily_row is not None else None
+    if resting_hr is None:
+        return None
+
+    laps = [ActivityLap.from_row(row) for row in lap_rows]
+    max_hr = estimate_max_hr(config["profile"]["age"])
+    return compute_sparring_intensity(laps, resting_hr=resting_hr, max_hr=max_hr)
 
 
 def _earliest_load_relevant_date(conn: sqlite3.Connection, as_of_date: str) -> str | None:
