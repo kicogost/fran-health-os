@@ -338,6 +338,83 @@ class TestBuildDailyStrain:
         result = build_daily_strain(conn, "2026-08-30", _CONFIG)
         assert result["strain"] is None
 
+    def test_calisthenics_session_without_matching_activity_uses_foster_estimate(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # Migration 0008: calisthenics_sessions gained duration_min, so a
+        # manually logged session with no matching Garmin "Strength
+        # Training" activity that day now contributes via Foster's method,
+        # mirroring the BJJ path exactly.
+        db_module.upsert(
+            conn,
+            "calisthenics_sessions",
+            {
+                "date": "2026-09-13",
+                "session_type": "strength_a",
+                "duration_min": 12,
+                "session_rpe": 7,
+            },
+            ["date", "session_type"],
+        )
+        result = build_daily_strain(conn, "2026-09-13", _CONFIG)
+        assert result["strain"] is not None
+        assert result["components"][0].method == "foster_estimated"
+        assert result["components"][0].sport == "calisthenics"
+
+    def test_calisthenics_session_with_real_matching_activity_skips_foster_estimate(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # A real Garmin "Strength Training" activity that day must suppress
+        # the manual log's RPE-based estimate -- otherwise one physical
+        # session would double-count as two load contributions.
+        db_module.upsert(
+            conn, "daily_metrics", {"date": "2026-09-13", "resting_hr": 49.0}, ["date"]
+        )
+        db_module.upsert(
+            conn,
+            "activities",
+            {
+                "activity_id": "garmin:5",
+                "source": "garmin",
+                "source_id": "5",
+                "start_utc": "2026-09-13T18:00:00Z",
+                "local_date": "2026-09-13",
+                "sport": "strength_training",
+                "duration_s": 720,
+                "avg_hr": 110,
+            },
+            ["activity_id"],
+        )
+        db_module.upsert(
+            conn,
+            "calisthenics_sessions",
+            {
+                "date": "2026-09-13",
+                "session_type": "strength_a",
+                "duration_min": 12,
+                "session_rpe": 7,
+            },
+            ["date", "session_type"],
+        )
+        result = build_daily_strain(conn, "2026-09-13", _CONFIG)
+        methods = [c.method for c in result["components"]]
+        assert methods == ["trimp"]  # not ["trimp", "foster_estimated"]
+
+    def test_calisthenics_session_missing_duration_is_not_estimated(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # A logged session with exercise detail but no duration/RPE (still
+        # a valid row, per CalisthenicsSession's own optional fields) must
+        # not be silently guessed at.
+        db_module.upsert(
+            conn,
+            "calisthenics_sessions",
+            {"date": "2026-09-13", "session_type": "strength_a", "session_rpe": 7},
+            ["date", "session_type"],
+        )
+        result = build_daily_strain(conn, "2026-09-13", _CONFIG)
+        assert result["strain"] is None
+
     def test_no_bjj_activity_gives_no_sparring_intensity_field(
         self, conn: sqlite3.Connection
     ) -> None:

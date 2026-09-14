@@ -47,13 +47,11 @@ def _rows_to_tuples(rows: list[sqlite3.Row], value_col: str) -> list[tuple[str, 
 # own design for calisthenics is explicitly two-signal (Garmin activity OR
 # manual log), but this completion check only ever queried the manual table
 # until this fix (found 2026-08-28: a real session recorded on the watch with
-# no manual log entry that day was reported as "missed").
-_CALISTHENICS_SPORTS = (
-    "strength_training",
-    "traditional_strength_training",
-    "weight_training",
-    "functional_strength_training",
-)
+# no manual log entry that day was reported as "missed"). Sourced from
+# `metrics/strain.py: CALISTHENICS_ACTIVITY_SPORTS` (added migration 0008,
+# 2026-09-13, when `_gather_day_components()` needed this exact same list
+# for its own double-counting guard) rather than re-typed a third time.
+_CALISTHENICS_SPORTS = strain_metrics.CALISTHENICS_ACTIVITY_SPORTS
 
 
 def _session_completion(

@@ -47,9 +47,14 @@ export function LogCalisthenicsTab() {
   const [prescribed, setPrescribed] = useState<string[]>([])
   const [exerciseInputs, setExerciseInputs] = useState<ExerciseInput[]>([])
   const [customExercises, setCustomExercises] = useState<CustomExerciseInput[]>([])
+  const [duration, setDuration] = useState<number | "">("")
   const [rpe, setRpe] = useState(6)
   const [notes, setNotes] = useState("")
-  const [existing, setExisting] = useState<{ session_rpe: number | null } | null>(null)
+  const [existing, setExisting] = useState<{
+    session_rpe: number | null
+    duration_min: number | null
+    computed_load: number | null
+  } | null>(null)
   const [status, setStatus] = useState<{ kind: "success" | "error"; message: string } | null>(null)
   const [existingCheckError, setExistingCheckError] = useState<string | null>(null)
 
@@ -162,11 +167,14 @@ export function LogCalisthenicsTab() {
         session_rpe: rpe,
         exercises: exercises.length > 0 ? exercises : null,
         notes: notes || null,
+        duration_min: duration === "" ? null : duration,
       })
-      const suffix = exercises.length > 0 ? ` — ${exercises.length} exercises logged` : ""
+      const exerciseSuffix = exercises.length > 0 ? ` — ${exercises.length} exercises logged` : ""
+      const loadSuffix =
+        session.computed_load != null ? ` — load ${Number(session.computed_load).toFixed(0)}` : ""
       setStatus({
         kind: "success",
-        message: `Logged: ${session.date} ${session.session_type}${suffix}`,
+        message: `Logged: ${session.date} ${session.session_type}${exerciseSuffix}${loadSuffix}`,
       })
       setExisting(await fetchExistingCalisthenics(date, sessionType))
     } catch (err) {
@@ -212,11 +220,31 @@ export function LogCalisthenicsTab() {
 
       {existing && (
         <p className="text-sm text-[var(--band-amber)] rounded-lg border border-[var(--band-amber)]/30 bg-[var(--band-amber)]/10 px-3 py-2">
-          Already logged for {date} ({sessionType}). Submitting again will overwrite it.
+          Already logged for {date} ({sessionType})
+          {existing.duration_min != null && existing.session_rpe != null && (
+            <>
+              : {existing.duration_min}min @ RPE {existing.session_rpe} (load{" "}
+              {existing.computed_load?.toFixed(0)})
+            </>
+          )}
+          . Submitting again will overwrite it.
         </p>
       )}
 
       <div className={`${CARD_CLASS} p-5 space-y-4`}>
+        <div>
+          <Label htmlFor="cal-duration">Duration (min)</Label>
+          <Input
+            id="cal-duration"
+            type="number"
+            min={1}
+            max={600}
+            placeholder="Optional"
+            value={duration}
+            onChange={(e) => setDuration(e.target.value === "" ? "" : Number(e.target.value))}
+            className="mt-1"
+          />
+        </div>
         {prescribed.map((raw, i) => (
           <div key={raw}>
             <p className="text-xs text-muted-foreground mb-1.5">{raw}</p>

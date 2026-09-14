@@ -1,0 +1,26 @@
+-- Migration 0008: calisthenics session duration + computed load.
+--
+-- Closes a real, documented gap: `bjj_sessions` has `duration_min` plus an
+-- auto-computed `computed_load` (Foster's method: duration_min * session_rpe,
+-- computed by core.models.BjjSession, never entered by hand) -- this feeds
+-- metrics/strain.py's daily/weekly training-load series for any BJJ session
+-- NOT already covered by a real matching Garmin activity that day.
+-- `calisthenics_sessions` (migration 0003) had neither column, so a manually
+-- logged calisthenics session with no matching Garmin "Strength Training"
+-- activity was invisible to the training-load engine -- confirmed directly
+-- by CLAUDE.md's own "Calisthenics tracking closed" section and
+-- metrics/strain.py's `_gather_day_components()` docstring, both of which
+-- said plainly that no duration field existed here to run Foster's method
+-- against.
+--
+-- Mirrors bjj_sessions's own columns exactly: `duration_min INTEGER` (same
+-- type as bjj_sessions.duration_min -- nullable here, unlike bjj_sessions's
+-- NOT NULL, since a calisthenics session logged with only exercise detail
+-- and no duration/RPE at all was already this table's existing, deliberate
+-- design and stays valid) and `computed_load REAL` (same type and same
+-- Foster's-method formula as bjj_sessions.computed_load, computed by
+-- core.models.CalisthenicsSession only once BOTH duration_min and
+-- session_rpe are present -- never invented from one alone, design
+-- principle 6).
+ALTER TABLE calisthenics_sessions ADD COLUMN duration_min INTEGER CHECK (duration_min > 0);
+ALTER TABLE calisthenics_sessions ADD COLUMN computed_load REAL;

@@ -80,6 +80,19 @@ from health_os.metrics.bjj_laps import compute_sparring_intensity
 _BJJ_SPORT_MARKERS = {"martial_arts", "wrestling"}
 _BJJ_SUB_SPORT = "bjj"
 
+# Every real sport string seen in Francisco's actual database for a Garmin
+# "Strength Training" recording (core/dedupe.py's own `_SPORT_FAMILIES`
+# "strength" cluster) -- the canonical, single-source-of-truth definition
+# (added migration 0008, 2026-09-13). `coach/weekly_retro.py`'s own
+# two-signal calisthenics-completion check (added 2026-08-28) imports this
+# rather than keeping its own separately-typed copy.
+CALISTHENICS_ACTIVITY_SPORTS = (
+    "strength_training",
+    "traditional_strength_training",
+    "weight_training",
+    "functional_strength_training",
+)
+
 STRAIN_MAX = 21.0
 
 # Saturating-exponential scale constant. Derived from one real reference
@@ -218,14 +231,19 @@ def _gather_day_components(
     conn: sqlite3.Connection, date: str, config: dict[str, Any]
 ) -> list[StrainComponent]:
     """The actual per-day assembly: real `activities` (any sport, >= 5 real
-    minutes, with a real `avg_hr`) via TRIMP, plus any `bjj_sessions` entry
-    NOT already covered by a real BJJ-tagged activity that day, via Foster's
-    method. Calisthenics has no separate path here -- it only contributes
-    when actually recorded as a real Garmin "Strength Training" activity
-    with HR (the two-signal design already established for calisthenics,
-    CLAUDE.md's "Calisthenics tracking closed" section), never estimated
-    from RPE alone (no duration field exists on `calisthenics_sessions` to
-    run Foster's method against).
+    minutes, with a real `avg_hr`) via TRIMP, plus any `bjj_sessions`/
+    `calisthenics_sessions` entry NOT already covered by a real matching
+    Garmin activity that day, via Foster's method.
+
+    Calisthenics gained this Foster's-method path in migration 0008
+    (2026-09-13) -- before that, `calisthenics_sessions` had no
+    `duration_min` column at all, so a manually logged session with no
+    matching Garmin "Strength Training" activity that day was invisible
+    here (a real, documented gap, see CLAUDE.md's "Calisthenics tracking
+    closed" section). It now mirrors the BJJ path exactly: skipped
+    whenever a real Garmin activity with `sport` in
+    `CALISTHENICS_ACTIVITY_SPORTS` already contributed a TRIMP component
+    that day, so one physical session is never counted twice.
 
     Requires that date's own `resting_hr` -- without it there's no real
     HR-reserve baseline to compute TRIMP against, so activities that day
@@ -251,11 +269,13 @@ def _gather_day_components(
 
     components: list[StrainComponent] = []
     bjj_covered_by_activity = False
+    calisthenics_covered_by_activity = False
     max_hr = estimate_max_hr(config["profile"]["age"])
 
     if resting_hr is not None:
         for row in activity_rows:
             is_bjj = row["sub_sport"] == _BJJ_SUB_SPORT or row["sport"] in _BJJ_SPORT_MARKERS
+            is_calisthenics = row["sport"] in CALISTHENICS_ACTIVITY_SPORTS
             if row["avg_hr"] is None:
                 continue
             # A BJJ activity's whole-session avg_hr/duration is used here
@@ -289,6 +309,8 @@ def _gather_day_components(
             )
             if is_bjj:
                 bjj_covered_by_activity = True
+            if is_calisthenics:
+                calisthenics_covered_by_activity = True
 
     if not bjj_covered_by_activity:
         bjj_rows = conn.execute(
@@ -307,6 +329,28 @@ def _gather_day_components(
                     description=f"{row['session_type']} ({row['duration_min']} min, "
                     f"RPE {row['session_rpe']}) -- no HR data, estimated from RPE",
                     sport="bjj",
+                    duration_min=row["duration_min"],
+                )
+            )
+
+    if not calisthenics_covered_by_activity:
+        calisthenics_rows = conn.execute(
+            "SELECT session_type, duration_min, session_rpe FROM calisthenics_sessions "
+            "WHERE date = ? AND duration_min IS NOT NULL AND session_rpe IS NOT NULL",
+            (date,),
+        ).fetchall()
+        for row in calisthenics_rows:
+            foster = (
+                compute_foster_load(row["duration_min"], row["session_rpe"]) * STRAIN_FOSTER_SCALE
+            )
+            components.append(
+                StrainComponent(
+                    source=f"calisthenics_manual:{row['session_type']}",
+                    method="foster_estimated",
+                    raw_load=foster,
+                    description=f"{row['session_type']} ({row['duration_min']} min, "
+                    f"RPE {row['session_rpe']}) -- no HR data, estimated from RPE",
+                    sport="calisthenics",
                     duration_min=row["duration_min"],
                 )
             )

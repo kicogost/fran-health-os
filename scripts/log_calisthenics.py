@@ -12,10 +12,14 @@ the session type, prompting for what you actually did):
 Or a quick flag-mode one-liner covering just the overall session (no
 per-exercise detail — use interactive mode for that):
 
-    uv run python scripts/log_calisthenics.py --type strength_a --rpe 6
+    uv run python scripts/log_calisthenics.py --type strength_a --duration 12 --rpe 6
 
 Upserts on (date, session_type) — logging the same type twice for the same
 date updates it rather than creating a duplicate (warns before doing so).
+`--duration`/`duration_min` (migration 0008) is optional, same as `--rpe` —
+`computed_load` (Foster's method: duration_min x session_rpe) is computed
+automatically by `core.models.CalisthenicsSession` only once BOTH are
+present, never entered by hand and never invented from one alone.
 """
 
 from __future__ import annotations
@@ -101,6 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--date", help="YYYY-MM-DD, default today (Europe/Madrid)")
     parser.add_argument("--type", dest="session_type", choices=SESSION_TYPES)
+    parser.add_argument("--duration", type=int, default=None, help="minutes")
     parser.add_argument("--rpe", dest="session_rpe", type=int, default=None)
     parser.add_argument("--notes", default=None)
     parser.add_argument("--db-path", default=None)
@@ -140,18 +145,21 @@ def resolve_session(args: argparse.Namespace) -> CalisthenicsSession:
                     }
                 )
         exercises.extend(_prompt_custom_exercises())
+        duration_min = _prompt_int_optional("Duration (min)", lo=1, hi=600)
         session_rpe = _prompt_int_optional("Session RPE", lo=1, hi=10)
         notes = _prompt("Session notes", required=False) or None
     else:
         date = args.date or _today_madrid()
         session_type = args.session_type
         exercises = []
+        duration_min = args.duration
         session_rpe = args.session_rpe
         notes = args.notes
 
     return CalisthenicsSession(
         date=date,
         session_type=session_type,
+        duration_min=duration_min,
         session_rpe=session_rpe,
         exercises=exercises or None,
         notes=notes,
@@ -203,18 +211,30 @@ def _prompt_choice_calisthenics() -> str:
 
 def _warn_if_overwriting(conn: sqlite3.Connection, session: CalisthenicsSession) -> None:
     existing = conn.execute(
-        "SELECT session_rpe FROM calisthenics_sessions WHERE date = ? AND session_type = ?",
+        "SELECT duration_min, session_rpe, computed_load FROM calisthenics_sessions "
+        "WHERE date = ? AND session_type = ?",
         (session.date, session.session_type),
     ).fetchone()
     if existing is not None:
-        print(f"Updating existing {session.session_type} session on {session.date}")
+        detail = ""
+        if existing["duration_min"] is not None and existing["session_rpe"] is not None:
+            detail = (
+                f" (was: {existing['duration_min']}min @ RPE {existing['session_rpe']}, "
+                f"load {existing['computed_load']:.0f})"
+            )
+        print(f"Updating existing {session.session_type} session on {session.date}{detail}")
 
 
 def _print_summary(session: CalisthenicsSession) -> None:
     parts = [f"Logged: {session.date} {session.session_type}"]
     if session.exercises:
         parts.append(f"{len(session.exercises)} exercises logged")
-    if session.session_rpe is not None:
+    if session.duration_min is not None and session.session_rpe is not None:
+        parts.append(
+            f"{session.duration_min}min @ RPE {session.session_rpe} "
+            f"-> load {session.computed_load:.0f}"
+        )
+    elif session.session_rpe is not None:
         parts.append(f"RPE {session.session_rpe}")
     print(", ".join(parts))
 

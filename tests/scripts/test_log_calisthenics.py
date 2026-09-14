@@ -12,7 +12,9 @@ import log_calisthenics  # noqa: E402
 
 
 def _args(**overrides) -> argparse.Namespace:
-    defaults = dict(date=None, session_type=None, session_rpe=None, notes=None, db_path=None)
+    defaults = dict(
+        date=None, session_type=None, duration=None, session_rpe=None, notes=None, db_path=None
+    )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
 
@@ -27,6 +29,19 @@ class TestResolveSessionFlagMode:
         assert session.session_rpe == 6
         assert session.notes == "felt strong"
         assert session.exercises is None
+
+    def test_duration_flag_computes_load(self) -> None:
+        # Real case: Francisco's 2026-09-13 strength_a session, 12min @ RPE 7.
+        session = log_calisthenics.resolve_session(
+            _args(date="2026-09-13", session_type="strength_a", duration=12, session_rpe=7)
+        )
+        assert session.duration_min == 12
+        assert session.computed_load == 84.0
+
+    def test_duration_omitted_leaves_computed_load_none(self) -> None:
+        session = log_calisthenics.resolve_session(_args(session_type="strength_a", session_rpe=6))
+        assert session.duration_min is None
+        assert session.computed_load is None
 
     def test_defaults_date_to_today_madrid(self) -> None:
         session = log_calisthenics.resolve_session(_args(session_type="strength_b"))
@@ -57,6 +72,7 @@ class TestResolveSessionInteractiveMode:
                 "",  # push-ups added weight
                 "",  # push-ups notes
                 "",  # custom exercise name: blank -> none added
+                "12",  # duration (min)
                 "6",  # session RPE
                 "",  # session notes
             ]
@@ -67,7 +83,9 @@ class TestResolveSessionInteractiveMode:
             {"exercise": "pull-ups", "sets": 4, "reps": 5, "added_weight_kg": 5.0, "notes": None},
             {"exercise": "push-ups", "sets": 3, "reps": 8, "added_weight_kg": None, "notes": None},
         ]
+        assert session.duration_min == 12
         assert session.session_rpe == 6
+        assert session.computed_load == 72.0
 
     def test_blank_sets_skips_exercise_detail(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
@@ -85,6 +103,7 @@ class TestResolveSessionInteractiveMode:
                 "",
                 "",
                 "",  # custom exercise name: blank -> none added
+                "",  # duration (min): blank -> skip
                 "",  # session RPE
                 "",  # session notes
             ]
@@ -93,6 +112,7 @@ class TestResolveSessionInteractiveMode:
         session = log_calisthenics.resolve_session(_args())
         assert len(session.exercises) == 1
         assert session.exercises[0]["exercise"] == "push-ups"
+        assert session.duration_min is None
 
 
 class TestPromptCustomExercises:
@@ -183,6 +203,7 @@ class TestResolveSessionCustomExercises:
                 "",  # added weight
                 "",  # notes
                 "",  # blank -> finish custom exercises
+                "",  # duration (min): blank -> skip
                 "5",  # session RPE
                 "traveling, reduced session",  # session notes
             ]
@@ -250,3 +271,31 @@ class TestMainEndToEnd:
         conn.close()
 
         assert [r[0] for r in rows] == ["strength_a", "strength_b"]
+
+    def test_duration_flag_persists_computed_load(self, tmp_path: Path) -> None:
+        # Real case: Francisco's 2026-09-13 strength_a session (100 push-ups,
+        # 10x10, ~10-15min) -- duration_min=12, session_rpe=7 -> load 84.
+        db_path = tmp_path / "test.db"
+        rc = log_calisthenics.main(
+            [
+                "--date",
+                "2026-09-13",
+                "--type",
+                "strength_a",
+                "--duration",
+                "12",
+                "--rpe",
+                "7",
+                "--db-path",
+                str(db_path),
+            ]
+        )
+        assert rc == 0
+
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM calisthenics_sessions").fetchone()
+        conn.close()
+
+        assert row["duration_min"] == 12
+        assert row["computed_load"] == 84.0
