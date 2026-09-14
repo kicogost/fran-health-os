@@ -26,7 +26,16 @@ from __future__ import annotations
 from typing import Any
 
 
-def _fmt_hours_minutes(hours: float) -> str:
+def format_hours_minutes(hours: float) -> str:
+    """ "7h29m"-style formatting -- public (not `_`-prefixed) since
+    `api/trends.py`'s per-chart window-average feature (2026-09-09) reuses
+    this directly for its sleep-duration summary rather than keeping a third
+    copy of the same formatting alongside this module's and `api/today.py`'s
+    own (that second, pre-existing one takes a nullable minutes value for a
+    different call shape, so it's left as its own small thing rather than
+    unified here — this rename only removes what would otherwise have become
+    a THIRD copy).
+    """
     total_min = round(hours * 60)
     h, m = divmod(total_min, 60)
     return f"{h}h{m:02d}m"
@@ -103,7 +112,7 @@ def sleep_insight(
 
     if this_week_avg_hours is not None:
         headline = (
-            f"{state} — averaging {_fmt_hours_minutes(this_week_avg_hours)} a night this week."
+            f"{state} — averaging {format_hours_minutes(this_week_avg_hours)} a night this week."
         )
     else:
         headline = f"{state} over the last 2 weeks."
@@ -114,7 +123,7 @@ def sleep_insight(
         if abs(diff) >= 0.5:
             direction = "up" if diff > 0 else "down"
             detail = (
-                f"That's {direction} from last week's {_fmt_hours_minutes(last_week_avg_hours)}."
+                f"That's {direction} from last week's {format_hours_minutes(last_week_avg_hours)}."
             )
 
     return {"metric": "sleep", "tone": tone, "headline": headline, "detail": detail}

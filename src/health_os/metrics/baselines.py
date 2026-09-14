@@ -28,6 +28,15 @@ DEFAULT_SLEEP_DEBT_WINDOW_DAYS = 14
 # it, so there's nothing to change toward).
 DEFAULT_NIGHTLY_NEED_HOURS = 7.0
 
+# The HIGH edge of the same NSF 7-9h band — added 2026-09-09 for the Trends
+# page's per-chart window-average feature (`api/trends.py`), which needed to
+# classify a window's average sleep duration as short/in-band/long, not just
+# "in deficit or not" (the only thing the debt calc above needs the low edge
+# for). No new judgment call: this is the same band ADR 0007 already
+# documented in prose, just given an explicit constant now that a second
+# caller needs the upper number too.
+DEFAULT_NIGHTLY_NEED_UPPER_HOURS = 9.0
+
 # Francisco's own seed thresholds (kickoff doc section 6), used only while the
 # 60-day computed-baseline window is filling (21-59 total observations). The
 # gaps the kickoff doc didn't specify (85-90ms, below 75ms) are interpretation
@@ -40,6 +49,37 @@ SEED_CAPPED_RANGE_MS = (75.0, 85.0)
 
 def _window_median_sd(values: list[float]) -> tuple[float, float]:
     return statistics.median(values), statistics.pstdev(values)
+
+
+def _status_from_deviation_sd(deviation_sd: float) -> str:
+    """The +-1 SD -> high/low/balanced mapping shared by every baseline
+    classification in this module, factored into one place so
+    `compute_hrv_baseline()`, `compute_rhr_baseline()`, and any external
+    caller via `classify_deviation()` below all apply the identical rule —
+    this project's own repeated lesson about two independent copies of "the
+    same thing" silently drifting apart (see CLAUDE.md's several sections on
+    this, e.g. the sleep-quality-blend and TSB-staleness fixes).
+    """
+    if deviation_sd > 1:
+        return "high"
+    if deviation_sd < -1:
+        return "low"
+    return "balanced"
+
+
+def classify_deviation(value: float, median: float, sd: float) -> tuple[float, str]:
+    """Deviation of `value` from (`median`, `sd`) in SD units, plus the same
+    high/low/balanced status label `compute_hrv_baseline()`/
+    `compute_rhr_baseline()` apply to their own latest observation.
+
+    Public specifically so a caller holding an already-computed baseline
+    (e.g. `api/trends.py`, classifying a windowed AVERAGE rather than the
+    single latest observation those two functions classify internally) can
+    reuse the exact same +-1 SD rule instead of re-deriving a second copy of
+    it that could quietly drift out of sync with this module's own.
+    """
+    deviation_sd = 0.0 if sd == 0 else (value - median) / sd
+    return deviation_sd, _status_from_deviation_sd(deviation_sd)
 
 
 def compute_hrv_baseline(
@@ -99,8 +139,7 @@ def compute_hrv_baseline(
 
     window = [v for _, v in observations[-window_days:]]
     median, sd = _window_median_sd(window)
-    deviation_sd = 0.0 if sd == 0 else (latest_value - median) / sd
-    status = "high" if deviation_sd > 1 else "low" if deviation_sd < -1 else "balanced"
+    deviation_sd, status = classify_deviation(latest_value, median, sd)
 
     return {
         "value": latest_value,
@@ -166,7 +205,7 @@ def compute_rhr_baseline(
     window = values[max(0, latest_idx - window_days + 1) : latest_idx + 1]
     median, sd = _window_median_sd(window)
     deviation_sd = _rolling_deviation_sd(values, latest_idx, window_days, min_days)
-    status = "high" if deviation_sd > 1 else "low" if deviation_sd < -1 else "balanced"
+    status = _status_from_deviation_sd(deviation_sd)
 
     last_3 = [
         _rolling_deviation_sd(values, i, window_days, min_days) for i in range(max(0, n - 3), n)

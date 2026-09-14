@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react"
-import { Activity, Gauge, HeartPulse, Moon, Scale, Search, TriangleAlert } from "lucide-react"
+import { Activity, Gauge, HeartPulse, Moon, Percent, Scale, Search, TriangleAlert } from "lucide-react"
 import { ApiError, fetchCorrelations, fetchTrends } from "@/lib/api"
 import { CARD_CLASS, CARD_CLASS_FLAT } from "@/lib/styles"
-import type { CorrelationResult, TrendInsight, TrendsPayload } from "@/types/trends"
+import type { CorrelationResult, TrendInsight, TrendsPayload, WindowMeaning } from "@/types/trends"
 import { TrendChart } from "@/components/charts/TrendChart"
 import { StackedBarChart } from "@/components/charts/StackedBarChart"
 
@@ -125,7 +125,17 @@ export function TrendsPage() {
             </p>
           )}
 
-          <ChartCard icon={Gauge} title="Readiness score" hasData={!!data.readiness.raw.length}>
+          <ChartCard
+            icon={Gauge}
+            title="Readiness score"
+            hasData={!!data.readiness.raw.length}
+            averageLabel={
+              data.readiness.average.value != null
+                ? Math.round(data.readiness.average.value).toString()
+                : null
+            }
+            summary={data.readiness.meaning}
+          >
             {data.readiness.raw.length > 0 && (
               <>
                 <TrendChart
@@ -144,7 +154,13 @@ export function TrendsPage() {
             )}
           </ChartCard>
 
-          <ChartCard icon={Scale} title="Weight (kg)" hasData={!!data.series.weight_kg?.raw.length}>
+          <ChartCard
+            icon={Scale}
+            title="Weight (kg)"
+            hasData={!!data.series.weight_kg?.raw.length}
+            averageLabel={formatUnitAverage(data.series.weight_kg?.average.value, "kg", 1)}
+            summary={data.series.weight_kg?.meaning}
+          >
             {data.series.weight_kg && (
               <TrendChart
                 raw={data.series.weight_kg.raw}
@@ -156,9 +172,37 @@ export function TrendsPage() {
           </ChartCard>
 
           <ChartCard
+            icon={Percent}
+            title="Body fat (%)"
+            hasData={!!data.series.body_fat_pct?.raw.length}
+            averageLabel={formatUnitAverage(data.series.body_fat_pct?.average.value, "%", 1)}
+            summary={data.series.body_fat_pct?.meaning}
+          >
+            {data.series.body_fat_pct && (
+              <TrendChart
+                raw={data.series.body_fat_pct.raw}
+                smoothed={data.series.body_fat_pct.smoothed}
+                color="#a371f7"
+                unit="%"
+              />
+            )}
+            {data.series.fat_mass_kg?.average.value != null && (
+              <p
+                className="text-xs mt-2 leading-snug"
+                style={{ color: TONE_COLOR[data.series.fat_mass_kg.meaning.tone] }}
+              >
+                Fat mass: avg {data.series.fat_mass_kg.average.value.toFixed(1)}kg —{" "}
+                {data.series.fat_mass_kg.meaning.headline}
+              </p>
+            )}
+          </ChartCard>
+
+          <ChartCard
             icon={HeartPulse}
             title="HRV overnight (ms)"
             hasData={!!data.series.hrv_overnight_ms?.raw.length}
+            averageLabel={formatUnitAverage(data.series.hrv_overnight_ms?.average.value, "ms", 0)}
+            summary={data.series.hrv_overnight_ms?.meaning}
           >
             {data.series.hrv_overnight_ms && (
               <TrendChart
@@ -174,6 +218,8 @@ export function TrendsPage() {
             icon={Activity}
             title="Resting heart rate (bpm)"
             hasData={!!data.series.resting_hr?.raw.length}
+            averageLabel={formatUnitAverage(data.series.resting_hr?.average.value, "bpm", 0)}
+            summary={data.series.resting_hr?.meaning}
           >
             {data.series.resting_hr && (
               <TrendChart
@@ -185,7 +231,13 @@ export function TrendsPage() {
             )}
           </ChartCard>
 
-          <ChartCard icon={Moon} title="Sleep stages (minutes)" hasData={data.sleep_stages.length > 0}>
+          <ChartCard
+            icon={Moon}
+            title="Sleep stages (minutes)"
+            hasData={data.sleep_stages.length > 0}
+            averageLabel={formatHoursMinutes(data.sleep_total.average.value)}
+            summary={data.sleep_total.meaning}
+          >
             <StackedBarChart data={data.sleep_stages} bars={SLEEP_STAGE_BARS} />
           </ChartCard>
         </>
@@ -225,26 +277,70 @@ function InsightCard({ insight }: { insight: TrendInsight }) {
   )
 }
 
+function formatUnitAverage(value: number | null | undefined, unit: string, decimals: number): string | null {
+  if (value == null) return null
+  return `${value.toFixed(decimals)}${unit === "kg" ? " kg" : unit}`
+}
+
+function formatHoursMinutes(totalMinutes: number | null | undefined): string | null {
+  if (totalMinutes == null) return null
+  const h = Math.floor(totalMinutes / 60)
+  const m = Math.round(totalMinutes % 60)
+  return `${h}h${m.toString().padStart(2, "0")}m`
+}
+
+/** The live per-window average + plain-language "what it means", added
+ * 2026-09-09 and moved inline next to the chart title the same day (Francisco:
+ * "it should show up next to the title in each of these charts" -- the first
+ * pass put it on its own line below the title, which read as detached from
+ * it). The average sits in the header row itself, right-aligned against the
+ * title; the fuller sentence runs directly underneath that same header
+ * block, still above the chart -- both count as "next to the title," neither
+ * is a caption stuck after the chart. Tone-colored with the exact same
+ * `TONE_COLOR` map the top-of-page insight cards use, for one consistent
+ * color language across the whole page rather than a second palette.
+ */
 function ChartCard({
   icon: Icon,
   title,
   hasData,
+  averageLabel,
+  summary,
   children,
 }: {
   icon: React.ComponentType<{ className?: string; strokeWidth?: number }>
   title: string
   hasData: boolean
+  averageLabel?: string | null
+  summary?: WindowMeaning
   children: React.ReactNode
 }) {
   return (
     <div className={`${CARD_CLASS_FLAT} p-4`}>
-      <div className="flex items-center gap-2 mb-3">
-        <Icon className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={2} />
-        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-          {title}
-        </p>
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <div className="flex items-center gap-2">
+          <Icon className="h-3.5 w-3.5 text-muted-foreground" strokeWidth={2} />
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            {title}
+          </p>
+        </div>
+        {averageLabel && summary && (
+          <span
+            className="text-xs font-semibold tabular-nums shrink-0"
+            style={{ color: TONE_COLOR[summary.tone] }}
+          >
+            avg {averageLabel}
+          </span>
+        )}
       </div>
-      {hasData ? children : <p className="text-sm text-muted-foreground">No data in this window.</p>}
+      {summary && (
+        <p className="text-xs text-muted-foreground mb-3 leading-snug">{summary.headline}</p>
+      )}
+      {hasData ? (
+        children
+      ) : (
+        !summary && <p className="text-sm text-muted-foreground">No data in this window.</p>
+      )}
     </div>
   )
 }

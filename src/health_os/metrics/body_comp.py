@@ -14,6 +14,19 @@ favor of CTL/ATL/TSB).
 Nothing here writes to `derived_daily` yet. That lands with the full metric
 suite in Phase 4 proper, not this early slice — these are just the functions,
 called directly for now (see `scripts/weight_report.py`).
+
+**Body fat % / fat mass added 2026-09-11** (Francisco, once the Renpho CSV
+body-composition backfill landed real `body_fat_pct` data: "is my weight
+loss/gain coming from fat or muscle"). Reuses this module's existing
+weight-tracking machinery rather than inventing a second smoothing/trend
+approach: `compute_weight_ewma()` is already fully generic (no unit baked
+into its own logic or return shape) and is called UNCHANGED for both the
+fat-mass and body-fat-% series below; `weight_trend_ols()` is likewise
+reused unchanged for fat mass (fat mass is genuinely measured in kg, so its
+kg-labeled field names are accurate, not just borrowed) — only body fat %
+needed a real sibling, `body_fat_pct_trend_ols()`, because its own unit
+(percentage points) would make `weight_trend_ols()`'s kg-labeled field names
+wrong. See `compute_fat_mass_series()` and `body_fat_pct_trend_ols()` below.
 """
 
 from __future__ import annotations
@@ -56,14 +69,63 @@ def compute_weight_ewma(
     return result
 
 
-def _insufficient_trend(window_days: int, n: int) -> dict[str, Any]:
+def _insufficient_trend_generic(window_days: int, n: int) -> dict[str, Any]:
     return {
-        "slope_kg_per_week": None,
-        "ci_low_kg_per_week": None,
-        "ci_high_kg_per_week": None,
+        "slope_per_week": None,
+        "ci_low_per_week": None,
+        "ci_high_per_week": None,
         "n": n,
         "window_days": window_days,
         "confidence": "insufficient_data",
+    }
+
+
+def _trend_ols_generic(
+    observations: list[tuple[str, float]],
+    window_days: int,
+    min_points: int,
+) -> dict[str, Any]:
+    """Shared OLS-over-trailing-window math behind both `weight_trend_ols()`
+    and `body_fat_pct_trend_ols()` (added 2026-09-11, see that function's own
+    docstring for why body fat % needed a sibling rather than a direct call
+    to `weight_trend_ols()`) — one implementation of the regression itself,
+    generically-keyed (`slope_per_week` etc., no unit baked into the name),
+    so the two public wrappers can each rename the keys to whatever unit
+    their own series is actually in without duplicating the math.
+
+    `observations` must be (date, value) pairs sorted ascending by date.
+    Below `min_points` real observations in the window (never below 3
+    regardless of `min_points`, since a regression needs at least that many
+    for a defined confidence interval), returns confidence="insufficient_data"
+    — never report a CI from too few points as if it meant something.
+    """
+    if not observations:
+        return _insufficient_trend_generic(window_days, 0)
+
+    last_date = date.fromisoformat(observations[-1][0])
+    cutoff = (last_date - timedelta(days=window_days - 1)).isoformat()
+    windowed = [(d, w) for d, w in observations if d >= cutoff]
+    n = len(windowed)
+    if n < max(min_points, 3):
+        return _insufficient_trend_generic(window_days, n)
+
+    first_date = date.fromisoformat(windowed[0][0])
+    x = [(date.fromisoformat(d) - first_date).days for d, _ in windowed]
+    y = [w for _, w in windowed]
+
+    fit = stats.linregress(x, y)
+    slope_per_week = fit.slope * 7
+    stderr_per_week = fit.stderr * 7
+    t_crit = stats.t.ppf(0.975, df=n - 2)
+    half_width = t_crit * stderr_per_week
+
+    return {
+        "slope_per_week": slope_per_week,
+        "ci_low_per_week": slope_per_week - half_width,
+        "ci_high_per_week": slope_per_week + half_width,
+        "n": n,
+        "window_days": window_days,
+        "confidence": "full",
     }
 
 
@@ -84,35 +146,84 @@ def weight_trend_ols(
     it meant something.
 
     `observations` must be (date, weight_kg) pairs sorted ascending by date.
+    Also the correct function to reuse directly for a FAT MASS (kg) series
+    (`compute_fat_mass_series()` below) — fat mass is genuinely measured in
+    kg, same as weight, so this function's kg-labeled field names are still
+    accurate, not just borrowed. Delegates to `_trend_ols_generic()` — see
+    `body_fat_pct_trend_ols()` for the one series (body fat %) whose own
+    units are NOT kg, which is why that one is a separate, thin sibling
+    rather than a second call to this function.
     """
-    if not observations:
-        return _insufficient_trend(window_days, 0)
-
-    last_date = date.fromisoformat(observations[-1][0])
-    cutoff = (last_date - timedelta(days=window_days - 1)).isoformat()
-    windowed = [(d, w) for d, w in observations if d >= cutoff]
-    n = len(windowed)
-    if n < max(min_points, 3):
-        return _insufficient_trend(window_days, n)
-
-    first_date = date.fromisoformat(windowed[0][0])
-    x = [(date.fromisoformat(d) - first_date).days for d, _ in windowed]
-    y = [w for _, w in windowed]
-
-    fit = stats.linregress(x, y)
-    slope_kg_per_week = fit.slope * 7
-    stderr_kg_per_week = fit.stderr * 7
-    t_crit = stats.t.ppf(0.975, df=n - 2)
-    half_width = t_crit * stderr_kg_per_week
-
+    generic = _trend_ols_generic(observations, window_days, min_points)
     return {
-        "slope_kg_per_week": slope_kg_per_week,
-        "ci_low_kg_per_week": slope_kg_per_week - half_width,
-        "ci_high_kg_per_week": slope_kg_per_week + half_width,
-        "n": n,
-        "window_days": window_days,
-        "confidence": "full",
+        "slope_kg_per_week": generic["slope_per_week"],
+        "ci_low_kg_per_week": generic["ci_low_per_week"],
+        "ci_high_kg_per_week": generic["ci_high_per_week"],
+        "n": generic["n"],
+        "window_days": generic["window_days"],
+        "confidence": generic["confidence"],
     }
+
+
+def body_fat_pct_trend_ols(
+    observations: list[tuple[str, float]],
+    window_days: int = DEFAULT_TREND_WINDOW_DAYS,
+    min_points: int = MIN_POINTS_FOR_TREND,
+) -> dict[str, Any]:
+    """Same OLS-over-trailing-window math as `weight_trend_ols()` — identical
+    `_trend_ols_generic()` helper underneath, not a copy-pasted second
+    implementation — applied to a body-fat-% series instead of weight.
+
+    `weight_trend_ols()` isn't reused directly here because ITS returned
+    field names bake in a kg unit (`slope_kg_per_week`), which would be
+    silently wrong/misleading for a percentage-point slope. This is a thin,
+    honestly-labeled sibling (`slope_pct_per_week` etc.) rather than a
+    re-derivation of the regression itself — added 2026-09-11 alongside
+    `compute_fat_mass_series()` (see CLAUDE.md's Renpho body-composition
+    section) so body fat %'s own trend can be tracked with the exact same
+    rigor as weight's, per this project's established "never show a raw
+    single-day number as the headline, always smooth + trend" discipline.
+
+    `observations` must be (date, body_fat_pct) pairs sorted ascending by
+    date.
+    """
+    generic = _trend_ols_generic(observations, window_days, min_points)
+    return {
+        "slope_pct_per_week": generic["slope_per_week"],
+        "ci_low_pct_per_week": generic["ci_low_per_week"],
+        "ci_high_pct_per_week": generic["ci_high_per_week"],
+        "n": generic["n"],
+        "window_days": generic["window_days"],
+        "confidence": generic["confidence"],
+    }
+
+
+def compute_fat_mass_series(
+    weight_obs: list[tuple[str, float]], body_fat_pct_obs: list[tuple[str, float]]
+) -> list[tuple[str, float]]:
+    """Fat mass (kg) = weight_kg * body_fat_pct / 100 — computed ONLY for
+    dates where BOTH a real `weight_kg` and a real `body_fat_pct` reading
+    exist that same day (design principle 6: never invented/interpolated for
+    a date missing either input — a day with just a body-fat% reading and no
+    weigh-in that day, or vice versa, contributes nothing here).
+
+    `weight_obs`/`body_fat_pct_obs` are each (date, value) pairs — the exact
+    shape `compute_weight_ewma()`/`weight_trend_ols()` already take, so the
+    result of this join can be fed straight back into either of those two
+    functions completely unchanged (which is exactly how the fat-mass EWMA
+    and fat-mass OLS trend below are built — no new smoothing/trend math for
+    this new metric, per CLAUDE.md's own ask). Order follows `weight_obs`;
+    callers already fetch these ascending by date (`api/trends.py:
+    _fetch_col_obs()`), so the result is ascending too.
+    """
+    pct_by_date = dict(body_fat_pct_obs)
+    result: list[tuple[str, float]] = []
+    for d, weight_kg in weight_obs:
+        pct = pct_by_date.get(d)
+        if pct is None:
+            continue
+        result.append((d, weight_kg * pct / 100.0))
+    return result
 
 
 def comp_countdown(
