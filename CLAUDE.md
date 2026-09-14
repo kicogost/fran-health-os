@@ -836,14 +836,14 @@ data/
   raw/                 immutable per-source downloads (gitignored)
   health.db             the one canonical store (gitignored)
 src/health_os/
-  ingest/               strava_bulk.py, apple_health.py (historical XML), garmin_bulk.py (historical), garmin.py (Phase 6 live sync, ADR 0004), health_auto_export.py (Phase 6 live weight sync — different JSON format from apple_health.py, not the same pipeline), common.py (shared helpers) — bjj_manual.py not needed (log_bjj.py writes directly)
-  core/                 db.py, timezones.py, dedupe.py (activities cross-source dedup, live), schema.sql (snapshot, v5), migrations/000{1,2,3,4,5}_*.sql (source of truth), models.py
-  metrics/              body_comp.py (weight trend + comp countdown), load.py (pure monotony/strain + CTL/ATL/TSB math — no ACWR, ADR 0003; no longer the training-load SOURCE for these, ADR 0008), baselines.py (HRV/RHR baselines, sleep debt), readiness.py (0-100 composite), correlations.py (Spearman correlation engine, MIN_N=30 + Bonferroni-corrected), strain.py (WHOOP-inspired 0-21 Daily Strain — TRIMP + Foster, saturating scale; ADR 0008 — `build_activity_based_load_series()`/`build_load_by_sport_rows()` are now the real training-load SOURCE for CTL/ATL/TSB/monotony/strain everywhere, replacing `activities.training_load`), bjj_laps.py (HR-based sparring/rest lap classification), insights.py (plain-English trend/training takeaways — weight/sleep/HRV/RHR/fitness-trend/freshness/consistency/correlation, 2026-08-30 Trends+Training plain-language rework), derived_daily.py (Phase 4 persistence — writes all of the above into `derived_daily`; "stale" confidence still real for weight/EWMA, no longer reachable for CTL/ATL/TSB/monotony/strain since ADR 0008's series always computes through to today)
+  ingest/               strava_bulk.py, apple_health.py (historical XML), garmin_bulk.py (historical), garmin.py (Phase 6 live sync, ADR 0004), health_auto_export.py (Phase 6 live weight sync — different JSON format from apple_health.py, not the same pipeline), renpho_csv.py (2026-09-11, full body-composition detail from RENPHO's own manual CSV export — reads any `*.csv` under `data/raw/renpho/`, wired into both backfill.py and sync.py, wins over health_auto_export on overlapping fields — see that dated section for why), common.py (shared helpers) — bjj_manual.py not needed (log_bjj.py writes directly)
+  core/                 db.py, timezones.py, dedupe.py (activities cross-source dedup, live), schema.sql (snapshot, v7), migrations/000{1,2,3,4,5,6,7}_*.sql (source of truth), models.py
+  metrics/              body_comp.py (weight trend + comp countdown; 2026-09-11 gained fat-mass/body-fat-% tracking — `compute_fat_mass_series()`, `body_fat_pct_trend_ols()`, both built on the exact same EWMA/OLS machinery as weight), load.py (pure monotony/strain + CTL/ATL/TSB math — no ACWR, ADR 0003; no longer the training-load SOURCE for these, ADR 0008), baselines.py (HRV/RHR baselines, sleep debt), readiness.py (0-100 composite), correlations.py (Spearman correlation engine, MIN_N=30 + Bonferroni-corrected), strain.py (WHOOP-inspired 0-21 Daily Strain — TRIMP + Foster, saturating scale; ADR 0008 — `build_activity_based_load_series()`/`build_load_by_sport_rows()` are now the real training-load SOURCE for CTL/ATL/TSB/monotony/strain everywhere, replacing `activities.training_load`), bjj_laps.py (HR-based sparring/rest lap classification), insights.py (plain-English trend/training takeaways — weight/sleep/HRV/RHR/fitness-trend/freshness/consistency/correlation, 2026-08-30 Trends+Training plain-language rework), derived_daily.py (Phase 4 persistence — writes all of the above into `derived_daily`; "stale" confidence still real for weight/EWMA, no longer reachable for CTL/ATL/TSB/monotony/strain since ADR 0008's series always computes through to today)
   coach/                rules.py (readiness bands, session guidance, structural triggers, taper + deload — see "Taper + deload system"), briefing.py, weekly_retro.py
   dashboard/             app.py (Streamlit entrypoint, st.navigation), theme.py (dark theme + chart helpers), data.py (cached DB/config access), views/{today,trends,training,comp_prep,log,data_health}.py — stays in active use until the React migration (ADR 0005) is fully done
   api/                   main.py (FastAPI app, local-only, all 6 pages' routes), today.py/trends.py/training.py/comp_prep.py/data_health.py (one real read-only assembly fn per page), log.py (the one page with real POST mutation endpoints — reuses core/models.py's dataclasses for validation, never a second copy) — ADR 0005 frontend migration, 2026-08-28
 frontend/               Vite + React + TypeScript + Tailwind v4 + shadcn/ui (Radix base) + react-router-dom + recharts — ADR 0005, 2026-08-28, all 6 pages. src/pages/{Today,Trends,Training,CompPrep,Log,DataHealth}.tsx, components/{today,charts,log,layout}/*.tsx, index.css carries the same Carbon g100 dark tokens as dashboard/theme.py (ported, not re-picked). Daily use: `npm run build` once, then `uv run python scripts/run_api.py` alone serves everything on port 8000. Active frontend dev: `npm run dev` (port 5173, hot reload, proxies /api to FastAPI) + `scripts/run_api.py` (port 8000) as two processes instead.
-scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_calisthenics.py (manual calisthenics logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), weight_report.py (Phase 4 preview), sync.py (Phase 6 daily live-sync entrypoint — Garmin + Health Auto Export, incl. per-lap detail for sub_sport=="bjj" activities), compute_derived.py (Phase 4 derived-metric persistence, trailing-3-day window like sync.py), briefing.py (Phase 7 CLI), weekly_retro.py (Phase 7 CLI), check_secrets.py (pre-commit secret-shaped-string guard, design principle 8), run_api.py (ADR 0005 — local FastAPI server, port 8000; also serves the built frontend/dist/ for one-command daily use, see "One-command frontend serving built"), morning_run.sh (Phase 8 — chains sync+compute_derived+briefing+retro, what launchd's 07:00 com.healthos.morning runs), quiet_sync.sh (Phase 8 — sync+compute_derived+wellness-reminder, no briefing, what launchd's 21:30 com.healthos.quicksync runs, see "Real bug found: weight had been silently stale" for why it exists and "Evening wellness-logging reminder" for the reminder step), check_wellness_logged.py (used by quiet_sync.sh — exit 0/1 on whether all 4 Hooper-Mackinnon fields are logged for a date)
+scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_calisthenics.py (manual calisthenics logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), log_illness.py (illness log, migration 0006), weight_report.py (Phase 4 preview), sync.py (Phase 6 daily live-sync entrypoint — Garmin + Health Auto Export, incl. per-lap detail for sub_sport=="bjj" activities), compute_derived.py (Phase 4 derived-metric persistence, trailing-3-day window like sync.py), briefing.py (Phase 7 CLI), weekly_retro.py (Phase 7 CLI), check_secrets.py (pre-commit secret-shaped-string guard, design principle 8), run_api.py (ADR 0005 — local FastAPI server, port 8000; also serves the built frontend/dist/ for one-command daily use, see "One-command frontend serving built"), morning_run.sh (Phase 8 — chains sync+compute_derived+briefing+retro, what launchd's 07:00 com.healthos.morning runs), quiet_sync.sh (Phase 8 — sync+compute_derived+wellness-reminder, no briefing, what launchd's 21:30 com.healthos.quicksync runs, see "Real bug found: weight had been silently stale" for why it exists and "Evening wellness-logging reminder" for the reminder step), check_wellness_logged.py (used by quiet_sync.sh — exit 0/1 on whether all 4 Hooper-Mackinnon fields are logged for a date)
 githooks/               pre-commit (calls check_secrets.py; activated once per clone via `git config core.hooksPath githooks`, since `.git/hooks/` itself can't be version-controlled)
 launchd/                com.healthos.morning.plist (Phase 8 — installed as a real LaunchAgent, 10:00 Europe/Madrid daily, moved from an initial 07:00 default per Francisco's request)
 tests/                  core/, ingest/, metrics/, coach/, scripts/, api/ (ADR 0005 backend), fixtures/ (synthetic — never real personal data, fixtures are committed to git)
@@ -3480,6 +3480,514 @@ prior readiness-formula change this session.
 4 new/updated tests in `tests/metrics/test_readiness.py`, including the exact real
 scenario (asserts `min()` precisely, not just "moved in the right direction") and
 the reverse chronic-deficit case. 637 tests total, ruff/ruff-format clean.
+
+## Illness tracking built (migration 0006, 2026-09-04)
+
+Real trigger: Francisco was feeling under the weather (sore throat, feeling
+weak/feverish without a measured fever, slight congestion) after a day of
+heavy allergies requiring an antihistamine, with real readiness data that
+week already showing a genuinely elevated RHR + suppressed HRV pattern
+alongside it. He asked directly to track every illness episode with
+whatever info he gives, so that once enough episodes accumulate, illness
+can eventually be correlated against HRV/RHR/sleep/training-load the same
+way `metrics/correlations.py` already does for other pairs.
+
+Built to the exact established manual-logger shape (`bjj_sessions`,
+`subjective_log`, `calisthenics_sessions`, `body_measurements`) — a
+migration, a `core/models.py` dataclass, a CLI script, an API POST endpoint
+reusing that dataclass, and a Log-page frontend tab — no new pattern
+invented:
+
+- **`core/migrations/0006_illness_log.sql`** (schema version 5 → 6) — new
+  `illness_log` table, grain: **one row per DATE**, not per "episode" —
+  same grain as `subjective_log`/`body_measurements`. Episode boundaries
+  are a derived/interpretive concept (a run of consecutive dated entries
+  reads as one episode after the fact), not raw data, so this stays raw
+  and dated per design principle 6. Every field but `date` is nullable and
+  never defaulted to 0/False — a symptom not mentioned stays `NULL`.
+  `severity` (1-10) uses the SAME polarity direction as `subjective_log`'s
+  1-10 fields (1 = best/barely noticeable, 10 = worst/severe — verified
+  against that table's real CHECK constraints before assuming, not just
+  taken on faith), with a matching `CHECK (severity BETWEEN 1 AND 10)`.
+  `fever` (self-assessed "do you feel feverish") is deliberately a separate
+  column from `temperature_c` (an actual measured reading, only present
+  when a thermometer was used) — conflating the two would silently upgrade
+  a felt sensation into a confirmed reading. `core/schema.sql` updated to
+  match (version bump + the new table), `tests/core/test_schema_sync.py`
+  passes unchanged since it's a semantic column comparison.
+- **`core/models.py: IllnessLog`** — same shape as `BodyMeasurement`/
+  `SubjectiveLogEntry`: `to_row()` (omits `None` by default, converts the 7
+  boolean fields to `int` for storage), `from_row()` (reconstructs booleans
+  via the same `_bool()` helper pattern `SubjectiveLogEntry.from_row()`
+  already uses), `__post_init__` validating `severity` is 1-10 when given.
+  Boolean fields (`sore_throat`/`fever`/`congestion`/`cough`/`body_aches`/
+  `fatigue_weakness`/`headache`) are `bool | None` — the same tri-state
+  convention already established for `protein_hit`/`gassed`/`social_meal`,
+  since "not mentioned" and "confirmed absent" are genuinely different
+  states here too.
+- **`scripts/log_illness.py`** — same shape as `scripts/log_wellness.py`
+  (the closest analogue: free-text-heavy, every field optional). Flag mode
+  if any content flag is passed (`--severity 5 --sore-throat --no-fever
+  --congestion --likely-cause "..." --notes "..."`), full interactive
+  walkthrough otherwise. Upserts on `date`, warns before overwriting an
+  existing entry for that date.
+- **`api/log.py`**: `IllnessRequest` (Pydantic) + `get_existing_illness()`/
+  `save_illness()`, identical thin-wrapper-over-the-dataclass pattern as
+  the other four log types — a `ValueError` becomes a 422 with the same
+  message. `api/main.py` gained `GET`/`POST /api/log/illness`.
+- **Frontend**: new `frontend/src/components/log/LogIllnessTab.tsx`, added
+  as a 5th tab on the Log page (`Log.tsx`). Matches the existing tabs'
+  exact pattern: date picker outside the form (`todayLocal()`, the shared
+  helper — no reintroduction of the UTC-default bug this project already
+  fixed once), an existing-entry overwrite warning, `CARD_CLASS` styling.
+  The 7 symptom fields reuse the SAME tri-state Skip/Yes/No `Select`
+  pattern `LogWellnessTab.tsx` already established for `protein_hit`/
+  `social_meal`/`gassed` (a plain checkbox can't represent "not mentioned
+  today," which every symptom here genuinely needs — design principle 6) —
+  defined locally in the new file rather than extracted into a shared
+  component, matching this codebase's existing convention of small
+  self-contained per-tab helper components. Severity uses the same
+  `SliderField` component the BJJ/wellness tabs already share, gated
+  behind a "Rate overall severity today" checkbox (defaults off — unlike
+  the wellness scores, a severity rating is often genuinely not given).
+  Temperature is a plain optional number input, explicitly labeled as
+  distinct from the self-assessed "feels feverish" tri-state above it.
+- **`metrics/correlations.py`**: a one-line comment added to
+  `_CANDIDATE_PAIRS` noting illness-vs-HRV/RHR is a natural future
+  candidate pair once enough real episodes exist — **not implemented**,
+  deliberately: that engine's own `MIN_N = 30` real-paired-observations
+  gate (plus Bonferroni correction across whatever clears it) exists
+  specifically to prevent reporting a correlation before there's enough
+  data to trust it, and illness episodes are (hopefully) rare enough that
+  this pair won't be honestly reachable for a long time.
+
+**Real entry logged, 2026-09-04**, via the real CLI against the real
+`data/health.db` (not a fixture) — exactly what Francisco described, no
+invention beyond it:
+
+```
+uv run python scripts/log_illness.py --date 2026-09-04 \
+  --sore-throat --fatigue-weakness --no-fever --congestion \
+  --likely-cause "unclear -- possibly allergies (heavy allergies + antihistamine the day before) or early viral onset" \
+  --notes "Feels weak and slightly feverish (no measured fever). Yesterday had heavy allergies and took an antihistamine. Traveling, sleeping in an unfamiliar small bed at a friend's house."
+```
+
+Verified via a direct read-only `SELECT` against the real database
+afterward: `sore_throat=1`, `fatigue_weakness=1`, `fever=0` (explicitly
+false — Francisco was clear this wasn't a confirmed fever, so the felt
+sensation lives in `notes` instead, not in a `fever=True` that would
+overstate it), `congestion=1`, `cough`/`body_aches`/`headache`/`severity`/
+`temperature_c` all `NULL` (never mentioned, never invented), `likely_cause`
+and `notes` matching verbatim. Schema version confirmed at 6 in the real
+`schema_migrations` table.
+
+**Verification**: 21 new tests (`tests/core/test_models.py::TestIllnessLog`,
+`tests/scripts/test_log_illness.py`, `tests/api/test_log.py::
+TestIllnessLog`) plus one pre-existing test updated
+(`tests/core/test_db.py::TestMigrations::test_records_applied_version`,
+which hardcoded the applied-migrations list and needed the new `6`). 658
+tests total, all passing; `ruff check`/`ruff format --check` clean.
+Frontend `npx tsc -b` and `npm run build` both clean; `npm run lint`
+(oxlint) shows only pre-existing warning patterns already present on every
+other Log tab (the `set-state-in-effect` and `only-export-components`
+advisories), nothing new introduced.
+
+## Per-chart window average + plain-language meaning on Trends (2026-09-09)
+
+Francisco asked for a live-computed average for whatever window is on
+screen next to EVERY chart on the Trends page, plus a plain sentence on
+what that average means, updating automatically as the window selector
+(30d/90d/365d) changes and as new data comes in. Built exactly to the
+existing Trends-page discipline (see the "Readiness score trend chart +
+real correlation engine" and "Trends and Training rebuilt in plain
+language" sections above) — no ad hoc new heuristic, no acronyms, no second
+computation of a number this page already trusts elsewhere.
+
+**Two hard rules the implementation is built around**:
+1. **The average is always `sum(raw)/len(raw)` of the exact array already
+   returned as that chart's own `raw` series** (`api/trends.py:
+   _window_average()`) — never a separately-fetched or separately-windowed
+   query. `TestWindowAverageMatchesRaw` locks this in for all five metrics
+   so a future change can't make the displayed number silently drift from
+   what's plotted.
+2. **The "what it means" sentence always reuses an already-computed
+   classification, never a new one invented for this feature**:
+   - **Weight** — `body_comp.weight_trend_ols()`'s 21-day OLS trend +
+     `comp_countdown()` (the exact objects `insights.weight_insight()`
+     already uses for the top-of-page card, computed once per request and
+     passed to both) decide direction/rate and the "won't make weight in
+     time" caution; the windowed average itself is compared directly
+     against `config/athlete.yaml: goals.primary.weight_division_kg`.
+   - **HRV / resting heart rate** — `baselines.compute_hrv_baseline()`/
+     `compute_rhr_baseline()` supply the real 60-day median/SD baseline
+     (full history, same object `hrv_insight()`/`rhr_insight()` use); a new
+     shared `baselines.classify_deviation(value, median, sd)` (factored out
+     of both baseline functions' own `+-1 SD -> high/low/balanced` logic)
+     classifies the WINDOWED AVERAGE against that same baseline, so there's
+     exactly one copy of the classification rule, not two independently
+     driftable ones. Never speaks until `confidence == "full"` (60+ real
+     days) — the same honesty gate the top-of-page cards already use.
+   - **Readiness score** — band via `coach.rules.classify_readiness_band()`
+     (the one canonical 75/55 threshold source, no second copy). The
+     "could be better if..." clause is the one genuinely new analysis:
+     `_readiness_weakest_component()` reads `derived_daily.inputs_json`'s
+     already-persisted per-day component breakdown
+     (`metrics/readiness.py: compute_readiness_score()`'s own `components`
+     dict, stored verbatim since the 2026-08-28 derived-daily persistence
+     work) across the window, averages each of hrv/rhr/sleep/subjective's
+     0-100 sub-score, and names whichever has been weakest ON AVERAGE —
+     never a guessed reason. Below `READINESS_MIN_DAYS_FOR_WEAK_COMPONENT`
+     (5, a reasoned default, no literature threshold exists for this) real
+     days of component detail, says so honestly instead of naming a
+     "weakest" off a handful of points.
+   - **Sleep** (a new `sleep_total` payload entry, since no plain average-
+     duration series existed before) — total sleep = deep+light+rem minutes
+     summed from the SAME rows already driving the "Sleep stages" chart
+     (awake time deliberately excluded — it isn't sleep; a day only counts
+     if all three stage values are present, never a partial-night sum),
+     compared against the 7-9h band ADR 0007 already established for the
+     readiness score's own sleep component. `baselines.py` gained
+     `DEFAULT_NIGHTLY_NEED_UPPER_HOURS = 9.0` (the low edge,
+     `DEFAULT_NIGHTLY_NEED_HOURS`, already existed) since no caller had
+     needed the upper number until now.
+3. **Never invent a number** — every meaning function returns `tone:
+   "unknown"` with an honest "not enough ... yet" sentence rather than a
+   number that looks precise but isn't backed by a real classification
+   (insufficient HRV/RHR baseline history, no weight trend yet, no
+   readiness history in the window, no sleep data, too few component-detail
+   days to name a weakest one).
+
+**Payload shape**: every series in `series` (`weight_kg`, `hrv_overnight_ms`,
+`resting_hr`) plus `readiness` and the new `sleep_total` entry now carry
+`average: {"value": float | None, "n_days": int}` and
+`meaning: {"tone": "good"|"neutral"|"bad"|"unknown", "headline": str}` —
+`tone` reuses the exact vocabulary the top-of-page `TrendInsight` cards
+already use (no new color language). `frontend/src/types/trends.ts` gained
+`WindowAverage`/`WindowMeaning`/`SleepTotalSeries`; `Trends.tsx`'s
+`ChartCard` gained an optional `summary` prop rendering a tone-colored
+one-line `ChartSummary` under the chart title (same `TONE_COLOR` map,
+consistent with — not competing with — the readiness chart's existing
+coverage-summary caption, which stays as a second, separate line below the
+chart). `insights.py`'s private `_fmt_hours_minutes()` was renamed to
+public `format_hours_minutes()` so this feature reuses it directly instead
+of adding a third copy of the same "7h29m" formatting (a second,
+independent one already exists in `api/today.py` for a different call
+shape — left alone, not unified, to avoid scope creep on an unrelated page).
+
+**Real output against the actual database, 2026-09-09 (90-day window)**:
+weight averaging 79.4kg — `bad`, "2.4kg above your competition weight
+limit — you've been gaining, about 0.6kg/week"; HRV averaging 90ms and
+resting heart rate 51bpm — both `neutral`, "right around your normal
+range"; sleep averaging 7h50m — `good`, "right in the 7-9 hour range";
+readiness averaging 69 — `neutral`, "okay, but could be better. It would
+help most if you gave your body more recovery time" (HRV/RHR scored
+weakest on average across the window, correctly distinct from the
+top-of-page cards' own live HRV read that same day, which was `good` —
+these are two different, both-honest reads: one is the window average,
+the other is today specifically).
+
+31 new tests (`tests/api/test_trends.py`) — hand-verified average
+arithmetic, the weakest-component identification switching correctly
+between two constructed scenarios (sleep worst vs. HRV worst), every
+insufficient-data fallback, and a locked-in check that `average` always
+equals `sum(raw)/len(raw)` for whatever `raw` array is actually returned.
+694 tests total, all passing; `ruff check`/`ruff format --check` clean.
+Frontend `npx tsc -b` and `npm run build` both clean; `npm run lint`
+(oxlint) shows only the same pre-existing warning patterns already present
+elsewhere on this page (`set-state-in-effect` on the existing data-fetch
+effect), nothing new. Sanity-checked directly against the real
+`data/health.db`, opened via SQLite's own `mode=ro` URI (not
+`core.db.connect()`, which sets a WAL pragma) so the check could not write
+to it — confirmed harmless afterward too (the DB file's own mtime was
+unchanged; only the already-gitignored, already-WAL-mode `-shm`/`-wal`
+sidecar files were touched, `-wal` staying 0 bytes, i.e. no transaction was
+ever written).
+
+**Same-day follow-up**: the averages didn't render on first load — the
+always-on API service (started days earlier, running `--no-reload`) had no
+idea the new backend routes existed, the exact same "server needs a manual
+restart to see shipped code" gap that had already hit the illness-log
+feature once. Francisco named it directly as a recurring problem worth
+solving properly rather than patching around again. Fixed at the root:
+`launchd/com.healthos.api.plist` no longer passes `--no-reload` —
+`scripts/run_api.py`'s reload mode (already built, already scoped to
+`reload_dirs=[src/health_os]`, already the default when run by hand) now
+runs in the permanent background service too. Verified for real, not just
+assumed: touched a live source file, confirmed via the server's own log
+that StatReload detected the change and cycled the worker process
+automatically (`Started server process [97140]` → `WARNING: StatReload
+detected changes... Reloading` → `Started server process [97161]`), with no
+manual kill/restart. Scoped narrowly on purpose — the reloader only watches
+`src/health_os/`, so routine writes to `data/health.db`, `data/logs/`, or
+`frontend/dist/` (rebuilt separately by `npm run build`, already
+static-file-fresh-per-request with no restart ever needed) can't trigger a
+spurious reload. Accepted trade-off, stated plainly: a brief in-flight-
+request interruption at the moment of a real reload and a small idle-
+watcher resource cost — both irrelevant for a single-user, low-request-
+volume local app, which is exactly why the original "no reload" reasoning
+didn't hold up against how this project is actually developed (Claude
+editing source directly against this same running tree, not a separate
+dev-mode instance).
+
+## Renpho CSV ingestion — full body composition, a real Sept 1 discrepancy resolved
+(2026-09-11)
+
+Francisco already had a real RENPHO Health app CSV export saved at
+`data/raw/renpho/RENPHO Health-Francisco.csv` — full bioimpedance detail the
+scale actually measures, not just the two fields (`weight_kg`, `lean_body_
+mass_kg`/`bmi`) that happen to ride along in Apple Health's "Body Mass"
+bundle via `ingest/health_auto_export.py`. Built following that module's
+exact shape: `ingest/renpho_csv.py` (new), migration
+`core/migrations/0007_renpho_body_composition.sql` (schema v6 → v7),
+`core/models.py: DailyMetric` extended, wired into both `scripts/backfill.py`
+and `scripts/sync.py` (this is a manual, periodically-repeated export —
+Francisco drops a fresh CSV under `data/raw/renpho/` (any filename) whenever
+he re-exports, same "read whatever's there" shape as Health Auto Export, so
+both the one-time backfill path and the daily sync path read it).
+
+**Real header, confirmed by direct inspection**: `Date, Time, Weight(kg),BMI,
+Body Fat(%),Skeletal Muscle(%),Fat-Free Mass(kg),Subcutaneous Fat(%),
+Visceral Fat,Body Water(%),Muscle Mass(kg),Bone Mass(kg),Protein (%),
+BMR(kcal),Metabolic Age,Optimal Weight(kg),Target to optimal weight(kg),
+Target to optimal fat mass(kg),Target to optimal muscle mass(kg),Body
+Type,Remarks` — inconsistent comma-adjacent spacing (`skipinitialspace=True`
+handles it) and a genuine internal space in `"Protein (%)"` (preserved
+correctly, verified). `Date` is DD/MM/YYYY (confirmed unambiguously by real
+rows with day-of-month >12, e.g. "13/04/2026" — invalid under MM/DD). `Time`
+has no offset — `core/timezones.py: localize_to_utc()` reused unchanged
+(same pattern as Strava's bulk CSV), Europe/Madrid confirmed by the CSV's own
+times (mostly 07:xx-08:xx, a plausible home weigh-in hour). The
+`Optimal Weight(kg)`/`Target to optimal ...`/`Body Type`/`Remarks` columns
+are skipped entirely — every real row has `--` in all of them, a genuine
+checked-empty gap, not a silent omission.
+
+**`Fat-Free Mass(kg)` reuses the existing `lean_body_mass_kg` column**
+(migration 0005) rather than adding a new one — decided by cross-checking 4
+real overlapping dates already in `daily_metrics` (populated via the
+Apple-Health path) against this CSV's Fat-Free Mass column: 2026-08-28
+(59.60 both), 2026-08-29 (59.50 both), 2026-08-30 (59.64 both), 2026-08-31
+(59.78 both) — exact matches every time. "Fat-Free Mass" and "Lean Body
+Mass" are standard synonyms for the same body-composition quantity, and this
+real match confirms it. Seven new columns for everything else with no
+existing home: `body_fat_pct`, `skeletal_muscle_pct`, `subcutaneous_fat_pct`,
+`body_water_pct`, `muscle_mass_kg`, `bone_mass_kg`, `protein_pct`, plus
+`bmr_kcal`/`metabolic_age` (integers) and `visceral_fat_rating` (a small
+unitless 1-10ish Renpho rating, not a percentage — named accordingly, not
+suffixed `_pct`).
+
+**The "latest wins" rule is applied per whole ROW, not per field
+independently** — a deliberate, considered choice, different from how
+`ingest/health_auto_export.py` tracks its 3 metrics: every field in one CSV
+row comes from the same physical weigh-in event, so mixing an evening row's
+weight with a morning row's body-fat% would fabricate a reading that never
+happened. The row with the latest `Time` for a date is selected as a unit;
+all of its present (non-`--`) fields are used together. Real, observed
+consequence of this choice, not a bug: 2026-07-03 has two rows (08:17 with
+full body-comp data, 08:44 with only weight/BMI, everything else `--`) — the
+later 08:44 row wins as a whole, so that date correctly ends up with no
+body-fat/muscle/etc. reading at all despite an earlier same-day row having
+one. Confirmed this is the rule working as designed, not data loss to fix.
+
+**The 2026-09-01 discrepancy — investigated, not papered over.** The CSV has
+three rows for this date: a fasted 05:59 morning reading (78.95 kg) and two
+near-identical 21:1x evening rows (83.75 kg, a duplicate double-tap).
+`daily_metrics` already held **82.15 kg** for 2026-09-01 from the
+Apple-Health/Health-Auto-Export path — a THIRD number matching neither CSV
+row. Direct calculation: `(78.95 + 83.75 + 83.75) / 3 = 82.15` (confirmed to
+~10 significant figures against the stored value) — essentially certain to
+be the real explanation rather than coincidence (an unrelated fourth reading
+landing exactly on the arithmetic mean of the other three is astronomically
+unlikely). Most likely mechanism: Health Auto Export's own per-day
+aggregation (or the HealthKit statistics query underneath it) collapsed
+multiple same-day `weight_body_mass` samples into a same-day AVERAGE rather
+than passing through a single discrete sample — confirmed this is NOT
+happening on this codebase's own side (`ingest/health_auto_export.py` has no
+averaging code at all, it just takes whatever single `qty` value is in each
+data-array entry). A related puzzle noticed but not fully resolved: that
+same date's `lean_body_mass_kg` (59.61) matches the CSV's single MORNING
+reading exactly, not any average of the three lean-mass readings — meaning
+weight and lean-mass were evidently aggregated differently upstream by
+whatever produced that Health-Auto-Export data. The exact internal mechanism
+inside Health Auto Export/HealthKit isn't independently verifiable from
+outside the app, but the arithmetic match for weight is essentially certain
+to be non-coincidental regardless.
+
+**Resolution, reasoned explicitly**: an averaged value silently standing in
+for a single day's weight is itself a design-principle-6 violation ("no
+silent interpolation, no gap-filling with averages") — which is precisely
+why this CSV, read directly from RENPHO's own export with no HealthKit relay
+in between, is now treated as MORE authoritative than the Health-Auto-Export/
+Apple-Health path for any date both cover, going forward. `ingest/renpho_
+csv.py` is wired in AFTER `apple_health`/`health_auto_export` in both
+`scripts/backfill.py` and `scripts/sync.py`'s call order specifically so it
+wins on conflicting scalar fields for the same date, on every future run —
+not just this one. Applying this project's own "latest row wins" rule to the
+CSV picks the 83.75 kg evening row (later than the 05:59 morning row) — a
+real, physically plausible post-food/water/clothed evening weight, not an
+error to second-guess further. `daily_metrics.weight_kg` for 2026-09-01 is
+now **83.75 kg**, with the full evening row's body-composition detail
+alongside it, `sources` correctly showing `"renpho_csv"` for every field
+that CSV touched while Garmin's same-day fields (resting_hr, sleep, HRV, ...)
+were preserved untouched via `db.upsert(..., merge_json_columns=["sources"])`.
+
+**Real ingestion, run against the actual `data/health.db`, not a test run**:
+migration 0007 applied (schema now v7); `uv run python scripts/backfill.py
+--source renpho_csv` upserted **78 dates**, 2026-03-09 through 2026-09-11
+(today) — exactly matching the CSV's own 78 distinct dates across 97 raw
+rows. 14 of those dates had multiple same-day rows (re-weighs); 3 raw rows
+had `--` for every body-composition field (weight/BMI-only, failed
+bioimpedance reads), which — after "latest row wins" resolution — left 2
+dates (2026-07-03, 2026-07-04) with no body-composition detail, 76 of 78
+with real body-fat/muscle/water/etc. data for the first time ever in this
+database. Of the 78 dates, 76 already had *some* prior `weight_kg` value
+(mostly from the original Apple Health `export.xml` bulk backfill, now
+corrected/confirmed by the more-direct CSV source); 2 dates got a real
+`weight_kg` value for the first time. Verified idempotent: re-ran the same
+backfill command a second time, identical `78 upserted` result both times,
+`ingest_runs` showing two clean `success` rows back to back.
+
+**Verification**: 25 new/updated tests (`tests/ingest/test_renpho_csv.py`
+against synthetic fixtures — never the real personal file, per this
+project's own `tests/fixtures/` convention — covering latest-row-wins,
+`--` → `None`, DD/MM/YYYY day-first parsing via an unambiguous real-shaped
+case, the "Protein (%)" internal-space header, local-time-to-UTC round-
+tripping across both a winter and a summer DST offset, per-row error
+isolation, multi-file combination, and empty/non-CSV-directory handling;
+`tests/core/test_models.py` extended for the new `DailyMetric` fields;
+`tests/core/test_db.py`'s hardcoded migration-version list updated for v7).
+708 tests total, all passing; `ruff check`/`ruff format --check` clean.
+
+`RENPHO_CSV_DIR` env var override added to `.env.example` for consistency
+with every other source's configurable path, though Francisco hasn't set it
+in his real `.env` yet (the default `data/raw/renpho` already matches where
+the real file lives).
+
+## Body fat % trend + fat mass on Trends, and a real target researched (2026-09-11)
+
+Same-day follow-up to the Renpho ingestion above — Francisco asked to see
+the new body-composition data on the Trends page, tying it to the weight-cut
+goal specifically ("is my weight loss coming from fat or muscle"), and
+separately asked what body-fat % he should actually be targeting for the
+comp. Both real, evidence-grounded work, not guessed.
+
+**Built**: `metrics/body_comp.py` gained `body_fat_pct_trend_ols()` (reuses
+`_trend_ols_generic()`, the same shared OLS-with-CI machinery `weight_trend_ols()`
+already used — factored out rather than duplicated, so both stay in sync)
+and `compute_fat_mass_series()` — `fat_mass_kg = weight_kg * body_fat_pct /
+100`, computed only for dates where BOTH real inputs exist (design principle
+6: never interpolated). `api/trends.py` gained `body_fat_pct` and
+`fat_mass_kg` series in the exact `{raw, smoothed, average, meaning}` shape
+the 2026-09-09 per-chart-average feature already established — average
+computed from the same displayed `raw` array (no separate computation to
+drift), `meaning` built from the real OLS trend direction the same way
+`weight_insight()` already does for weight. Deliberately **no hardcoded
+body-fat target comparison yet** — the real target number only exists as
+research (below), not yet wired into the honesty-checked composite math;
+left a code comment marking where that would plug in once decided.
+Frontend: a new "Body fat (%)" chart card on Trends (icon `Percent`), with
+fat mass surfaced as a second tone-colored line inside the same card rather
+than a whole separate chart (Francisco's own ask was to see body fat
+specifically; fat mass rides along as supporting detail).
+
+**Internal consistency checked directly, not assumed**: `weight_kg -
+fat_mass_kg` matches the independently-sourced `lean_body_mass_kg` column
+(itself already cross-validated against the CSV on 4 real dates, see the
+section above) to within rounding on every real date checked — the two
+different derivations of "how much of you isn't fat" agree with each other.
+
+**Real output against the actual database (90-day window)**: body fat
+averaging **24.8%** (44 real days), fat mass averaging **19.7kg**, both
+reading "holding steady" — an honest, un-alarming trend read, not yet
+reflecting a real cut in motion (checked, matches the current stall-then-cut
+timing already documented elsewhere in this file).
+
+**The research, evidence-graded, separate from the code**: real BJJ/grappling
+body-composition studies (Andreato 2012/2015, Almeda et al. 2023 — the
+last DXA-measured and closely weight-matched to Francisco) place **elite
+competitors around 8-13% body fat**, serious amateurs around **15-18%**.
+Doing the cut safely at his own already-established rate (~0.5-0.55 kg/week,
+which happens to land in the literature's lean-mass-preserving 0.5-1.0%/week
+band — corroborated by a real RCT, Garthe et al. 2011, where this exact pace
+let athletes gain lean mass while losing fat) puts him at **roughly 22-23%
+body fat on comp day** — comfortably making 77kg, nowhere near elite or even
+amateur-competitive leanness. Concrete scenarios computed from his real
+current composition (79.5kg, 24.8%BF → 19.7kg fat, 59.8kg lean): losing the
+needed 2.5kg as real fat costs him under 1.5kg of lean mass even in a
+pessimistic case; a water-cut instead would show *zero* real %BF
+improvement, since acute water loss depletes the lean-mass side of the
+ledger on paper, reinforcing (not just repeating) the project's existing
+hard no-water-cut rule.
+
+**A real, named trade-off, not glossed over**: "make 77kg" and "visible
+muscle definition" (the secondary goal) are not the same distance away.
+Making weight safely is achievable in 5 weeks; visible definition needs
+roughly the 10-15% range, which would mean losing several more kilograms
+of fat than this cut calls for, over months not weeks. Treated as an honest
+mismatch to revisit post-comp, not a reason to push this cut harder or
+faster than the safe-rate literature supports.
+
+39 new/updated tests (`tests/metrics/test_body_comp.py`, `tests/api/
+test_trends.py`), 731 tests total, ruff/ruff-format clean, frontend `tsc -b`
+and `npm run build` clean.
+
+**Not yet done**: the actual target body-fat-% comparison isn't wired into
+the Trends page's "meaning" sentence or the comp countdown yet — the
+research above gives a real number to use, but turning it into a coded
+comparison (and deciding whether 22-23% vs. an elite/amateur benchmark
+should read as "good," "neutral," or something else entirely, given the
+trade-off just described) is a real judgment call worth a direct
+conversation before building, not assumed here.
+
+## Calisthenics sessions wired into the training-load engine (migration 0008, 2026-09-13)
+
+Francisco logged a real ad-hoc calisthenics session (100 push-ups, 10 sets x
+10 reps, ~12 min, RPE 7 — not one of his prescribed `strength_a`/`strength_b`
+sessions, just filed under `strength_a` as a storage bucket) and asked
+directly to make sure it showed up in the training-load engine. It couldn't:
+`metrics/strain.py: _gather_day_components()`'s own docstring said plainly
+that calisthenics "has no separate path here... never estimated from RPE
+alone (no duration field exists on `calisthenics_sessions` to run Foster's
+method against)" — a real, previously-documented gap, not a bug, but one
+Francisco's own real session just ran into directly.
+
+**Fixed, mirroring `bjj_sessions`'s exact existing pattern rather than
+inventing a new one**: migration 0008 adds `duration_min`/`computed_load` to
+`calisthenics_sessions`; `core/models.py: CalisthenicsSession` auto-computes
+`computed_load` (Foster's method, `duration_min * session_rpe`) in
+`__post_init__`, only when both are present, same as `BjjSession`. `_gather_
+day_components()` gained a calisthenics path structurally identical to the
+existing BJJ one — a Foster's-method component for any date's manually-
+logged calisthenics session NOT already covered by a real Garmin-recorded
+strength activity that day (reusing the same real sport-string list
+`coach/weekly_retro.py` already established: `strength_training`,
+`traditional_strength_training`, `weight_training`,
+`functional_strength_training`). CLI (`--duration` flag/prompt), API, and
+the Log page's Calisthenics tab all gained duration capture to match.
+
+**Francisco's real session, updated with his own given numbers** (`duration_
+min=12` — the midpoint of the "10-15 minutes" he stated, `session_rpe=7` —
+given directly, not guessed): `computed_load` = 84.0. Real `build_daily_
+strain()` output for 2026-09-13, verified end to end: `{"strain": 3.7, "zone":
+"light", "components": [{"source": "calisthenics_manual:strength_a",
+"method": "foster_estimated", "raw_load": 25.2, "duration_min": 12}],
+"total_raw_load": 25.2}` — a real, honestly-labeled ("no HR data, estimated
+from RPE") Strain contribution where there was none before.
+
+**Worth recording plainly**: this build was interrupted twice by the host
+machine going to sleep mid-response (a real infrastructure hiccup, not a
+task failure) — resumed each time by checking what had actually survived on
+disk before continuing, rather than restarting from scratch or assuming
+nothing had been done. One real gap surfaced by finishing the work: the
+frontend's `fetchExistingCalisthenics()` return type hadn't been updated to
+include the new `duration_min`/`computed_load` fields even though the real
+backend endpoint (`api/log.py: get_existing_calisthenics()`) already
+selected them correctly — a type-only lag, not a data bug, caught by `tsc -b`
+and fixed directly.
+
+15 new/updated tests (`tests/core/test_models.py`, `tests/metrics/
+test_strain.py`, `tests/scripts/test_log_calisthenics.py`, `tests/api/
+test_log.py`), 746 tests total, ruff/ruff-format clean, frontend `tsc -b`
+and `npm run build` clean.
 
 ## Definition of done for v1
 
