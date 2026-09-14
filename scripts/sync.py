@@ -5,8 +5,9 @@
     uv run python scripts/sync.py --days 7
 
 Covers Garmin (activities + daily wellness + per-lap detail for BJJ
-activities) and Health Auto Export (weight, lean body mass, BMI). Live Strava sync is
-deliberately skipped: Strava introduced a paid
+activities), Health Auto Export (weight, lean body mass, BMI), and RENPHO's
+own CSV export (full body-composition detail — see `ingest/renpho_csv.py`).
+Live Strava sync is deliberately skipped: Strava introduced a paid
 ($11.99/mo) developer API tier in June 2026, and Garmin already covers
 current activities — Strava's role in this project is purely historical
 backfill (already done, see `scripts/backfill.py`).
@@ -52,10 +53,11 @@ from garminconnect import GarminConnectAuthenticationError  # noqa: E402
 from health_os.core import db  # noqa: E402
 from health_os.core.dedupe import dedupe_activities  # noqa: E402
 from health_os.core.timezones import to_local_date  # noqa: E402
-from health_os.ingest import garmin, health_auto_export  # noqa: E402
+from health_os.ingest import garmin, health_auto_export, renpho_csv  # noqa: E402
 
 DEFAULT_WINDOW_DAYS = 3
 DEFAULT_HEALTH_AUTO_EXPORT_DIR = "data/raw/health_auto_export"
+DEFAULT_RENPHO_CSV_DIR = "data/raw/renpho"
 
 
 def _today_local() -> date:
@@ -200,6 +202,65 @@ def sync_health_auto_export(conn: sqlite3.Connection) -> bool:
     return True
 
 
+def sync_renpho_csv(conn: sqlite3.Connection) -> bool:
+    """RENPHO Health app CSV export — a manual, periodically-repeated export
+    Francisco drops under `RENPHO_CSV_DIR` (default `data/raw/renpho/`)
+    whenever he re-exports from the app, not a live automatic feed. Reading a
+    fixed directory for any `*.csv` file (rather than a specific filename)
+    means a future re-export needs no code change to pick up — same "read
+    whatever's there" spirit as `sync_health_auto_export()`.
+
+    Runs AFTER `sync_health_auto_export()` in `main()` so it wins on
+    overlapping body-composition fields for the same date, on every run —
+    see `ingest/renpho_csv.py`'s module docstring for the real, investigated
+    reason (the 2026-09-01 discrepancy): this CSV is read directly from
+    RENPHO's own export, with no HealthKit relay in between to silently
+    average same-day readings.
+    """
+    export_dir = Path(os.environ.get("RENPHO_CSV_DIR", DEFAULT_RENPHO_CSV_DIR))
+    if not export_dir.exists() or not any(export_dir.glob("*.csv")):
+        print(f"renpho_csv: no CSV export found under {export_dir} — skipping")
+        return True
+
+    run_id = db.start_ingest_run(conn, "renpho_csv")
+    rows_in = rows_upserted = 0
+    errors: list[str] = []
+    try:
+        for metric in renpho_csv.parse_body_composition(export_dir, errors=errors):
+            rows_in += 1
+            db.upsert(
+                conn, "daily_metrics", metric.to_row(), ["date"], merge_json_columns=["sources"]
+            )
+            rows_upserted += 1
+    except Exception as exc:  # noqa: BLE001 - reported to ingest_runs, not swallowed
+        errors.append(str(exc))
+        db.finish_ingest_run(
+            conn,
+            run_id,
+            status="failed",
+            rows_in=rows_in,
+            rows_upserted=rows_upserted,
+            errors=errors,
+        )
+        print(f"renpho_csv: FAILED after {rows_upserted} rows — {exc}")
+        traceback.print_exc()
+        return False
+
+    db.finish_ingest_run(
+        conn,
+        run_id,
+        status="success",
+        rows_in=rows_in,
+        rows_upserted=rows_upserted,
+        rows_skipped=0,
+        errors=errors or None,
+    )
+    print(f"renpho_csv: {rows_upserted} dates upserted from {export_dir}")
+    if errors:
+        print(f"renpho_csv: {len(errors)} non-fatal warning(s) — see ingest_runs.errors")
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -218,7 +279,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         garmin_ok = sync_garmin(conn, start_date, end_date)
         health_auto_export_ok = sync_health_auto_export(conn)
-        ok = garmin_ok and health_auto_export_ok
+        renpho_csv_ok = sync_renpho_csv(conn)
+        ok = garmin_ok and health_auto_export_ok and renpho_csv_ok
 
         # Cross-source dedup (design principle 5) always runs after ingestion,
         # regardless of per-source outcome — see scripts/backfill.py's

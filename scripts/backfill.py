@@ -12,6 +12,13 @@ no special-casing needed here — just checking the top-level folder isn't
 empty). Every run is idempotent (`db.upsert()` on natural keys) and logged to
 `ingest_runs`, so re-running this against the same files is always safe and
 produces the same result.
+
+RENPHO's own CSV export (`data/raw/renpho/*.csv`, any filename) is a manual,
+periodically-repeated export rather than a one-time archive — it's included
+here too (not just in `scripts/sync.py`) so a full historical re-ingest picks
+up the same file. It deliberately runs AFTER `apple_health` in `_BACKFILLERS`'
+order so it wins on overlapping body-composition fields — see
+`ingest/renpho_csv.py`'s module docstring for why.
 """
 
 from __future__ import annotations
@@ -26,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from health_os.core import db  # noqa: E402
 from health_os.core.dedupe import dedupe_activities  # noqa: E402
-from health_os.ingest import apple_health, garmin_bulk, strava_bulk  # noqa: E402
+from health_os.ingest import apple_health, garmin_bulk, renpho_csv, strava_bulk  # noqa: E402
 
 DATA_RAW = Path("data/raw")
 
@@ -161,10 +168,68 @@ def backfill_garmin(
     return True
 
 
+def backfill_renpho_csv(conn: sqlite3.Connection, base_dir: Path = DATA_RAW / "renpho") -> bool:
+    """RENPHO Health app CSV export — a manual, periodically-repeated export
+    (not a fixed-filename one-time archive), so this reads any `*.csv` file
+    found directly under `base_dir` rather than requiring a specific name.
+
+    Deliberately runs AFTER `backfill_apple_health` in `_BACKFILLERS`' order:
+    for a date covered by both, this CSV — read directly from RENPHO's own
+    export — wins over the Apple-Health-relayed value on any overlapping
+    scalar field (weight_kg, bmi, lean_body_mass_kg). See
+    `ingest/renpho_csv.py`'s module docstring for the real, investigated
+    reason this matters (the 2026-09-01 discrepancy: an Apple-Health-side
+    value turned out to be an averaged, not a real single-reading, number).
+    """
+    base_dir = Path(base_dir)
+    if not base_dir.exists() or not any(base_dir.glob("*.csv")):
+        print(f"renpho_csv: no CSV export found under {base_dir} — skipping")
+        return True
+
+    run_id = db.start_ingest_run(conn, "renpho_csv")
+    rows_in = rows_upserted = 0
+    errors: list[str] = []
+    try:
+        for metric in renpho_csv.parse_body_composition(base_dir, errors=errors):
+            rows_in += 1
+            db.upsert(
+                conn, "daily_metrics", metric.to_row(), ["date"], merge_json_columns=["sources"]
+            )
+            rows_upserted += 1
+    except Exception as exc:  # noqa: BLE001 - reported to ingest_runs, not swallowed
+        errors.append(str(exc))
+        db.finish_ingest_run(
+            conn,
+            run_id,
+            status="failed",
+            rows_in=rows_in,
+            rows_upserted=rows_upserted,
+            errors=errors,
+        )
+        print(f"renpho_csv: FAILED after {rows_upserted} rows — {exc}")
+        traceback.print_exc()
+        return False
+
+    db.finish_ingest_run(
+        conn,
+        run_id,
+        status="success",
+        rows_in=rows_in,
+        rows_upserted=rows_upserted,
+        rows_skipped=0,
+        errors=errors or None,
+    )
+    print(f"renpho_csv: {rows_upserted} dates upserted from {base_dir}")
+    if errors:
+        print(f"renpho_csv: {len(errors)} non-fatal warning(s) — see ingest_runs.errors")
+    return True
+
+
 _BACKFILLERS = {
     "strava": backfill_strava,
     "apple_health": backfill_apple_health,
     "garmin": backfill_garmin,
+    "renpho_csv": backfill_renpho_csv,
 }
 
 
