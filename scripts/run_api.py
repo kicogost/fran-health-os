@@ -9,9 +9,13 @@ machine (design principle 1: local-first, no cloud services).
 **Normal daily use needs no manual command at all** — `launchd/
 com.healthos.api.plist` runs this in the background permanently (RunAtLoad +
 KeepAlive), so http://localhost:8000 is just always there. See that file's
-own header comment for install/status/removal. That background instance is
-started with `--no-reload` (below) since a silently-running service has no
-need for uvicorn's file-watcher.
+own header comment for install/status/removal. That background instance now
+runs WITH reload enabled (changed 2026-09-09 — see the plist's own comment
+for why: a shipped backend change sat invisible behind the old process twice
+in practice before this, since real development happens directly against
+this same tree, not a separate instance). `--no-reload` below still exists
+as an escape hatch (e.g. if the reloader itself ever misbehaves), just isn't
+passed by the background service by default anymore.
 
 Two ways to run it by hand, day to day vs. while editing the frontend:
 

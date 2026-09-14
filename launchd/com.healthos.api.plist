@@ -17,13 +17,28 @@
   task -- it should start the moment the agent loads (login, or right after
   `launchctl load`) and restart itself if it ever crashes.
 
-  Runs with --no-reload (scripts/run_api.py) -- uvicorn's file-watcher exists
-  for active development, not a service that's meant to just sit there.
+  Auto-reload enabled (2026-09-09 -- was --no-reload originally, on the
+  assumption a silently-running service would never need uvicorn's
+  file-watcher). Real, repeated finding proved that wrong: backend feature
+  work happens directly against this same checked-out tree, not a separate
+  dev instance, so a shipped Python change (new API route, new logic) sat
+  invisible behind the still-running old process twice in practice -- the
+  illness-log feature and the Trends-page averages feature both had to be
+  manually restarted after the fact to actually take effect. scripts/
+  run_api.py's reload is already scoped to reload_dirs=[src/health_os] (its
+  default when --no-reload is omitted), so it only watches actual backend
+  source, never data/health.db writes, frontend/, or log files -- routine
+  sync/derived-metric writes don't trigger spurious restarts, only a real
+  code change does. Trade-off, explicitly accepted for a single-user,
+  low-request-volume local app: a brief in-flight-request interruption at
+  the moment of an actual reload, and a small idle-watcher resource cost --
+  both negligible here, unlike an actual production service.
 
   Serves whatever was last built to frontend/dist/ -- after any frontend
-  code change, `cd frontend && npm run build` then
-  `launchctl kickstart -k gui/$(id -u)/com.healthos.api` (or just let it
-  keep serving the old build until the next login/restart) to pick it up.
+  code change, `cd frontend && npm run build` picks it up automatically on
+  the next request (static files, no restart needed -- never did need one).
+  Backend Python changes now also pick up automatically within a second or
+  two of being saved, no restart needed either.
 
   Setup:
       cp launchd/com.healthos.api.plist ~/Library/LaunchAgents/
@@ -33,7 +48,9 @@
       launchctl list | grep healthos.api
       curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8000/api/today
 
-  Restart it (e.g. after `npm run build`):
+  Manual restart is no longer routinely needed (see auto-reload note above)
+  -- kept below only for the rare case reload itself needs kicking (e.g. a
+  syntax error broke the reloader, or the plist/venv itself changed):
       launchctl kickstart -k gui/$(id -u)/com.healthos.api
 
   Remove it (e.g. to free port 8000 for `npm run dev` + this script by hand):
@@ -53,7 +70,6 @@
         <string>run</string>
         <string>python</string>
         <string>scripts/run_api.py</string>
-        <string>--no-reload</string>
     </array>
 
     <key>WorkingDirectory</key>
