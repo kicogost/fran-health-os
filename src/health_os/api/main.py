@@ -223,6 +223,28 @@ def post_log_calisthenics(req: log_api.CalisthenicsRequest) -> dict[str, Any]:
         conn.close()
 
 
+@app.get("/api/log/illness")
+def get_log_illness(date: str) -> dict[str, Any] | None:
+    conn = db.init_db()
+    try:
+        return log_api.get_existing_illness(conn, date)
+    finally:
+        conn.close()
+
+
+@app.post("/api/log/illness")
+def post_log_illness(req: log_api.IllnessRequest) -> dict[str, Any]:
+    conn = db.init_db()
+    try:
+        try:
+            entry = log_api.save_illness(conn, req)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return entry.to_row(include_none=True)
+    finally:
+        conn.close()
+
+
 def _safe_dist_file(full_path: str) -> Path | None:
     """Resolves `full_path` against FRONTEND_DIST_DIR, refusing to serve
     anything that escapes it (e.g. a `../../` traversal attempt) -- returns

@@ -13,6 +13,7 @@ from health_os.core.models import (
     CalisthenicsSession,
     DailyMetric,
     DerivedMetric,
+    IllnessLog,
     IngestRun,
     SubjectiveLogEntry,
     merge_subjective_log_entry,
@@ -46,6 +47,47 @@ class TestDailyMetric:
         assert reloaded.resting_hr == 52.0
         assert reloaded.sources == {"weight_kg": "apple_health:renpho", "resting_hr": "garmin"}
         assert reloaded.hrv_overnight_ms is None
+
+    def test_renpho_body_composition_fields_omitted_when_none(self) -> None:
+        # Migration 0007 -- these fields must follow the exact same
+        # partial-upsert-doesn't-clobber convention as every other optional
+        # DailyMetric field (design principle 6 / the module's own docstring).
+        m = DailyMetric(date="2026-09-01", weight_kg=83.75, body_fat_pct=26.4)
+        row = m.to_row()
+        assert row == {"date": "2026-09-01", "weight_kg": 83.75, "body_fat_pct": 26.4}
+
+    def test_renpho_body_composition_round_trip_through_db(self, conn: sqlite3.Connection) -> None:
+        m = DailyMetric(
+            date="2026-09-01",
+            weight_kg=83.75,
+            bmi=26.9,
+            body_fat_pct=26.4,
+            skeletal_muscle_pct=47.4,
+            lean_body_mass_kg=61.64,
+            subcutaneous_fat_pct=23.3,
+            visceral_fat_rating=10,
+            body_water_pct=53.1,
+            muscle_mass_kg=58.54,
+            bone_mass_kg=3.10,
+            protein_pct=16.8,
+            bmr_kcal=1708,
+            metabolic_age=26,
+            sources={"weight_kg": "renpho_csv", "bmi": "renpho_csv"},
+        )
+        db_module.upsert(conn, "daily_metrics", m.to_row(), ["date"])
+        row = conn.execute("SELECT * FROM daily_metrics WHERE date = ?", ("2026-09-01",)).fetchone()
+        reloaded = DailyMetric.from_row(row)
+        assert reloaded.body_fat_pct == pytest.approx(26.4)
+        assert reloaded.skeletal_muscle_pct == pytest.approx(47.4)
+        assert reloaded.lean_body_mass_kg == pytest.approx(61.64)
+        assert reloaded.subcutaneous_fat_pct == pytest.approx(23.3)
+        assert reloaded.visceral_fat_rating == 10
+        assert reloaded.body_water_pct == pytest.approx(53.1)
+        assert reloaded.muscle_mass_kg == pytest.approx(58.54)
+        assert reloaded.bone_mass_kg == pytest.approx(3.10)
+        assert reloaded.protein_pct == pytest.approx(16.8)
+        assert reloaded.bmr_kcal == 1708
+        assert reloaded.metabolic_age == 26
 
 
 class TestActivity:
@@ -179,6 +221,56 @@ class TestCalisthenicsSession:
         s = CalisthenicsSession(date="2026-08-24", session_type="strength_a")
         row = s.to_row()
         assert "exercises_json" not in row
+
+    def test_computed_load_uses_fosters_method_real_session(self) -> None:
+        # Francisco's real 2026-09-13 strength_a session: 100 push-ups
+        # (10x10), ~10-15 min stated -- logged with duration_min=12,
+        # session_rpe=7 -> 12 * 7 = 84.
+        s = CalisthenicsSession(
+            date="2026-09-13", session_type="strength_a", duration_min=12, session_rpe=7
+        )
+        assert s.computed_load == 84.0
+
+    def test_computed_load_uses_fosters_method_synthetic(self) -> None:
+        s = CalisthenicsSession(
+            date="2026-08-24", session_type="strength_b", duration_min=45, session_rpe=6
+        )
+        assert s.computed_load == 270.0
+
+    def test_explicit_computed_load_not_overwritten(self) -> None:
+        s = CalisthenicsSession(
+            date="2026-08-24",
+            session_type="strength_a",
+            duration_min=45,
+            session_rpe=6,
+            computed_load=500.0,
+        )
+        assert s.computed_load == 500.0
+
+    def test_computed_load_none_when_duration_missing(self) -> None:
+        s = CalisthenicsSession(date="2026-08-24", session_type="strength_a", session_rpe=6)
+        assert s.computed_load is None
+
+    def test_computed_load_none_when_rpe_missing(self) -> None:
+        s = CalisthenicsSession(date="2026-08-24", session_type="strength_a", duration_min=45)
+        assert s.computed_load is None
+
+    def test_rejects_non_positive_duration(self) -> None:
+        with pytest.raises(ValueError, match="duration_min"):
+            CalisthenicsSession(date="2026-08-24", session_type="strength_a", duration_min=0)
+
+    def test_round_trip_duration_and_computed_load(self, conn: sqlite3.Connection) -> None:
+        s = CalisthenicsSession(
+            date="2026-09-13", session_type="strength_a", duration_min=12, session_rpe=7
+        )
+        db_module.upsert(conn, "calisthenics_sessions", s.to_row(), ["date", "session_type"])
+        row = conn.execute(
+            "SELECT * FROM calisthenics_sessions WHERE date = ? AND session_type = ?",
+            ("2026-09-13", "strength_a"),
+        ).fetchone()
+        reloaded = CalisthenicsSession.from_row(row)
+        assert reloaded.duration_min == 12
+        assert reloaded.computed_load == 84.0
 
 
 def _insert_parent_activity(conn: sqlite3.Connection, activity_id: str = "garmin:123") -> None:
@@ -361,6 +453,78 @@ class TestBodyMeasurement:
         high = BodyMeasurement(date="2026-08-30", value_cm=200.0)
         assert low.value_cm == 40.0
         assert high.value_cm == 200.0
+
+
+class TestIllnessLog:
+    def test_to_row_omits_none_by_default(self) -> None:
+        entry = IllnessLog(date="2026-09-04", sore_throat=True)
+        row = entry.to_row()
+        assert row == {"date": "2026-09-04", "sore_throat": 1}
+
+    def test_round_trip_booleans_and_partial_fields(self, conn: sqlite3.Connection) -> None:
+        entry = IllnessLog(
+            date="2026-09-04",
+            sore_throat=True,
+            fatigue_weakness=True,
+            fever=False,
+            congestion=True,
+            likely_cause="unclear -- possibly allergies",
+            notes="traveling, unfamiliar bed",
+        )
+        db_module.upsert(conn, "illness_log", entry.to_row(), ["date"])
+        row = conn.execute("SELECT * FROM illness_log WHERE date = ?", ("2026-09-04",)).fetchone()
+        reloaded = IllnessLog.from_row(row)
+        assert reloaded.sore_throat is True
+        assert reloaded.fatigue_weakness is True
+        assert reloaded.fever is False
+        assert reloaded.congestion is True
+        # Never mentioned -> stays None, not invented as False (design principle 6).
+        assert reloaded.cough is None
+        assert reloaded.body_aches is None
+        assert reloaded.headache is None
+        assert reloaded.severity is None
+        assert reloaded.temperature_c is None
+        assert reloaded.likely_cause == "unclear -- possibly allergies"
+        assert reloaded.notes == "traveling, unfamiliar bed"
+
+    def test_round_trip_temperature_and_severity(self, conn: sqlite3.Connection) -> None:
+        entry = IllnessLog(date="2026-09-04", severity=6, temperature_c=37.8)
+        db_module.upsert(conn, "illness_log", entry.to_row(), ["date"])
+        row = conn.execute("SELECT * FROM illness_log WHERE date = ?", ("2026-09-04",)).fetchone()
+        reloaded = IllnessLog.from_row(row)
+        assert reloaded.severity == 6
+        assert reloaded.temperature_c == 37.8
+
+    def test_rejects_out_of_range_severity(self) -> None:
+        with pytest.raises(ValueError):
+            IllnessLog(date="2026-09-04", severity=11)
+
+    def test_rejects_zero_severity(self) -> None:
+        with pytest.raises(ValueError):
+            IllnessLog(date="2026-09-04", severity=0)
+
+    def test_accepts_severity_at_boundaries(self) -> None:
+        low = IllnessLog(date="2026-09-04", severity=1)
+        high = IllnessLog(date="2026-09-04", severity=10)
+        assert low.severity == 1
+        assert high.severity == 10
+
+    def test_all_fields_none_when_only_date_given(self, conn: sqlite3.Connection) -> None:
+        entry = IllnessLog(date="2026-09-04")
+        db_module.upsert(conn, "illness_log", entry.to_row(), ["date"])
+        row = conn.execute("SELECT * FROM illness_log WHERE date = ?", ("2026-09-04",)).fetchone()
+        reloaded = IllnessLog.from_row(row)
+        assert reloaded.severity is None
+        assert reloaded.sore_throat is None
+        assert reloaded.fever is None
+        assert reloaded.temperature_c is None
+        assert reloaded.congestion is None
+        assert reloaded.cough is None
+        assert reloaded.body_aches is None
+        assert reloaded.fatigue_weakness is None
+        assert reloaded.headache is None
+        assert reloaded.likely_cause is None
+        assert reloaded.notes is None
 
 
 class TestDerivedMetric:

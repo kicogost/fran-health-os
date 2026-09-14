@@ -169,6 +169,13 @@ _CANDIDATE_PAIRS: list[tuple[str, str, str]] = [
         "(hooper_index is itself ~10% of readiness_score's weight -- partially "
         "circular, still informative on the other components)",
     ),
+    # illness_log (migration 0006) is a natural future candidate pair too --
+    # e.g. severity/sore_throat vs. hrv_overnight_ms/resting_hr -- once enough
+    # real illness episodes accumulate to clear MIN_N. Not wired in yet,
+    # deliberately: illness is (hopefully) rare, so it would likely be a long
+    # time before this pair is honestly reachable, and testing it before then
+    # would be exactly the kind of premature-correlation-reporting this
+    # module's MIN_N/Bonferroni gates exist to prevent.
 ]
 
 

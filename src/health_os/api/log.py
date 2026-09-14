@@ -1,6 +1,6 @@
 """Log page backend — read (existing-entry checks, for the overwrite
-warning) and write (real upserts) for all four manual logs: BJJ session,
-daily wellness, waist measurement, calisthenics session.
+warning) and write (real upserts) for all five manual logs: BJJ session,
+daily wellness, waist measurement, calisthenics session, illness log.
 
 Every write goes through the SAME dataclasses (`core/models.py`) the CLI
 scripts (`scripts/log_bjj.py` etc.) and the Streamlit dashboard already use
@@ -22,6 +22,7 @@ from health_os.core.models import (
     BjjSession,
     BodyMeasurement,
     CalisthenicsSession,
+    IllnessLog,
     SubjectiveLogEntry,
     merge_subjective_log_entry,
 )
@@ -72,6 +73,22 @@ class CalisthenicsRequest(BaseModel):
     session_type: str
     session_rpe: int | None = None
     exercises: list[ExerciseEntry] | None = None
+    notes: str | None = None
+    duration_min: int | None = None
+
+
+class IllnessRequest(BaseModel):
+    date: str
+    severity: int | None = None
+    sore_throat: bool | None = None
+    fever: bool | None = None
+    temperature_c: float | None = None
+    congestion: bool | None = None
+    cough: bool | None = None
+    body_aches: bool | None = None
+    fatigue_weakness: bool | None = None
+    headache: bool | None = None
+    likely_cause: str | None = None
     notes: str | None = None
 
 
@@ -140,7 +157,8 @@ def get_existing_calisthenics(
     conn: sqlite3.Connection, date: str, session_type: str
 ) -> dict[str, Any] | None:
     row = conn.execute(
-        "SELECT session_rpe FROM calisthenics_sessions WHERE date = ? AND session_type = ?",
+        "SELECT session_rpe, duration_min, computed_load FROM calisthenics_sessions "
+        "WHERE date = ? AND session_type = ?",
         (date, session_type),
     ).fetchone()
     return dict(row) if row is not None else None
@@ -154,9 +172,24 @@ def save_calisthenics(conn: sqlite3.Connection, req: CalisthenicsRequest) -> Cal
         session_rpe=req.session_rpe,
         exercises=exercises,
         notes=req.notes,
+        duration_min=req.duration_min,
     )
     db.upsert(conn, "calisthenics_sessions", session.to_row(), ["date", "session_type"])
     return session
+
+
+# ---------------------------------------------------------- Illness ----
+
+
+def get_existing_illness(conn: sqlite3.Connection, date: str) -> dict[str, Any] | None:
+    row = conn.execute("SELECT severity FROM illness_log WHERE date = ?", (date,)).fetchone()
+    return dict(row) if row is not None else None
+
+
+def save_illness(conn: sqlite3.Connection, req: IllnessRequest) -> IllnessLog:
+    entry = IllnessLog(**req.model_dump())
+    db.upsert(conn, "illness_log", entry.to_row(), ["date"])
+    return entry
 
 
 def prescribed_exercises(config: dict[str, Any], session_type: str) -> list[str]:

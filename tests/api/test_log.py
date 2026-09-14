@@ -110,3 +110,60 @@ class TestCalisthenicsLog:
 
     def test_prescribed_exercises_empty_for_unknown_type(self) -> None:
         assert log_api.prescribed_exercises(_CONFIG, "strength_z") == []
+
+    def test_save_with_duration_computes_load(self, conn: sqlite3.Connection) -> None:
+        # Real case: Francisco's 2026-09-13 strength_a session -- 12min @
+        # RPE 7 -> Foster's-method load of 84.
+        req = log_api.CalisthenicsRequest(
+            date="2026-09-13", session_type="strength_a", duration_min=12, session_rpe=7
+        )
+        session = log_api.save_calisthenics(conn, req)
+        assert session.computed_load == 84.0
+        existing = log_api.get_existing_calisthenics(conn, "2026-09-13", "strength_a")
+        assert existing["duration_min"] == 12
+        assert existing["computed_load"] == 84.0
+
+    def test_duration_omitted_leaves_computed_load_none(self, conn: sqlite3.Connection) -> None:
+        req = log_api.CalisthenicsRequest(
+            date="2026-08-24", session_type="strength_a", session_rpe=6
+        )
+        session = log_api.save_calisthenics(conn, req)
+        assert session.computed_load is None
+
+
+class TestIllnessLog:
+    def test_get_existing_returns_none_when_absent(self, conn: sqlite3.Connection) -> None:
+        assert log_api.get_existing_illness(conn, "2026-09-04") is None
+
+    def test_save_then_get_existing_round_trips(self, conn: sqlite3.Connection) -> None:
+        req = log_api.IllnessRequest(
+            date="2026-09-04",
+            sore_throat=True,
+            fatigue_weakness=True,
+            fever=False,
+            congestion=True,
+            likely_cause="unclear -- possibly allergies",
+            notes="traveling",
+        )
+        entry = log_api.save_illness(conn, req)
+        assert entry.sore_throat is True
+        assert entry.fever is False
+        assert entry.cough is None
+        existing = log_api.get_existing_illness(conn, "2026-09-04")
+        assert existing["severity"] is None
+
+        row = conn.execute("SELECT * FROM illness_log WHERE date = ?", ("2026-09-04",)).fetchone()
+        assert row["sore_throat"] == 1
+        assert row["fever"] == 0
+        assert row["cough"] is None
+
+    def test_out_of_range_severity_raises(self, conn: sqlite3.Connection) -> None:
+        with pytest.raises(ValueError):
+            log_api.save_illness(conn, log_api.IllnessRequest(date="2026-09-04", severity=11))
+
+    def test_upsert_on_same_date_overwrites(self, conn: sqlite3.Connection) -> None:
+        log_api.save_illness(conn, log_api.IllnessRequest(date="2026-09-04", severity=7))
+        log_api.save_illness(conn, log_api.IllnessRequest(date="2026-09-04", severity=3))
+        rows = conn.execute("SELECT * FROM illness_log WHERE date = ?", ("2026-09-04",)).fetchall()
+        assert len(rows) == 1
+        assert rows[0]["severity"] == 3

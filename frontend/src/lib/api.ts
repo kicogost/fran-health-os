@@ -3,6 +3,7 @@ import type { DataHealthPayload } from "@/types/dataHealth"
 import type {
   BjjSessionRequest,
   CalisthenicsRequest,
+  IllnessRequest,
   WaistRequest,
   WellnessRequest,
 } from "@/types/log"
@@ -131,10 +132,18 @@ export function saveWaist(req: WaistRequest): Promise<Record<string, unknown>> {
 export function fetchExistingCalisthenics(
   date: string,
   sessionType: string,
-): Promise<{ session_rpe: number | null } | null> {
+): Promise<{ session_rpe: number | null; duration_min: number | null; computed_load: number | null } | null> {
   return getJson(`/log/calisthenics?date=${date}&session_type=${sessionType}`)
 }
 
 export function saveCalisthenics(req: CalisthenicsRequest): Promise<Record<string, unknown>> {
   return postJson("/log/calisthenics", req)
+}
+
+export function fetchExistingIllness(date: string): Promise<{ severity: number | null } | null> {
+  return getJson(`/log/illness?date=${date}`)
+}
+
+export function saveIllness(req: IllnessRequest): Promise<Record<string, unknown>> {
+  return postJson("/log/illness", req)
 }

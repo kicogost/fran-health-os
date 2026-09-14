@@ -45,6 +45,16 @@ class DailyMetric:
     weight_kg: float | None = None
     lean_body_mass_kg: float | None = None
     bmi: float | None = None
+    body_fat_pct: float | None = None
+    skeletal_muscle_pct: float | None = None
+    subcutaneous_fat_pct: float | None = None
+    visceral_fat_rating: int | None = None
+    body_water_pct: float | None = None
+    muscle_mass_kg: float | None = None
+    bone_mass_kg: float | None = None
+    protein_pct: float | None = None
+    bmr_kcal: int | None = None
+    metabolic_age: int | None = None
     resting_hr: float | None = None
     hrv_overnight_ms: float | None = None
     hrv_status: str | None = None
@@ -78,6 +88,22 @@ class DailyMetric:
             weight_kg=row["weight_kg"] if "weight_kg" in keys else None,
             lean_body_mass_kg=row["lean_body_mass_kg"] if "lean_body_mass_kg" in keys else None,
             bmi=row["bmi"] if "bmi" in keys else None,
+            body_fat_pct=row["body_fat_pct"] if "body_fat_pct" in keys else None,
+            skeletal_muscle_pct=(
+                row["skeletal_muscle_pct"] if "skeletal_muscle_pct" in keys else None
+            ),
+            subcutaneous_fat_pct=(
+                row["subcutaneous_fat_pct"] if "subcutaneous_fat_pct" in keys else None
+            ),
+            visceral_fat_rating=(
+                row["visceral_fat_rating"] if "visceral_fat_rating" in keys else None
+            ),
+            body_water_pct=row["body_water_pct"] if "body_water_pct" in keys else None,
+            muscle_mass_kg=row["muscle_mass_kg"] if "muscle_mass_kg" in keys else None,
+            bone_mass_kg=row["bone_mass_kg"] if "bone_mass_kg" in keys else None,
+            protein_pct=row["protein_pct"] if "protein_pct" in keys else None,
+            bmr_kcal=row["bmr_kcal"] if "bmr_kcal" in keys else None,
+            metabolic_age=row["metabolic_age"] if "metabolic_age" in keys else None,
             resting_hr=row["resting_hr"] if "resting_hr" in keys else None,
             hrv_overnight_ms=row["hrv_overnight_ms"] if "hrv_overnight_ms" in keys else None,
             hrv_status=row["hrv_status"] if "hrv_status" in keys else None,
@@ -288,6 +314,20 @@ class CalisthenicsSession:
     "notes": ...}` dicts, one per exercise actually done, checked against
     (but not required to exactly match) config/athlete.yaml:
     comp_prep.strength_sessions's prescribed list.
+
+    `duration_min`/`computed_load` (migration 0008) mirror `BjjSession`'s
+    equivalent columns exactly — same Foster's-method formula
+    (`duration_min * session_rpe`), computed here automatically, never
+    entered by hand. Both stay optional (unlike `BjjSession`, where
+    `duration_min` is required): a session logged with only exercise
+    detail and no duration/RPE at all was already this table's existing,
+    valid shape and stays valid — `computed_load` is only ever set once
+    BOTH inputs are present, never invented from one alone (design
+    principle 6). Closes a real gap: without a duration field, a manually
+    logged calisthenics session with no matching Garmin "Strength
+    Training" activity that day was invisible to
+    `metrics/strain.py`'s training-load engine (see CLAUDE.md's
+    "Calisthenics tracking closed" section).
     """
 
     date: str
@@ -296,12 +336,22 @@ class CalisthenicsSession:
     session_rpe: int | None = None
     exercises: list[dict[str, Any]] | None = None
     notes: str | None = None
+    duration_min: int | None = None
+    computed_load: float | None = None
 
     def __post_init__(self) -> None:
         if self.session_type not in ("strength_a", "strength_b"):
             raise ValueError(f"invalid session_type: {self.session_type!r}")
         if self.session_rpe is not None and not 1 <= self.session_rpe <= 10:
             raise ValueError(f"session_rpe must be 1-10, got {self.session_rpe!r}")
+        if self.duration_min is not None and self.duration_min <= 0:
+            raise ValueError(f"duration_min must be > 0, got {self.duration_min!r}")
+        if (
+            self.computed_load is None
+            and self.duration_min is not None
+            and self.session_rpe is not None
+        ):
+            self.computed_load = float(self.duration_min * self.session_rpe)
 
     def to_row(self, *, include_none: bool = False) -> dict[str, Any]:
         row = _row_dict(self, include_none=include_none)
@@ -319,6 +369,8 @@ class CalisthenicsSession:
             session_rpe=row["session_rpe"] if "session_rpe" in keys else None,
             exercises=_load_json(row["exercises_json"]) if "exercises_json" in keys else None,
             notes=row["notes"] if "notes" in keys else None,
+            duration_min=row["duration_min"] if "duration_min" in keys else None,
+            computed_load=row["computed_load"] if "computed_load" in keys else None,
         )
 
 
@@ -456,6 +508,85 @@ class BodyMeasurement:
             date=row["date"],
             value_cm=row["value_cm"],
             measurement_type=row["measurement_type"] if "measurement_type" in keys else "waist",
+            notes=row["notes"] if "notes" in keys else None,
+        )
+
+
+_ILLNESS_BOOLEAN_FIELDS = (
+    "sore_throat",
+    "fever",
+    "congestion",
+    "cough",
+    "body_aches",
+    "fatigue_weakness",
+    "headache",
+)
+
+
+@dataclass(slots=True)
+class IllnessLog:
+    """One row of `illness_log` (migration 0006) — grain: one calendar date,
+    same as `subjective_log`/`body_measurements`. NOT one row per "episode":
+    episode boundaries are a derived/interpretive concept (a run of
+    consecutive dated entries reads as one episode), not raw data, so this
+    table stays raw and dated, per design principle 6. Built so illness can
+    eventually be correlated against HRV/RHR/sleep/training-load the same
+    way `metrics/correlations.py` already does for other pairs, once enough
+    real episodes accumulate (that engine's own `MIN_N = 30` gate applies
+    here too — not wired in yet, deliberately, see that module).
+
+    Every field but `date` is optional and never defaulted — a symptom not
+    mentioned stays `None`, never invented as False (design principle 6).
+    `severity` uses the SAME polarity as `subjective_log`'s 1-10 fields
+    (1 = best/barely noticeable, 10 = worst/severe). `fever` is self-assessed
+    ("do you feel feverish") and deliberately distinct from `temperature_c`
+    (an actual measured reading) — a felt sensation is not a confirmed
+    reading and shouldn't be conflated with one.
+    """
+
+    date: str
+    severity: int | None = None
+    sore_throat: bool | None = None
+    fever: bool | None = None
+    temperature_c: float | None = None
+    congestion: bool | None = None
+    cough: bool | None = None
+    body_aches: bool | None = None
+    fatigue_weakness: bool | None = None
+    headache: bool | None = None
+    likely_cause: str | None = None
+    notes: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.severity is not None and not 1 <= self.severity <= 10:
+            raise ValueError(f"severity must be 1-10, got {self.severity!r}")
+
+    def to_row(self, *, include_none: bool = False) -> dict[str, Any]:
+        row = _row_dict(self, include_none=include_none)
+        for col in _ILLNESS_BOOLEAN_FIELDS:
+            if col in row and row[col] is not None:
+                row[col] = int(row[col])
+        return row
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> IllnessLog:
+        keys = row.keys()
+
+        def _bool(col: str) -> bool | None:
+            return bool(row[col]) if col in keys and row[col] is not None else None
+
+        return cls(
+            date=row["date"],
+            severity=row["severity"] if "severity" in keys else None,
+            sore_throat=_bool("sore_throat"),
+            fever=_bool("fever"),
+            temperature_c=row["temperature_c"] if "temperature_c" in keys else None,
+            congestion=_bool("congestion"),
+            cough=_bool("cough"),
+            body_aches=_bool("body_aches"),
+            fatigue_weakness=_bool("fatigue_weakness"),
+            headache=_bool("headache"),
+            likely_cause=row["likely_cause"] if "likely_cause" in keys else None,
             notes=row["notes"] if "notes" in keys else None,
         )
 

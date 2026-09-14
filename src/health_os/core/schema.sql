@@ -7,11 +7,14 @@
 -- without reading every migration in sequence. tests/core/test_schema_sync.py fails
 -- if this drifts from the migrations.
 --
--- Current version: 5 (core/migrations/0001_initial_schema.sql,
+-- Current version: 8 (core/migrations/0001_initial_schema.sql,
 -- core/migrations/0002_bjj_wellness_and_load.sql,
 -- core/migrations/0003_calisthenics_sessions.sql,
 -- core/migrations/0004_activity_laps.sql,
--- core/migrations/0005_body_composition.sql)
+-- core/migrations/0005_body_composition.sql,
+-- core/migrations/0006_illness_log.sql,
+-- core/migrations/0007_renpho_body_composition.sql,
+-- core/migrations/0008_calisthenics_load.sql)
 --
 -- Note: this snapshot is semantically compared against the migrated schema
 -- (column name/type/notnull/pk/default per table), not byte-for-byte SQL text —
@@ -33,8 +36,21 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS daily_metrics (
     date                TEXT PRIMARY KEY,      -- ISO 'YYYY-MM-DD', Europe/Madrid local date
     weight_kg           REAL,
-    lean_body_mass_kg   REAL,                  -- migration 0005, from Renpho via Health Auto Export
+    lean_body_mass_kg   REAL,                  -- migration 0005 (Apple Health path); also migration
+                                                -- 0007's "Fat-Free Mass(kg)" from Renpho's own CSV --
+                                                -- confirmed the same quantity by direct cross-check,
+                                                -- reused rather than duplicated (see that migration)
     bmi                 REAL,                  -- migration 0005, same source bundle as weight_kg
+    body_fat_pct         REAL,                  -- migration 0007, Renpho CSV only
+    skeletal_muscle_pct  REAL,                  -- migration 0007, Renpho CSV only
+    subcutaneous_fat_pct REAL,                  -- migration 0007, Renpho CSV only
+    visceral_fat_rating  INTEGER,               -- migration 0007, small unitless Renpho rating (not %)
+    body_water_pct       REAL,                  -- migration 0007, Renpho CSV only
+    muscle_mass_kg       REAL,                  -- migration 0007, Renpho CSV only
+    bone_mass_kg         REAL,                  -- migration 0007, Renpho CSV only
+    protein_pct          REAL,                  -- migration 0007, Renpho CSV only
+    bmr_kcal             INTEGER,               -- migration 0007, Renpho CSV only
+    metabolic_age        INTEGER,               -- migration 0007, Renpho CSV only
     resting_hr          REAL,
     hrv_overnight_ms    REAL,
     hrv_status          TEXT,                  -- Garmin's own status label, verbatim
@@ -151,6 +167,11 @@ CREATE TABLE IF NOT EXISTS bjj_sessions (
 -- `exercises_json` is a JSON list of {exercise, sets, reps, added_weight_kg, notes},
 -- one entry per exercise actually done — checked against config/athlete.yaml:
 -- comp_prep.strength_sessions's prescribed list, but sessions may deviate from it.
+-- `duration_min`/`computed_load` (migration 0008) mirror `bjj_sessions`'s equivalent
+-- columns exactly — Foster's method (duration_min * session_rpe), computed by
+-- core.models.CalisthenicsSession only once both are present, feeding
+-- metrics/strain.py's training-load series for a session not already covered by a
+-- real matching Garmin "Strength Training" activity that day.
 CREATE TABLE IF NOT EXISTS calisthenics_sessions (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     date           TEXT NOT NULL,
@@ -160,6 +181,8 @@ CREATE TABLE IF NOT EXISTS calisthenics_sessions (
     notes          TEXT,
     created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    duration_min   INTEGER CHECK (duration_min > 0),
+    computed_load  REAL,
     UNIQUE (date, session_type)
 );
 
@@ -199,6 +222,33 @@ CREATE TABLE IF NOT EXISTS body_measurements (
     created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     PRIMARY KEY (date, measurement_type)
+);
+
+-- Illness log — migration 0006. One row per DATE (same grain as
+-- subjective_log/body_measurements), NOT one row per "episode" — episode
+-- boundaries are a derived/interpretive concept (a run of consecutive dated
+-- entries), not raw data, design principle 6. Every field except `date` is
+-- nullable and never defaulted — a symptom Francisco didn't mention stays
+-- NULL. `severity` shares subjective_log's polarity (1 = best, 10 = worst).
+-- `fever` is self-assessed ("do you feel feverish"), deliberately distinct
+-- from `temperature_c` (an actual measured value). Not yet wired into
+-- metrics/correlations.py's candidate pairs — illness-vs-HRV/RHR is a
+-- natural future candidate once enough episodes exist (MIN_N=30).
+CREATE TABLE IF NOT EXISTS illness_log (
+    date             TEXT PRIMARY KEY,
+    severity         INTEGER CHECK (severity BETWEEN 1 AND 10),
+    sore_throat      INTEGER,
+    fever            INTEGER,
+    temperature_c    REAL,
+    congestion       INTEGER,
+    cough            INTEGER,
+    body_aches       INTEGER,
+    fatigue_weakness INTEGER,
+    headache         INTEGER,
+    likely_cause     TEXT,
+    notes            TEXT,
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 -- Every computed metric from the kickoff doc's "Derived metrics" section (HRV

@@ -3,12 +3,13 @@ import { LogBjjTab } from "@/components/log/LogBjjTab"
 import { LogCalisthenicsTab } from "@/components/log/LogCalisthenicsTab"
 import { LogWellnessTab } from "@/components/log/LogWellnessTab"
 import { LogWaistTab } from "@/components/log/LogWaistTab"
+import { LogIllnessTab } from "@/components/log/LogIllnessTab"
 
-/** Log — BJJ session, calisthenics, daily wellness, waist measurement.
- * Same rules as the CLI scripts and the Streamlit page these mirror:
- * upsert on the table's natural key, warn before overwriting an existing
- * entry for the SELECTED date (each tab fetches the existing entry
- * whenever its date/type state changes — no Streamlit-form-batching
+/** Log — BJJ session, calisthenics, daily wellness, waist measurement,
+ * illness. Same rules as the CLI scripts and the Streamlit page these
+ * mirror: upsert on the table's natural key, warn before overwriting an
+ * existing entry for the SELECTED date (each tab fetches the existing
+ * entry whenever its date/type state changes — no Streamlit-form-batching
  * footgun here since React state is always live).
  */
 export function LogPage() {
@@ -22,6 +23,7 @@ export function LogPage() {
           <TabsTrigger value="calisthenics">Calisthenics</TabsTrigger>
           <TabsTrigger value="wellness">Daily wellness</TabsTrigger>
           <TabsTrigger value="waist">Waist</TabsTrigger>
+          <TabsTrigger value="illness">Illness</TabsTrigger>
         </TabsList>
         <TabsContent value="bjj" className="pt-4">
           <LogBjjTab />
@@ -34,6 +36,9 @@ export function LogPage() {
         </TabsContent>
         <TabsContent value="waist" className="pt-4">
           <LogWaistTab />
+        </TabsContent>
+        <TabsContent value="illness" className="pt-4">
+          <LogIllnessTab />
         </TabsContent>
       </Tabs>
     </div>

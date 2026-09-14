@@ -46,4 +46,20 @@ export interface CalisthenicsRequest {
   session_rpe?: number | null
   exercises?: ExerciseEntry[] | null
   notes?: string | null
+  duration_min?: number | null
+}
+
+export interface IllnessRequest {
+  date: string
+  severity?: number | null
+  sore_throat?: boolean | null
+  fever?: boolean | null
+  temperature_c?: number | null
+  congestion?: boolean | null
+  cough?: boolean | null
+  body_aches?: boolean | null
+  fatigue_weakness?: boolean | null
+  headache?: boolean | null
+  likely_cause?: string | null
+  notes?: string | null
 }
