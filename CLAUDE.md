@@ -841,9 +841,9 @@ src/health_os/
   metrics/              body_comp.py (weight trend + comp countdown; 2026-09-11 gained fat-mass/body-fat-% tracking — `compute_fat_mass_series()`, `body_fat_pct_trend_ols()`, both built on the exact same EWMA/OLS machinery as weight), load.py (pure monotony/strain + CTL/ATL/TSB math — no ACWR, ADR 0003; no longer the training-load SOURCE for these, ADR 0008), baselines.py (HRV/RHR baselines, sleep debt), readiness.py (0-100 composite), correlations.py (Spearman correlation engine, MIN_N=30 + Bonferroni-corrected), strain.py (WHOOP-inspired 0-21 Daily Strain — TRIMP + Foster, saturating scale; ADR 0008 — `build_activity_based_load_series()`/`build_load_by_sport_rows()` are now the real training-load SOURCE for CTL/ATL/TSB/monotony/strain everywhere, replacing `activities.training_load`), bjj_laps.py (HR-based sparring/rest lap classification), insights.py (plain-English trend/training takeaways — weight/sleep/HRV/RHR/fitness-trend/freshness/consistency/correlation, 2026-08-30 Trends+Training plain-language rework), derived_daily.py (Phase 4 persistence — writes all of the above into `derived_daily`; "stale" confidence still real for weight/EWMA, no longer reachable for CTL/ATL/TSB/monotony/strain since ADR 0008's series always computes through to today)
   coach/                rules.py (readiness bands, session guidance, structural triggers, taper + deload — see "Taper + deload system"), briefing.py, weekly_retro.py
   dashboard/             app.py (Streamlit entrypoint, st.navigation), theme.py (dark theme + chart helpers), data.py (cached DB/config access), views/{today,trends,training,comp_prep,log,data_health}.py — stays in active use until the React migration (ADR 0005) is fully done
-  api/                   main.py (FastAPI app, local-only, all 6 pages' routes), today.py/trends.py/training.py/comp_prep.py/data_health.py (one real read-only assembly fn per page), log.py (the one page with real POST mutation endpoints — reuses core/models.py's dataclasses for validation, never a second copy) — ADR 0005 frontend migration, 2026-08-28
-frontend/               Vite + React + TypeScript + Tailwind v4 + shadcn/ui (Radix base) + react-router-dom + recharts — ADR 0005, 2026-08-28, all 6 pages. src/pages/{Today,Trends,Training,CompPrep,Log,DataHealth}.tsx, components/{today,charts,log,layout}/*.tsx, index.css carries the same Carbon g100 dark tokens as dashboard/theme.py (ported, not re-picked). Daily use: `npm run build` once, then `uv run python scripts/run_api.py` alone serves everything on port 8000. Active frontend dev: `npm run dev` (port 5173, hot reload, proxies /api to FastAPI) + `scripts/run_api.py` (port 8000) as two processes instead.
-scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_calisthenics.py (manual calisthenics logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), log_illness.py (illness log, migration 0006), weight_report.py (Phase 4 preview), sync.py (Phase 6 daily live-sync entrypoint — Garmin + Health Auto Export, incl. per-lap detail for sub_sport=="bjj" activities), compute_derived.py (Phase 4 derived-metric persistence, trailing-3-day window like sync.py), briefing.py (Phase 7 CLI), weekly_retro.py (Phase 7 CLI), check_secrets.py (pre-commit secret-shaped-string guard, design principle 8), run_api.py (ADR 0005 — local FastAPI server, port 8000; also serves the built frontend/dist/ for one-command daily use, see "One-command frontend serving built"), morning_run.sh (Phase 8 — chains sync+compute_derived+briefing+retro, what launchd's 07:00 com.healthos.morning runs), quiet_sync.sh (Phase 8 — sync+compute_derived+wellness-reminder, no briefing, what launchd's 21:30 com.healthos.quicksync runs, see "Real bug found: weight had been silently stale" for why it exists and "Evening wellness-logging reminder" for the reminder step), check_wellness_logged.py (used by quiet_sync.sh — exit 0/1 on whether all 4 Hooper-Mackinnon fields are logged for a date)
+  api/                   main.py (FastAPI app, local-only, all 7 pages' routes), today.py/trends.py/training.py/comp_prep.py/data_health.py (one real read-only assembly fn per page), log.py (real POST mutation endpoints for the daily Log page's 5 logs AND, since 2026-09-14, the 5 general health-history tables under /api/health-history/* for the separate Health History page — reuses core/models.py's dataclasses for validation, never a second copy) — ADR 0005 frontend migration, 2026-08-28
+frontend/               Vite + React + TypeScript + Tailwind v4 + shadcn/ui (Radix base) + react-router-dom + recharts — ADR 0005, 2026-08-28, all 6 original pages plus Health History (2026-09-14, a 7th, genuinely new page). src/pages/{Today,Trends,Training,CompPrep,Log,HealthHistory,DataHealth}.tsx, components/{today,charts,log,healthHistory,layout}/*.tsx, index.css carries the same Carbon g100 dark tokens as dashboard/theme.py (ported, not re-picked). Daily use: `npm run build` once, then `uv run python scripts/run_api.py` alone serves everything on port 8000. Active frontend dev: `npm run dev` (port 5173, hot reload, proxies /api to FastAPI) + `scripts/run_api.py` (port 8000) as two processes instead.
+scripts/                backfill.py (Phase 2 entrypoint, runs dedupe.py automatically after ingestion), log_bjj.py (manual BJJ logger), log_calisthenics.py (manual calisthenics logger), log_wellness.py (daily Hooper-Mackinnon wellness), log_measurement.py (waist/tape logger), log_illness.py (illness log, migration 0006), log_health_history.py (bloodwork/medical events/medications/allergies/family history, migration 0009, one unified `--kind`-routed script — see its own dated CLAUDE.md section for why one script rather than five), weight_report.py (Phase 4 preview), sync.py (Phase 6 daily live-sync entrypoint — Garmin + Health Auto Export, incl. per-lap detail for sub_sport=="bjj" activities), compute_derived.py (Phase 4 derived-metric persistence, trailing-3-day window like sync.py), briefing.py (Phase 7 CLI), weekly_retro.py (Phase 7 CLI), check_secrets.py (pre-commit secret-shaped-string guard, design principle 8), run_api.py (ADR 0005 — local FastAPI server, port 8000; also serves the built frontend/dist/ for one-command daily use, see "One-command frontend serving built"), morning_run.sh (Phase 8 — chains sync+compute_derived+briefing+retro, what launchd's 07:00 com.healthos.morning runs), quiet_sync.sh (Phase 8 — sync+compute_derived+wellness-reminder, no briefing, what launchd's 21:30 com.healthos.quicksync runs, see "Real bug found: weight had been silently stale" for why it exists and "Evening wellness-logging reminder" for the reminder step), check_wellness_logged.py (used by quiet_sync.sh — exit 0/1 on whether all 4 Hooper-Mackinnon fields are logged for a date)
 githooks/               pre-commit (calls check_secrets.py; activated once per clone via `git config core.hooksPath githooks`, since `.git/hooks/` itself can't be version-controlled)
 launchd/                com.healthos.morning.plist (Phase 8 — installed as a real LaunchAgent, 10:00 Europe/Madrid daily, moved from an initial 07:00 default per Francisco's request)
 tests/                  core/, ingest/, metrics/, coach/, scripts/, api/ (ADR 0005 backend), fixtures/ (synthetic — never real personal data, fixtures are committed to git)
@@ -3988,6 +3988,158 @@ and fixed directly.
 test_strain.py`, `tests/scripts/test_log_calisthenics.py`, `tests/api/
 test_log.py`), 746 tests total, ruff/ruff-format clean, frontend `tsc -b`
 and `npm run build` clean.
+
+## General health history — bloodwork, medical events, medications/allergies,
+family history (migration 0009, 2026-09-14)
+
+Francisco asked directly to make this his **general health dashboard, not just
+a fitness/BJJ tracker** — this file's own opening line already calls the
+project a "health data warehouse," so this is a natural extension of scope,
+not a departure. He chose 4 categories directly, not left to guesswork:
+**bloodwork/lab results, ongoing conditions/injuries/major medical events,
+medications/supplements/allergies, and family medical history.**
+
+**Schema — 5 tables, not 4, and the split is deliberate.** Medications and
+allergies share one category conceptually but have genuinely different
+grains (a medication is a repeatable *course*; an allergy is a single,
+correctable *fact* about a real-world substance), so they got separate
+tables from the start — everything else in the design matches the original
+brief exactly, nothing changed during implementation:
+
+- **`bloodwork_results`** — long/tall, grain `(date, test_name)` conceptually
+  but with **no enforced natural key**: autoincrement `id` only. `test_name`
+  is free text (the set of possible lab tests is open-ended — same reasoning
+  `calisthenics_sessions.exercises_json` already uses for exercise names).
+  `unit` travels with every value (units vary by test AND by lab); reference
+  range bounds are independently nullable (a range can be one-sided, e.g.
+  "< 5.0 ng/mL").
+- **`medical_events`** — one real chronological timeline (`category` CHECK-
+  constrained to `condition`/`injury`/`surgery`/`hospitalization`/`other`,
+  `status` to `ongoing`/`resolved`/`unknown`), no natural key — multiple real
+  events can share a date. `resolved_date` is only meaningful once
+  `status='resolved'` — enforced in Python (`MedicalEvent.__post_init__`),
+  not a SQL CHECK, matching this project's existing cross-field-validation
+  convention (e.g. `BjjSession.rounds_gassed <= rounds_rolled`).
+- **`medications_supplements`** — one row per COURSE of taking something
+  (`type` CHECK-constrained to `medication`/`supplement`), no natural key —
+  the same medication can be started/stopped/restarted, each a real,
+  separate course. `end_date IS NULL` means "currently taking it," a real,
+  meaningful NULL, never defaulted to today.
+- **`allergies`** — `allergen TEXT PRIMARY KEY` (same single-column natural-
+  key pattern as `daily_metrics.date`), `severity` CHECK-constrained to
+  `mild`/`moderate`/`severe` (nullable — not always known). Upserted, with a
+  warning before overwriting, same as every other natural-keyed logger.
+- **`family_medical_history`** — `UNIQUE(relation, condition)`, `relation`
+  free text (real family structures don't fit a fixed enum). Upserted.
+
+**Natural-key asymmetry is the one real design decision worth naming
+explicitly**: bloodwork/medical_events/medications have NO natural key and
+are always `INSERT`ed fresh (design principle 2 — raw data is immutable —
+reads most literally here as "a fresh record every time," since a second
+blood draw or a new diagnosis note is a genuinely new fact, not a correction
+to an old one); allergies/family_medical_history DO have one and are
+upserted with a warning, exactly like every daily logger elsewhere in this
+project. `core/db.py` gained a new `insert()` helper (parallel to the
+existing `upsert()`) for the three no-natural-key tables — same identifier-
+safety and dict/list JSON-encoding behavior, minus the `ON CONFLICT` clause.
+
+`core/schema.sql` bumped to version 9; `tests/core/test_schema_sync.py`
+(semantic column comparison against the real migrated schema) passes
+unchanged, no test logic needed updating.
+
+**Models** (`core/models.py`): `BloodworkResult`, `MedicalEvent`,
+`MedicationSupplement`, `Allergy`, `FamilyMedicalHistory` — five new
+dataclasses, each following the exact established `to_row()`/`from_row()`/
+`__post_init__` pattern (read `IllnessLog` first, matched precisely rather
+than improvised). Cross-field checks (`resolved_date` needs `status=
+'resolved'`; `reference_range_low <= reference_range_high`; `end_date >=
+start_date`) all live in `__post_init__`, matching the project's existing
+convention of validating cross-field relationships in Python, not SQL.
+
+**CLI shape — one unified `scripts/log_health_history.py`, not five
+scripts.** These are occasional, low-frequency historical records (logged a
+handful of times a year), a structurally different kind of entry from every
+daily habit-logger in this project (`log_bjj.py`, `log_wellness.py`, ...) —
+remembering five separate rare script names would be real friction that a
+single `--kind` flag avoids. Interactive mode (no flags) prompts which
+category first, then walks that category's fields; flag mode requires
+`--kind` plus that category's required flags (missing ones listed explicitly,
+same all-or-nothing shape as `log_bjj.py`). **Bloodwork's interactive mode
+specifically loops** — prompts for the draw date once, then one test at a
+time (blank test name ends the panel), since a real blood draw produces many
+test values sharing one date; flag mode logs exactly one test value per
+invocation. Natural-keyed categories (allergy, family_history) warn before
+overwriting; the three insert-only categories never do (nothing to
+overwrite).
+
+**API** (`api/log.py` + `api/main.py`, under a new `/api/health-history/*`
+prefix — kept in the existing `log.py` module as instructed, since it's the
+same "thin wrapper over a validated dataclass" pattern as every other
+logger, but routed under its own prefix since a different frontend page
+consumes it): a `list_*`/`save_*` (and, for the two natural-keyed tables,
+`get_existing_*`) function pair per table, each POST endpoint a thin Pydantic-
+request → dataclass → `db.insert()`/`db.upsert()` wrapper, `ValueError` →
+422, identical to every other logger's shape. Bloodwork's `GET
+/api/health-history/bloodwork` supports three shapes via optional query
+params: real trend history for one `test_name` across every draw date, the
+full panel for one `date`, or (neither given) the whole table, most-recent-
+draw-first, for the Health History page's table view.
+
+**Frontend — a new "Health History" page** (`frontend/src/pages/
+HealthHistory.tsx`), not a 6th Log tab: added to the sidebar (`HeartPulse`
+icon, after Log) and the router. Four sub-tabs within the one page
+(Bloodwork, Medical events, Medications & allergies, Family history) so the
+sidebar itself stays uncluttered — matches how the existing Log page's own
+5 daily-logger tabs are organized. Each tab pairs a simple add-a-record form
+with a real list/table of existing entries, same `CARD_CLASS`/
+`CARD_CLASS_FLAT` visual language and shadcn form controls as the rest of
+the app. Bloodwork's table groups rows by draw date (a `Map`-based group-by
+preserving the API's own date-DESC ordering) so a full panel reads as one
+block, not N disconnected rows, per the design ask. Medications &
+supplements and allergies share one tab as two independent stacked sections
+(different tables, different natural-key/overwrite behavior), not one merged
+form.
+
+**Migration applied to the real `data/health.db`** (schema only, same as
+every prior migration in this project's history) — all 5 tables exist and
+are genuinely empty, verified directly, ready for Francisco's own real
+entries. **A real near-miss during verification, worth recording honestly**:
+a smoke test against `scripts/run_api.py` on a throwaway `HEALTH_OS_DB_PATH`
+was intended to be fully isolated from the real DB, but port 8000 was
+already held by the real, permanently-running `com.healthos.api` LaunchAgent
+(see the "One-command frontend serving built" section above) — the
+throwaway instance never actually bound, so the smoke-test HTTP requests
+silently landed on the real production instance and its real `data/
+health.db` instead. Caught immediately by re-checking row counts against
+the fabricated payloads sent, and fixed by deleting exactly those 5 rows
+(matched by their fabricated content, not a blind wipe) — verified `data/
+health.db`'s new tables are genuinely empty again afterward, and that the
+real `com.healthos.api` service (same PIDs throughout) was never disrupted.
+Worth remembering for any future "point a local script at a throwaway DB and
+hit it over HTTP" verification in this project: check `lsof -i :8000`
+first, since the background API LaunchAgent means port 8000 is not
+reliably free for an isolated test the way it would be on a machine without
+it installed.
+
+31 new backend tests (`tests/core/test_models.py`, `tests/core/test_db.py`,
+`tests/scripts/test_log_health_history.py`, `tests/api/test_log.py`,
+`tests/api/test_main.py`), 830 tests total passing, ruff check/format clean.
+Frontend `tsc -b`, `npm run build`, and `oxlint` all clean (the only lint
+warnings are the same pre-existing `set-state-in-effect` pattern already
+present in every other Log tab, not a new issue). Verified end-to-end against
+a real running server (POST then GET round-trip for all 5 tables) and via a
+Chrome-headless screenshot of the real rendered page.
+
+**Not yet done**: no correlation-engine wiring for any of these fields yet
+(bloodwork/medical events are inherently sparse — nowhere near
+`metrics/correlations.py`'s `MIN_N=30` gate for the foreseeable future,
+unlike illness which at least logs on the same cadence as other daily
+signals); no per-test trend chart for bloodwork (the `GET .../bloodwork?
+test_name=...` endpoint that would feed one already exists, just no chart
+consumes it yet — same "computed/available but not charted yet" state
+several other Phase-4-era metrics were in before their dashboard page
+existed). The Streamlit dashboard was deliberately left untouched, consistent
+with its established not-kept-in-sync status since the React migration.
 
 ## Definition of done for v1
 
