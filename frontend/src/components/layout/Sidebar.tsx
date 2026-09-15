@@ -1,15 +1,19 @@
-import { Dumbbell, Home, PenLine, Stethoscope, TrendingUp, Trophy } from "lucide-react"
+import { Dumbbell, HeartPulse, Home, PenLine, Stethoscope, TrendingUp, Trophy } from "lucide-react"
 import { NavLink } from "react-router-dom"
 
 // Same 6-page scope and order as the Streamlit dashboard's app.py (Today,
 // Trends, Training, Comp Prep, Log, Data Health) -- mirrored deliberately,
-// per ADR 0005, not reshuffled just because the framework changed.
+// per ADR 0005, not reshuffled just because the framework changed. "Health
+// History" (2026-09-14) is a genuinely new 7th page, added after Log since
+// it's a related but structurally different kind of manual entry
+// (occasional historical records, not a daily habit) -- see CLAUDE.md.
 const NAV_ITEMS = [
   { to: "/", label: "Today", icon: Home, end: true },
   { to: "/trends", label: "Trends", icon: TrendingUp },
   { to: "/training", label: "Training", icon: Dumbbell },
   { to: "/comp-prep", label: "Comp Prep", icon: Trophy },
   { to: "/log", label: "Log", icon: PenLine },
+  { to: "/health-history", label: "Health History", icon: HeartPulse },
   { to: "/data-health", label: "Data Health", icon: Stethoscope },
 ]
 

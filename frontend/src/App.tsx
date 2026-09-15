@@ -14,6 +14,9 @@ const CompPrepPage = lazy(() =>
   import("@/pages/CompPrep").then((m) => ({ default: m.CompPrepPage })),
 )
 const LogPage = lazy(() => import("@/pages/Log").then((m) => ({ default: m.LogPage })))
+const HealthHistoryPage = lazy(() =>
+  import("@/pages/HealthHistory").then((m) => ({ default: m.HealthHistoryPage })),
+)
 const DataHealthPage = lazy(() =>
   import("@/pages/DataHealth").then((m) => ({ default: m.DataHealthPage })),
 )
@@ -23,7 +26,8 @@ function PageFallback() {
 }
 
 // Same 6-page scope and order as the Streamlit dashboard (ADR 0005) --
-// mirrored, not reshuffled.
+// mirrored, not reshuffled -- plus a 7th, "Health History" (2026-09-14),
+// a genuinely new feature with no Streamlit-page counterpart to mirror.
 function App() {
   return (
     <BrowserRouter>
@@ -35,6 +39,7 @@ function App() {
             <Route path="training" element={<TrainingPage />} />
             <Route path="comp-prep" element={<CompPrepPage />} />
             <Route path="log" element={<LogPage />} />
+            <Route path="health-history" element={<HealthHistoryPage />} />
             <Route path="data-health" element={<DataHealthPage />} />
           </Route>
         </Routes>

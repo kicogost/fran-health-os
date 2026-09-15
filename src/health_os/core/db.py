@@ -239,6 +239,42 @@ def upsert(
         conn.execute(sql, encoded)
 
 
+def insert(conn: sqlite3.Connection, table: str, row: Mapping[str, Any]) -> int:
+    """Plain, unconditional INSERT — for tables with no natural key to upsert
+    on. Every table this project has built so far (daily_metrics,
+    bjj_sessions, body_measurements, ...) has a real natural key and is
+    upserted via `upsert()` above. `bloodwork_results`/`medical_events`/
+    `medications_supplements` (migration 0009) are the first genuine
+    exception: design principle 2 (raw data is immutable) reads most
+    literally here as "log a fresh record every time" — a second blood draw,
+    a new diagnosis note, or restarting a medication are each real, distinct
+    rows, not corrections to a prior one. Returns the new row's autoincrement
+    `id` (`cursor.lastrowid`).
+
+    Same identifier-safety and dict/list JSON-encoding behaviour as
+    `upsert()`, minus the `ON CONFLICT` clause — `created_at`/`updated_at`
+    are left to their own `DEFAULT` column expressions rather than set here,
+    since an insert-only row only ever has one write.
+    """
+    if not row:
+        raise ValueError("insert() called with an empty row")
+    _check_identifier(table, what="table")
+    for col in row:
+        _check_identifier(col, what="column")
+
+    encoded: dict[str, Any] = {
+        col: json.dumps(val) if isinstance(val, (dict, list)) else val for col, val in row.items()
+    }
+    columns = list(encoded.keys())
+    placeholders = ", ".join(f":{col}" for col in columns)
+    column_list = ", ".join(columns)
+
+    sql = f"INSERT INTO {table} ({column_list}) VALUES ({placeholders})"
+    with conn:
+        cursor = conn.execute(sql, encoded)
+    return int(cursor.lastrowid)
+
+
 def start_ingest_run(conn: sqlite3.Connection, source: str) -> int:
     """Record the start of an ingestion run; returns its `ingest_runs.id`."""
     with conn:

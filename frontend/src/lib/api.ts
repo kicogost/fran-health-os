@@ -1,6 +1,18 @@
 import type { CompPrepPayload } from "@/types/compPrep"
 import type { DataHealthPayload } from "@/types/dataHealth"
 import type {
+  AllergyRequest,
+  AllergyRow,
+  BloodworkRequest,
+  BloodworkRow,
+  FamilyHistoryRequest,
+  FamilyHistoryRow,
+  MedicalEventRequest,
+  MedicalEventRow,
+  MedicationRequest,
+  MedicationRow,
+} from "@/types/healthHistory"
+import type {
   BjjSessionRequest,
   CalisthenicsRequest,
   IllnessRequest,
@@ -146,4 +158,69 @@ export function fetchExistingIllness(date: string): Promise<{ severity: number |
 
 export function saveIllness(req: IllnessRequest): Promise<Record<string, unknown>> {
   return postJson("/log/illness", req)
+}
+
+// --- Health History (2026-09-14): bloodwork, medical events, medications/
+// supplements, allergies, family history. Occasional historical records --
+// backs the separate "Health History" page, not the daily "Log" page above.
+
+export function fetchBloodwork(params?: {
+  testName?: string
+  date?: string
+}): Promise<BloodworkRow[]> {
+  const query = new URLSearchParams()
+  if (params?.testName) query.set("test_name", params.testName)
+  if (params?.date) query.set("date", params.date)
+  const qs = query.toString()
+  return getJson<BloodworkRow[]>(`/health-history/bloodwork${qs ? `?${qs}` : ""}`)
+}
+
+export function saveBloodwork(req: BloodworkRequest): Promise<BloodworkRow> {
+  return postJson("/health-history/bloodwork", req)
+}
+
+export function fetchMedicalEvents(): Promise<MedicalEventRow[]> {
+  return getJson<MedicalEventRow[]>("/health-history/medical-events")
+}
+
+export function saveMedicalEvent(req: MedicalEventRequest): Promise<MedicalEventRow> {
+  return postJson("/health-history/medical-events", req)
+}
+
+export function fetchMedications(): Promise<MedicationRow[]> {
+  return getJson<MedicationRow[]>("/health-history/medications")
+}
+
+export function saveMedication(req: MedicationRequest): Promise<MedicationRow> {
+  return postJson("/health-history/medications", req)
+}
+
+export function fetchAllergies(): Promise<AllergyRow[]> {
+  return getJson<AllergyRow[]>("/health-history/allergies")
+}
+
+export function fetchExistingAllergy(
+  allergen: string,
+): Promise<{ severity: AllergyRow["severity"] } | null> {
+  return getJson(`/health-history/allergies/existing?allergen=${encodeURIComponent(allergen)}`)
+}
+
+export function saveAllergy(req: AllergyRequest): Promise<AllergyRow> {
+  return postJson("/health-history/allergies", req)
+}
+
+export function fetchFamilyHistory(): Promise<FamilyHistoryRow[]> {
+  return getJson<FamilyHistoryRow[]>("/health-history/family-history")
+}
+
+export function fetchExistingFamilyHistory(
+  relation: string,
+  condition: string,
+): Promise<{ notes: string | null } | null> {
+  const query = new URLSearchParams({ relation, condition })
+  return getJson(`/health-history/family-history/existing?${query.toString()}`)
+}
+
+export function saveFamilyHistory(req: FamilyHistoryRequest): Promise<FamilyHistoryRow> {
+  return postJson("/health-history/family-history", req)
 }

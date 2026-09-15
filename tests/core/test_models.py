@@ -8,13 +8,18 @@ from health_os.core import db as db_module
 from health_os.core.models import (
     Activity,
     ActivityLap,
+    Allergy,
     BjjSession,
+    BloodworkResult,
     BodyMeasurement,
     CalisthenicsSession,
     DailyMetric,
     DerivedMetric,
+    FamilyMedicalHistory,
     IllnessLog,
     IngestRun,
+    MedicalEvent,
+    MedicationSupplement,
     SubjectiveLogEntry,
     merge_subjective_log_entry,
 )
@@ -525,6 +530,262 @@ class TestIllnessLog:
         assert reloaded.headache is None
         assert reloaded.likely_cause is None
         assert reloaded.notes is None
+
+
+class TestBloodworkResult:
+    def test_to_row_omits_none_by_default(self) -> None:
+        result = BloodworkResult(date="2026-09-14", test_name="ferritin", value=85.0)
+        row = result.to_row()
+        assert row == {"date": "2026-09-14", "test_name": "ferritin", "value": 85.0}
+
+    def test_round_trip_through_db(self, conn: sqlite3.Connection) -> None:
+        result = BloodworkResult(
+            date="2026-09-14",
+            test_name="total_testosterone",
+            value=18.5,
+            unit="nmol/L",
+            reference_range_low=8.6,
+            reference_range_high=29.0,
+            notes="fasted draw",
+        )
+        new_id = db_module.insert(conn, "bloodwork_results", result.to_row())
+        row = conn.execute("SELECT * FROM bloodwork_results WHERE id = ?", (new_id,)).fetchone()
+        reloaded = BloodworkResult.from_row(row)
+        assert reloaded.test_name == "total_testosterone"
+        assert reloaded.value == 18.5
+        assert reloaded.unit == "nmol/L"
+        assert reloaded.reference_range_low == 8.6
+        assert reloaded.reference_range_high == 29.0
+        assert reloaded.notes == "fasted draw"
+
+    def test_no_natural_key_two_inserts_stay_two_rows(self, conn: sqlite3.Connection) -> None:
+        first = BloodworkResult(date="2026-09-14", test_name="ferritin", value=85.0)
+        second = BloodworkResult(date="2026-09-14", test_name="ferritin", value=90.0)
+        db_module.insert(conn, "bloodwork_results", first.to_row())
+        db_module.insert(conn, "bloodwork_results", second.to_row())
+        rows = conn.execute(
+            "SELECT * FROM bloodwork_results WHERE test_name = 'ferritin'"
+        ).fetchall()
+        assert len(rows) == 2
+
+    def test_rejects_inverted_reference_range(self) -> None:
+        with pytest.raises(ValueError, match="reference_range_low"):
+            BloodworkResult(
+                date="2026-09-14",
+                test_name="ferritin",
+                value=85.0,
+                reference_range_low=300.0,
+                reference_range_high=30.0,
+            )
+
+    def test_one_sided_reference_range_is_valid(self) -> None:
+        result = BloodworkResult(
+            date="2026-09-14", test_name="ferritin", value=85.0, reference_range_high=300.0
+        )
+        assert result.reference_range_low is None
+        assert result.reference_range_high == 300.0
+
+
+class TestMedicalEvent:
+    def test_to_row_omits_none_by_default(self) -> None:
+        event = MedicalEvent(
+            date="2018-03-01", category="injury", title="Right knee ACL tear", status="ongoing"
+        )
+        row = event.to_row()
+        assert row == {
+            "date": "2018-03-01",
+            "category": "injury",
+            "title": "Right knee ACL tear",
+            "status": "ongoing",
+        }
+
+    def test_round_trip_through_db(self, conn: sqlite3.Connection) -> None:
+        event = MedicalEvent(
+            date="2018-03-01",
+            category="injury",
+            title="Right knee ACL tear",
+            status="ongoing",
+            notes="permanent -- never recommend running",
+        )
+        new_id = db_module.insert(conn, "medical_events", event.to_row())
+        row = conn.execute("SELECT * FROM medical_events WHERE id = ?", (new_id,)).fetchone()
+        reloaded = MedicalEvent.from_row(row)
+        assert reloaded.category == "injury"
+        assert reloaded.status == "ongoing"
+        assert reloaded.resolved_date is None
+        assert reloaded.notes == "permanent -- never recommend running"
+
+    def test_resolved_event_round_trips_resolved_date(self, conn: sqlite3.Connection) -> None:
+        event = MedicalEvent(
+            date="2024-01-10",
+            category="surgery",
+            title="Wisdom teeth removal",
+            status="resolved",
+            resolved_date="2024-01-24",
+        )
+        new_id = db_module.insert(conn, "medical_events", event.to_row())
+        row = conn.execute("SELECT * FROM medical_events WHERE id = ?", (new_id,)).fetchone()
+        reloaded = MedicalEvent.from_row(row)
+        assert reloaded.resolved_date == "2024-01-24"
+
+    def test_rejects_invalid_category(self) -> None:
+        with pytest.raises(ValueError, match="category"):
+            MedicalEvent(date="2026-09-14", category="bogus", title="x", status="ongoing")
+
+    def test_rejects_invalid_status(self) -> None:
+        with pytest.raises(ValueError, match="status"):
+            MedicalEvent(date="2026-09-14", category="injury", title="x", status="bogus")
+
+    def test_rejects_resolved_date_without_resolved_status(self) -> None:
+        with pytest.raises(ValueError, match="resolved_date"):
+            MedicalEvent(
+                date="2026-09-14",
+                category="injury",
+                title="x",
+                status="ongoing",
+                resolved_date="2026-09-15",
+            )
+
+    def test_no_natural_key_same_date_twice_is_valid(self, conn: sqlite3.Connection) -> None:
+        row = {"date": "2026-09-14", "category": "injury", "title": "x", "status": "ongoing"}
+        event = MedicalEvent(**row)
+        db_module.insert(conn, "medical_events", event.to_row())
+        db_module.insert(conn, "medical_events", event.to_row())
+        rows = conn.execute("SELECT * FROM medical_events").fetchall()
+        assert len(rows) == 2
+
+
+class TestMedicationSupplement:
+    def test_to_row_omits_none_by_default(self) -> None:
+        med = MedicationSupplement(name="Creatine", type="supplement", start_date="2026-09-01")
+        row = med.to_row()
+        assert row == {"name": "Creatine", "type": "supplement", "start_date": "2026-09-01"}
+
+    def test_round_trip_through_db(self, conn: sqlite3.Connection) -> None:
+        med = MedicationSupplement(
+            name="Vitamin D3",
+            type="supplement",
+            dosage="2000 IU",
+            frequency="daily",
+            start_date="2026-01-01",
+            notes="winter months",
+        )
+        new_id = db_module.insert(conn, "medications_supplements", med.to_row())
+        row = conn.execute(
+            "SELECT * FROM medications_supplements WHERE id = ?", (new_id,)
+        ).fetchone()
+        reloaded = MedicationSupplement.from_row(row)
+        assert reloaded.name == "Vitamin D3"
+        assert reloaded.dosage == "2000 IU"
+        assert reloaded.end_date is None  # still taking it
+
+    def test_end_date_none_means_currently_taking(self) -> None:
+        med = MedicationSupplement(name="Vitamin D3", type="supplement", start_date="2026-01-01")
+        assert med.end_date is None
+
+    def test_rejects_invalid_type(self) -> None:
+        with pytest.raises(ValueError, match="type"):
+            MedicationSupplement(name="x", type="bogus", start_date="2026-09-14")
+
+    def test_rejects_end_date_before_start_date(self) -> None:
+        with pytest.raises(ValueError, match="end_date"):
+            MedicationSupplement(
+                name="x", type="medication", start_date="2026-09-14", end_date="2026-09-01"
+            )
+
+    def test_no_natural_key_same_name_twice_is_valid(self, conn: sqlite3.Connection) -> None:
+        # A real, separate course each time -- started, stopped, restarted.
+        first = MedicationSupplement(
+            name="Amoxicillin", type="medication", start_date="2025-01-01", end_date="2025-01-10"
+        )
+        second = MedicationSupplement(
+            name="Amoxicillin", type="medication", start_date="2026-06-01"
+        )
+        db_module.insert(conn, "medications_supplements", first.to_row())
+        db_module.insert(conn, "medications_supplements", second.to_row())
+        rows = conn.execute(
+            "SELECT * FROM medications_supplements WHERE name = 'Amoxicillin'"
+        ).fetchall()
+        assert len(rows) == 2
+
+
+class TestAllergy:
+    def test_to_row_omits_none_by_default(self) -> None:
+        allergy = Allergy(allergen="peanuts")
+        assert allergy.to_row() == {"allergen": "peanuts"}
+
+    def test_round_trip_through_db(self, conn: sqlite3.Connection) -> None:
+        allergy = Allergy(
+            allergen="peanuts",
+            reaction="hives",
+            severity="moderate",
+            date_identified="2010-05-01",
+            notes="confirmed by allergist",
+        )
+        db_module.upsert(conn, "allergies", allergy.to_row(), ["allergen"])
+        row = conn.execute("SELECT * FROM allergies WHERE allergen = ?", ("peanuts",)).fetchone()
+        reloaded = Allergy.from_row(row)
+        assert reloaded.reaction == "hives"
+        assert reloaded.severity == "moderate"
+        assert reloaded.date_identified == "2010-05-01"
+
+    def test_rejects_invalid_severity(self) -> None:
+        with pytest.raises(ValueError, match="severity"):
+            Allergy(allergen="peanuts", severity="catastrophic")
+
+    def test_upsert_on_allergen_overwrites_not_duplicates(self, conn: sqlite3.Connection) -> None:
+        db_module.upsert(
+            conn, "allergies", Allergy(allergen="peanuts", severity="mild").to_row(), ["allergen"]
+        )
+        db_module.upsert(
+            conn,
+            "allergies",
+            Allergy(allergen="peanuts", severity="severe").to_row(),
+            ["allergen"],
+        )
+        rows = conn.execute("SELECT * FROM allergies WHERE allergen = 'peanuts'").fetchall()
+        assert len(rows) == 1
+        assert rows[0]["severity"] == "severe"
+
+
+class TestFamilyMedicalHistory:
+    def test_to_row_omits_none_by_default(self) -> None:
+        entry = FamilyMedicalHistory(relation="mother", condition="hypertension")
+        assert entry.to_row() == {"relation": "mother", "condition": "hypertension"}
+
+    def test_round_trip_through_db(self, conn: sqlite3.Connection) -> None:
+        entry = FamilyMedicalHistory(
+            relation="paternal grandfather", condition="type 2 diabetes", notes="diagnosed ~60yo"
+        )
+        db_module.upsert(conn, "family_medical_history", entry.to_row(), ["relation", "condition"])
+        row = conn.execute(
+            "SELECT * FROM family_medical_history WHERE relation = ? AND condition = ?",
+            ("paternal grandfather", "type 2 diabetes"),
+        ).fetchone()
+        reloaded = FamilyMedicalHistory.from_row(row)
+        assert reloaded.notes == "diagnosed ~60yo"
+
+    def test_upsert_on_relation_and_condition_overwrites_not_duplicates(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        db_module.upsert(
+            conn,
+            "family_medical_history",
+            FamilyMedicalHistory(relation="mother", condition="asthma", notes="mild").to_row(),
+            ["relation", "condition"],
+        )
+        db_module.upsert(
+            conn,
+            "family_medical_history",
+            FamilyMedicalHistory(relation="mother", condition="asthma", notes="severe").to_row(),
+            ["relation", "condition"],
+        )
+        rows = conn.execute(
+            "SELECT * FROM family_medical_history "
+            "WHERE relation = 'mother' AND condition = 'asthma'"
+        ).fetchall()
+        assert len(rows) == 1
+        assert rows[0]["notes"] == "severe"
 
 
 class TestDerivedMetric:

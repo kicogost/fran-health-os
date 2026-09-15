@@ -245,6 +245,154 @@ def post_log_illness(req: log_api.IllnessRequest) -> dict[str, Any]:
         conn.close()
 
 
+# ============================================================
+# Health History (2026-09-14) -- bloodwork, medical events, medications/
+# supplements, allergies, family medical history. Backs the separate
+# "Health History" frontend page, not the daily "Log" page above -- these
+# are occasional historical records (a handful of times a year), not a
+# daily habit. Logic lives in api/log.py alongside the other 5 manual logs
+# (same dataclass-validation pattern), routed here under its own
+# /api/health-history prefix since it's a different page.
+# ============================================================
+
+
+@app.get("/api/health-history/bloodwork")
+def get_health_history_bloodwork(
+    test_name: str | None = None, date: str | None = None
+) -> list[dict[str, Any]]:
+    conn = db.init_db()
+    try:
+        results = log_api.list_bloodwork(conn, test_name=test_name, date=date)
+        return [r.to_row(include_none=True) for r in results]
+    finally:
+        conn.close()
+
+
+@app.post("/api/health-history/bloodwork")
+def post_health_history_bloodwork(req: log_api.BloodworkRequest) -> dict[str, Any]:
+    conn = db.init_db()
+    try:
+        try:
+            result = log_api.save_bloodwork(conn, req)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return result.to_row(include_none=True)
+    finally:
+        conn.close()
+
+
+@app.get("/api/health-history/medical-events")
+def get_health_history_medical_events() -> list[dict[str, Any]]:
+    conn = db.init_db()
+    try:
+        events = log_api.list_medical_events(conn)
+        return [e.to_row(include_none=True) for e in events]
+    finally:
+        conn.close()
+
+
+@app.post("/api/health-history/medical-events")
+def post_health_history_medical_event(req: log_api.MedicalEventRequest) -> dict[str, Any]:
+    conn = db.init_db()
+    try:
+        try:
+            event = log_api.save_medical_event(conn, req)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return event.to_row(include_none=True)
+    finally:
+        conn.close()
+
+
+@app.get("/api/health-history/medications")
+def get_health_history_medications() -> list[dict[str, Any]]:
+    conn = db.init_db()
+    try:
+        meds = log_api.list_medications(conn)
+        return [m.to_row(include_none=True) for m in meds]
+    finally:
+        conn.close()
+
+
+@app.post("/api/health-history/medications")
+def post_health_history_medication(req: log_api.MedicationRequest) -> dict[str, Any]:
+    conn = db.init_db()
+    try:
+        try:
+            med = log_api.save_medication(conn, req)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return med.to_row(include_none=True)
+    finally:
+        conn.close()
+
+
+@app.get("/api/health-history/allergies")
+def get_health_history_allergies() -> list[dict[str, Any]]:
+    conn = db.init_db()
+    try:
+        allergies = log_api.list_allergies(conn)
+        return [a.to_row(include_none=True) for a in allergies]
+    finally:
+        conn.close()
+
+
+@app.get("/api/health-history/allergies/existing")
+def get_health_history_allergy_existing(allergen: str) -> dict[str, Any] | None:
+    conn = db.init_db()
+    try:
+        return log_api.get_existing_allergy(conn, allergen)
+    finally:
+        conn.close()
+
+
+@app.post("/api/health-history/allergies")
+def post_health_history_allergy(req: log_api.AllergyRequest) -> dict[str, Any]:
+    conn = db.init_db()
+    try:
+        try:
+            allergy = log_api.save_allergy(conn, req)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return allergy.to_row(include_none=True)
+    finally:
+        conn.close()
+
+
+@app.get("/api/health-history/family-history")
+def get_health_history_family_history() -> list[dict[str, Any]]:
+    conn = db.init_db()
+    try:
+        entries = log_api.list_family_history(conn)
+        return [e.to_row(include_none=True) for e in entries]
+    finally:
+        conn.close()
+
+
+@app.get("/api/health-history/family-history/existing")
+def get_health_history_family_history_existing(
+    relation: str, condition: str
+) -> dict[str, Any] | None:
+    conn = db.init_db()
+    try:
+        return log_api.get_existing_family_history(conn, relation, condition)
+    finally:
+        conn.close()
+
+
+@app.post("/api/health-history/family-history")
+def post_health_history_family_history(req: log_api.FamilyHistoryRequest) -> dict[str, Any]:
+    conn = db.init_db()
+    try:
+        try:
+            entry = log_api.save_family_history(conn, req)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return entry.to_row(include_none=True)
+    finally:
+        conn.close()
+
+
 def _safe_dist_file(full_path: str) -> Path | None:
     """Resolves `full_path` against FRONTEND_DIST_DIR, refusing to serve
     anything that escapes it (e.g. a `../../` traversal attempt) -- returns

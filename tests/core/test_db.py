@@ -33,7 +33,7 @@ class TestMigrations:
 
     def test_records_applied_version(self, conn: sqlite3.Connection) -> None:
         versions = [row["version"] for row in conn.execute("SELECT version FROM schema_migrations")]
-        assert versions == [1, 2, 3, 4, 5, 6, 7, 8]
+        assert versions == [1, 2, 3, 4, 5, 6, 7, 8, 9]
 
     def test_is_idempotent(self, conn: sqlite3.Connection) -> None:
         newly_applied = db_module.apply_migrations(conn)
@@ -336,6 +336,49 @@ class TestUpsert:
             db_module.upsert(conn, "daily_metrics", {}, ["date"])
 
 
+class TestInsert:
+    def test_inserts_a_new_row_and_returns_id(self, conn: sqlite3.Connection) -> None:
+        new_id = db_module.insert(
+            conn,
+            "bloodwork_results",
+            {"date": "2026-09-14", "test_name": "ferritin", "value": 85.0, "unit": "ng/mL"},
+        )
+        assert new_id > 0
+        row = conn.execute("SELECT * FROM bloodwork_results WHERE id = ?", (new_id,)).fetchone()
+        assert row["test_name"] == "ferritin"
+        assert row["value"] == 85.0
+        assert row["created_at"] is not None
+
+    def test_repeated_calls_create_separate_rows_not_an_upsert(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # Real design decision (migration 0009): bloodwork/medical_events/
+        # medications_supplements have no natural key -- every call is a
+        # fresh, independent record, never a correction-in-place.
+        db_module.insert(
+            conn,
+            "bloodwork_results",
+            {"date": "2026-09-14", "test_name": "ferritin", "value": 85.0},
+        )
+        db_module.insert(
+            conn,
+            "bloodwork_results",
+            {"date": "2026-09-14", "test_name": "ferritin", "value": 90.0},
+        )
+        rows = conn.execute(
+            "SELECT * FROM bloodwork_results WHERE test_name = 'ferritin'"
+        ).fetchall()
+        assert len(rows) == 2
+
+    def test_rejects_empty_row(self, conn: sqlite3.Connection) -> None:
+        with pytest.raises(ValueError, match="empty row"):
+            db_module.insert(conn, "bloodwork_results", {})
+
+    def test_rejects_unsafe_table_name(self, conn: sqlite3.Connection) -> None:
+        with pytest.raises(ValueError, match="unsafe"):
+            db_module.insert(conn, "bloodwork_results; DROP TABLE bloodwork_results;--", {"a": 1})
+
+
 class TestNaturalKeyConstraints:
     def test_activities_unique_on_source_and_source_id(self, conn: sqlite3.Connection) -> None:
         row = {
@@ -383,6 +426,66 @@ class TestNaturalKeyConstraints:
             conn.execute(
                 "INSERT INTO bjj_sessions (date, session_type, duration_min, session_rpe) "
                 "VALUES ('2026-08-27', 'sparring', 90, 7)"
+            )
+
+    def test_allergies_unique_on_allergen(self, conn: sqlite3.Connection) -> None:
+        conn.execute("INSERT INTO allergies (allergen) VALUES ('peanuts')")
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("INSERT INTO allergies (allergen) VALUES ('peanuts')")
+
+    def test_allergies_rejects_invalid_severity(self, conn: sqlite3.Connection) -> None:
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO allergies (allergen, severity) VALUES ('peanuts', 'catastrophic')"
+            )
+
+    def test_family_medical_history_unique_on_relation_and_condition(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        conn.execute(
+            "INSERT INTO family_medical_history (relation, condition) VALUES ('mother', 'asthma')"
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO family_medical_history (relation, condition) "
+                "VALUES ('mother', 'asthma')"
+            )
+
+    def test_medical_events_rejects_invalid_category(self, conn: sqlite3.Connection) -> None:
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO medical_events (date, category, title, status) "
+                "VALUES ('2026-09-14', 'bogus', 'x', 'ongoing')"
+            )
+
+    def test_medical_events_rejects_invalid_status(self, conn: sqlite3.Connection) -> None:
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO medical_events (date, category, title, status) "
+                "VALUES ('2026-09-14', 'injury', 'x', 'bogus')"
+            )
+
+    def test_medical_events_has_no_natural_key(self, conn: sqlite3.Connection) -> None:
+        # Two real events sharing a date is expected, not an error.
+        row = {"date": "2026-09-14", "category": "injury", "title": "x", "status": "ongoing"}
+        conn.execute(
+            "INSERT INTO medical_events (date, category, title, status) "
+            "VALUES (:date, :category, :title, :status)",
+            row,
+        )
+        conn.execute(
+            "INSERT INTO medical_events (date, category, title, status) "
+            "VALUES (:date, :category, :title, :status)",
+            row,
+        )
+        rows = conn.execute("SELECT * FROM medical_events").fetchall()
+        assert len(rows) == 2
+
+    def test_medications_supplements_rejects_invalid_type(self, conn: sqlite3.Connection) -> None:
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO medications_supplements (name, type, start_date) "
+                "VALUES ('creatine', 'bogus', '2026-09-14')"
             )
 
 

@@ -63,6 +63,90 @@ class TestGetCorrelations:
         assert all(r["confidence"] == "insufficient_data" for r in body)
 
 
+class TestHealthHistoryRoutes:
+    """Real HTTP-level smoke tests confirming each of the 5 health-history
+    tables' GET/POST routes actually wire up end to end -- the underlying
+    logic itself is covered in depth in tests/api/test_log.py.
+    """
+
+    def test_bloodwork_post_then_get(self, client: TestClient) -> None:
+        post = client.post(
+            "/api/health-history/bloodwork",
+            json={"date": "2026-09-14", "test_name": "ferritin", "value": 85.0, "unit": "ng/mL"},
+        )
+        assert post.status_code == 200
+        get = client.get("/api/health-history/bloodwork", params={"test_name": "ferritin"})
+        assert get.status_code == 200
+        assert len(get.json()) == 1
+
+    def test_bloodwork_post_invalid_reference_range_is_422(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/health-history/bloodwork",
+            json={
+                "date": "2026-09-14",
+                "test_name": "ferritin",
+                "value": 85.0,
+                "reference_range_low": 400.0,
+                "reference_range_high": 30.0,
+            },
+        )
+        assert response.status_code == 422
+
+    def test_medical_events_post_then_get(self, client: TestClient) -> None:
+        post = client.post(
+            "/api/health-history/medical-events",
+            json={
+                "date": "2018-03-01",
+                "category": "injury",
+                "title": "Right knee ACL tear",
+                "status": "ongoing",
+            },
+        )
+        assert post.status_code == 200
+        get = client.get("/api/health-history/medical-events")
+        assert get.status_code == 200
+        assert len(get.json()) == 1
+
+    def test_medications_post_then_get(self, client: TestClient) -> None:
+        post = client.post(
+            "/api/health-history/medications",
+            json={"name": "Vitamin D3", "type": "supplement", "start_date": "2026-01-01"},
+        )
+        assert post.status_code == 200
+        get = client.get("/api/health-history/medications")
+        assert get.status_code == 200
+        assert len(get.json()) == 1
+
+    def test_allergies_post_get_and_existing(self, client: TestClient) -> None:
+        assert (
+            client.get(
+                "/api/health-history/allergies/existing", params={"allergen": "peanuts"}
+            ).json()
+            is None
+        )
+        post = client.post(
+            "/api/health-history/allergies", json={"allergen": "peanuts", "severity": "moderate"}
+        )
+        assert post.status_code == 200
+        existing = client.get(
+            "/api/health-history/allergies/existing", params={"allergen": "peanuts"}
+        ).json()
+        assert existing["severity"] == "moderate"
+        assert len(client.get("/api/health-history/allergies").json()) == 1
+
+    def test_family_history_post_get_and_existing(self, client: TestClient) -> None:
+        post = client.post(
+            "/api/health-history/family-history", json={"relation": "mother", "condition": "asthma"}
+        )
+        assert post.status_code == 200
+        existing = client.get(
+            "/api/health-history/family-history/existing",
+            params={"relation": "mother", "condition": "asthma"},
+        ).json()
+        assert existing is not None
+        assert len(client.get("/api/health-history/family-history").json()) == 1
+
+
 class TestServeFrontend:
     """The catch-all that resolves ADR 0005's 'production serving' open item
     -- serves the built React bundle from this same process so

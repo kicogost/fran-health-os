@@ -592,6 +592,238 @@ class IllnessLog:
 
 
 @dataclass(slots=True)
+class BloodworkResult:
+    """One row of `bloodwork_results` (migration 0009) — grain: a single test
+    value from a single draw date. A real "long/tall" table: a blood draw
+    produces many different test values (ferritin, testosterone, vitamin D,
+    ...), each its own row sharing `date`, rather than one column per
+    possible test — the set of possible lab tests is open-ended, so
+    `test_name` is free text, not an enum.
+
+    No natural key (see migration 0009's header comment) — every log call
+    inserts a fresh row via `core.db.insert()`, never upserts. `unit` travels
+    with every value (units vary by test and by lab, never assumed);
+    `reference_range_low`/`high` are independently nullable — a lab's own
+    reported range, when given, matters for interpretation but isn't always
+    available and can be one-sided.
+    """
+
+    date: str
+    test_name: str
+    value: float
+    id: int | None = None
+    unit: str | None = None
+    reference_range_low: float | None = None
+    reference_range_high: float | None = None
+    notes: str | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            self.reference_range_low is not None
+            and self.reference_range_high is not None
+            and self.reference_range_low > self.reference_range_high
+        ):
+            raise ValueError(
+                f"reference_range_low ({self.reference_range_low}) can't exceed "
+                f"reference_range_high ({self.reference_range_high})"
+            )
+
+    def to_row(self, *, include_none: bool = False) -> dict[str, Any]:
+        return _row_dict(self, include_none=include_none)
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> BloodworkResult:
+        keys = row.keys()
+        return cls(
+            id=row["id"] if "id" in keys else None,
+            date=row["date"],
+            test_name=row["test_name"],
+            value=row["value"],
+            unit=row["unit"] if "unit" in keys else None,
+            reference_range_low=(
+                row["reference_range_low"] if "reference_range_low" in keys else None
+            ),
+            reference_range_high=(
+                row["reference_range_high"] if "reference_range_high" in keys else None
+            ),
+            notes=row["notes"] if "notes" in keys else None,
+        )
+
+
+_MEDICAL_EVENT_CATEGORIES = ("condition", "injury", "surgery", "hospitalization", "other")
+_MEDICAL_EVENT_STATUSES = ("ongoing", "resolved", "unknown")
+
+
+@dataclass(slots=True)
+class MedicalEvent:
+    """One row of `medical_events` (migration 0009) — a real chronological
+    timeline: conditions, diagnoses, injuries, surgeries, hospitalizations,
+    differentiated by `category` rather than five separate tables, since they
+    all share the same real shape (a start date, an optional resolution, a
+    description). Francisco's own permanent knee injury and recurring neck
+    sensitivity (both already real, ongoing guardrails in
+    config/athlete.yaml) are exactly the kind of `status='ongoing'` row this
+    table exists to hold.
+
+    No natural key — unlike the daily-logger tables, multiple real events can
+    plausibly share a date, so this isn't a "one entry per day" table; every
+    log call inserts a fresh row via `core.db.insert()`.
+    """
+
+    date: str
+    category: str
+    title: str
+    status: str
+    id: int | None = None
+    resolved_date: str | None = None
+    notes: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.category not in _MEDICAL_EVENT_CATEGORIES:
+            raise ValueError(f"invalid category: {self.category!r}")
+        if self.status not in _MEDICAL_EVENT_STATUSES:
+            raise ValueError(f"invalid status: {self.status!r}")
+        if self.resolved_date is not None and self.status != "resolved":
+            raise ValueError("resolved_date is only meaningful when status='resolved'")
+
+    def to_row(self, *, include_none: bool = False) -> dict[str, Any]:
+        return _row_dict(self, include_none=include_none)
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> MedicalEvent:
+        keys = row.keys()
+        return cls(
+            id=row["id"] if "id" in keys else None,
+            date=row["date"],
+            category=row["category"],
+            title=row["title"],
+            status=row["status"],
+            resolved_date=row["resolved_date"] if "resolved_date" in keys else None,
+            notes=row["notes"] if "notes" in keys else None,
+        )
+
+
+_MEDICATION_TYPES = ("medication", "supplement")
+
+
+@dataclass(slots=True)
+class MedicationSupplement:
+    """One row of `medications_supplements` (migration 0009) — grain: one
+    COURSE of taking something, not one row per medication name. The same
+    medication can plausibly be started, stopped, and restarted later (a
+    real, separate course each time), so there's no natural key — every log
+    call inserts a fresh row via `core.db.insert()`.
+
+    `end_date is None` means "currently taking it" — a real, meaningful NULL
+    (design principle 6), never defaulted to today's date on entry. `dosage`/
+    `frequency` are free text ("500mg" / "2 capsules", "daily" / "as
+    needed") since real-world dosage units vary too much to normalize.
+    """
+
+    name: str
+    type: str  # "medication" | "supplement"
+    start_date: str
+    id: int | None = None
+    dosage: str | None = None
+    frequency: str | None = None
+    end_date: str | None = None
+    notes: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.type not in _MEDICATION_TYPES:
+            raise ValueError(f"invalid type: {self.type!r}")
+        if self.end_date is not None and self.end_date < self.start_date:
+            raise ValueError(
+                f"end_date ({self.end_date}) can't be before start_date ({self.start_date})"
+            )
+
+    def to_row(self, *, include_none: bool = False) -> dict[str, Any]:
+        return _row_dict(self, include_none=include_none)
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> MedicationSupplement:
+        keys = row.keys()
+        return cls(
+            id=row["id"] if "id" in keys else None,
+            name=row["name"],
+            type=row["type"],
+            dosage=row["dosage"] if "dosage" in keys else None,
+            frequency=row["frequency"] if "frequency" in keys else None,
+            start_date=row["start_date"],
+            end_date=row["end_date"] if "end_date" in keys else None,
+            notes=row["notes"] if "notes" in keys else None,
+        )
+
+
+_ALLERGY_SEVERITIES = ("mild", "moderate", "severe")
+
+
+@dataclass(slots=True)
+class Allergy:
+    """One row of `allergies` (migration 0009) — grain: `allergen` IS the
+    natural key (same single-column TEXT PRIMARY KEY pattern as
+    `daily_metrics.date`), unlike the three always-insert tables above.
+    Re-logging the same allergen (e.g. updating `severity` once it's better
+    characterized) is a real update to the SAME fact, not a new allergy —
+    upserted, with the CLI/API warning before overwriting, same as every
+    other natural-keyed logger in this project.
+    """
+
+    allergen: str
+    reaction: str | None = None
+    severity: str | None = None  # "mild" | "moderate" | "severe"
+    date_identified: str | None = None
+    notes: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.severity is not None and self.severity not in _ALLERGY_SEVERITIES:
+            raise ValueError(f"invalid severity: {self.severity!r}")
+
+    def to_row(self, *, include_none: bool = False) -> dict[str, Any]:
+        return _row_dict(self, include_none=include_none)
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> Allergy:
+        keys = row.keys()
+        return cls(
+            allergen=row["allergen"],
+            reaction=row["reaction"] if "reaction" in keys else None,
+            severity=row["severity"] if "severity" in keys else None,
+            date_identified=row["date_identified"] if "date_identified" in keys else None,
+            notes=row["notes"] if "notes" in keys else None,
+        )
+
+
+@dataclass(slots=True)
+class FamilyMedicalHistory:
+    """One row of `family_medical_history` (migration 0009) — grain:
+    UNIQUE(relation, condition), so re-logging the same fact (e.g. "mother —
+    hypertension" a second time) is idempotent (upsert, warn before
+    overwrite) rather than accumulating duplicate rows. `relation` (e.g.
+    "mother", "paternal grandfather") is free text, not an enum — real
+    family structures don't fit a fixed small list cleanly.
+    """
+
+    relation: str
+    condition: str
+    id: int | None = None
+    notes: str | None = None
+
+    def to_row(self, *, include_none: bool = False) -> dict[str, Any]:
+        return _row_dict(self, include_none=include_none)
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> FamilyMedicalHistory:
+        keys = row.keys()
+        return cls(
+            id=row["id"] if "id" in keys else None,
+            relation=row["relation"],
+            condition=row["condition"],
+            notes=row["notes"] if "notes" in keys else None,
+        )
+
+
+@dataclass(slots=True)
 class DerivedMetric:
     """One row of `derived_daily` — grain: (date, metric_name).
 

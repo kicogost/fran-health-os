@@ -7,14 +7,15 @@
 -- without reading every migration in sequence. tests/core/test_schema_sync.py fails
 -- if this drifts from the migrations.
 --
--- Current version: 8 (core/migrations/0001_initial_schema.sql,
+-- Current version: 9 (core/migrations/0001_initial_schema.sql,
 -- core/migrations/0002_bjj_wellness_and_load.sql,
 -- core/migrations/0003_calisthenics_sessions.sql,
 -- core/migrations/0004_activity_laps.sql,
 -- core/migrations/0005_body_composition.sql,
 -- core/migrations/0006_illness_log.sql,
 -- core/migrations/0007_renpho_body_composition.sql,
--- core/migrations/0008_calisthenics_load.sql)
+-- core/migrations/0008_calisthenics_load.sql,
+-- core/migrations/0009_health_history.sql)
 --
 -- Note: this snapshot is semantically compared against the migrated schema
 -- (column name/type/notnull/pk/default per table), not byte-for-byte SQL text —
@@ -249,6 +250,105 @@ CREATE TABLE IF NOT EXISTS illness_log (
     notes            TEXT,
     created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+-- General health history — migration 0009. Francisco's own direct ask
+-- (2026-09-14) to make this a general health dashboard, not just fitness/
+-- BJJ — see CLAUDE.md's dated section for the full reasoning. Bloodwork/
+-- medical_events/medications_supplements have NO natural key (design
+-- principle 2: a fresh record every time, never a correction-in-place —
+-- see the migration's own header comment for why); allergies/
+-- family_medical_history DO (allergen; relation+condition) and are upserted
+-- like every other logger in this project.
+
+-- Long/tall: one row per (draw date, single test value), not one column per
+-- possible lab test (that set is unbounded). `unit` travels with every
+-- value since it varies by test and by lab; reference ranges are nullable
+-- and independently so (a range can be one-sided).
+CREATE TABLE IF NOT EXISTS bloodwork_results (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    date                 TEXT NOT NULL,
+    test_name            TEXT NOT NULL,
+    value                REAL NOT NULL,
+    unit                 TEXT,
+    reference_range_low  REAL,
+    reference_range_high REAL,
+    notes                TEXT,
+    created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_bloodwork_results_test_name ON bloodwork_results (test_name);
+CREATE INDEX IF NOT EXISTS idx_bloodwork_results_date ON bloodwork_results (date);
+
+-- One chronological timeline for conditions/diagnoses/injuries/surgeries/
+-- hospitalizations, differentiated by `category` rather than five separate
+-- tables (they share one real shape: a start date, an optional resolution,
+-- a description). No natural key -- multiple real events can share a date.
+-- `resolved_date` is only meaningful once status='resolved' -- enforced in
+-- Python (core.models.MedicalEvent), not a SQL CHECK, matching this
+-- project's existing cross-field-validation convention.
+CREATE TABLE IF NOT EXISTS medical_events (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    date           TEXT NOT NULL,
+    category       TEXT NOT NULL CHECK (
+                       category IN ('condition', 'injury', 'surgery', 'hospitalization', 'other')
+                   ),
+    title          TEXT NOT NULL,
+    status         TEXT NOT NULL CHECK (status IN ('ongoing', 'resolved', 'unknown')),
+    resolved_date  TEXT,
+    notes          TEXT,
+    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_medical_events_date ON medical_events (date);
+
+-- One row per COURSE of taking something -- the same medication can be
+-- started/stopped/restarted, each a real separate course, so no natural
+-- key. `end_date IS NULL` means "currently taking it" (a real, meaningful
+-- NULL, never defaulted to today). `dosage`/`frequency` are free text --
+-- real-world units vary too much to normalize.
+CREATE TABLE IF NOT EXISTS medications_supplements (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    type        TEXT NOT NULL CHECK (type IN ('medication', 'supplement')),
+    dosage      TEXT,
+    frequency   TEXT,
+    start_date  TEXT NOT NULL,
+    end_date    TEXT,
+    notes       TEXT,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_medications_supplements_name ON medications_supplements (name);
+
+-- A simpler, mostly-static list -- `allergen` IS the natural key (same
+-- single-column TEXT PRIMARY KEY pattern as daily_metrics.date), upserted
+-- like every other natural-keyed logger, unlike the three always-insert
+-- tables above.
+CREATE TABLE IF NOT EXISTS allergies (
+    allergen         TEXT PRIMARY KEY,
+    reaction         TEXT,
+    severity         TEXT CHECK (severity IN ('mild', 'moderate', 'severe')),
+    date_identified  TEXT,
+    notes            TEXT,
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+-- `relation` (e.g. "mother", "paternal grandfather") is free text, not an
+-- enum. UNIQUE(relation, condition) makes re-logging the same fact
+-- idempotent (upsert, warn before overwrite) instead of duplicating.
+CREATE TABLE IF NOT EXISTS family_medical_history (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    relation    TEXT NOT NULL,
+    condition   TEXT NOT NULL,
+    notes       TEXT,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE (relation, condition)
 );
 
 -- Every computed metric from the kickoff doc's "Derived metrics" section (HRV
