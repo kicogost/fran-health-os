@@ -10,6 +10,12 @@ data/raw/
 data/health.db*
 data/.garth_tokens/
 data/logs/
+# Same file, anywhere else in the tree -- a stray `frontend/data/health.db`
+# (an empty, accidental artifact from a script run with cwd inside
+# frontend/, defaulting to a relative path) was found untracked here and
+# outside the pattern above's reach (2026-09-28). Root-anchored patterns
+# don't catch this; `**/` does.
+**/data/health.db*
 
 # Python
 __pycache__/

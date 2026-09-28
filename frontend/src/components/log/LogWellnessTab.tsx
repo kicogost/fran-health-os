@@ -157,7 +157,7 @@ export function LogWellnessTab() {
         )}
 
         <div className="grid grid-cols-3 gap-3">
-          <TriStateSelect label="Hit 180g protein" value={proteinHit} onChange={setProteinHit} />
+          <TriStateSelect label="Hit 160g protein" value={proteinHit} onChange={setProteinHit} />
           <TriStateSelect label="Social meal" value={socialMeal} onChange={setSocialMeal} />
           <TriStateSelect label="Gassed today" value={gassed} onChange={setGassed} />
         </div>

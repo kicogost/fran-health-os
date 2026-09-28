@@ -215,7 +215,10 @@ weekly_architecture:
 # See kickoff doc section 7 "hard safety rails" — these are enforced in the
 # rules engine (coach/rules.py), not just documented here.
 nutrition:
-  protein_g_daily_min: 180         # the one hard number
+  protein_g_daily_min: 160         # the one hard number -- lowered from 180 on 2026-09-28 per
+                                    # real, cited research (see CLAUDE.md); ~2.7g/kg of
+                                    # Francisco's real ~59.5kg fat-free mass, mid-range of the
+                                    # 2.3-3.1g/kg-FFM cutting-literature band, not a scraped minimum
   calorie_target_kcal: 2300        # ~500 kcal deficit; "the plate framework" governs everything else
   deficit_kcal_max: 500            # never recommend deeper than this implies
   weekly_weight_loss_kg_max: 0.5   # per comp_prep plan: more than this during a hard camp costs strength/recovery

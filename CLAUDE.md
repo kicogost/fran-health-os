@@ -728,7 +728,8 @@ Tue evening, calisthenics Tue/Thu mornings, etc.) is preserved in
 `config/athlete.yaml: weekly_architecture` (currently `active: false`) as what training
 reverts to after 2026-10-18, pending confirmation from Francisco post-comp.
 
-**Nutrition guardrails (hard):** 180 g protein/day is the one hard number; ~2,300 kcal
+**Nutrition guardrails (hard):** 160 g protein/day is the one hard number (lowered from
+the original 180 g, 2026-09-28 — see that section below for the research); ~2,300 kcal
 target (~500 kcal deficit); no alcohol; 2 black coffees/day; Saturday restaurant dinner
 is planned-for, not a violation. Known constraint: **social meals are the primary
 deficit disruptor** — deficit compliance, not programming, is the binding constraint on
@@ -4140,6 +4141,83 @@ consumes it yet — same "computed/available but not charted yet" state
 several other Phase-4-era metrics were in before their dashboard page
 existed). The Streamlit dashboard was deliberately left untouched, consistent
 with its established not-kept-in-sync status since the React migration.
+
+## Protein target lowered from 180g to 160g, research-verified (2026-09-28)
+
+The 180g/day figure had been in `config/athlete.yaml` since Phase 0 — never
+researched, just an early placeholder that quietly became "the one hard
+number that matters most" throughout the coaching layer. Francisco asked
+directly, after a diet-planning conversation kept landing him in a single
+113g-protein meal to hit it: is 180g actually evidence-based for his real
+situation, and what does the research say his real target should be, given
+his own stated "ideal/lean weight" is ~73-75kg (a target BODYWEIGHT at his
+desired leanness, not a fat-free-mass figure — his real current FFM is
+~59.5kg, so protein needs were calculated off that real, current lean mass,
+not the future goal weight).
+
+**Verified research** (same anti-fabrication discipline as every other
+research pass this project has done — every citation independently
+confirmed via real PMID/DOI retrieval; neither of the two previously-caught
+fabricated WHOOP papers, nor anything resembling them, recurred):
+
+- The general resistance-training literature has a real, independently-
+  replicated plateau around **~1.6 g/kg bodyweight/day** (Morton et al.
+  2018, a 49-study meta-analysis, *Br J Sports Med*; corroborated
+  independently by Nunes et al. 2022, *J Cachexia Sarcopenia Muscle*) —
+  above that, more protein doesn't produce more lean-mass/strength gain in
+  non-dieting resistance-trained adults. This explicitly excludes
+  energy-restricted populations, which is why the number doesn't stop here
+  for Francisco.
+- Caloric restriction genuinely raises the requirement: the ISSN's own 2017
+  position stand (Jäger et al., *J Int Soc Sports Nutr*) and Helms, Aragon &
+  Fitschen 2014 (the standard natural-bodybuilding-contest-prep review, same
+  journal) recommend **2.3-3.1 g/kg of FAT-FREE MASS/day** during a cut to
+  protect lean mass — for Francisco's real ~59.5kg FFM, that's 137-184g/day.
+- A real, well-controlled RCT (Longland et al. 2016, *Am J Clin Nutr*)
+  tested almost exactly this scenario directly: resistance-trained men in a
+  large energy deficit gained lean mass on 2.4 g/kg bodyweight/day of
+  protein while a 1.2 g/kg group lost lean mass on the same deficit — real,
+  direct evidence that dieting genuinely raises the requirement, and the
+  honest reason the old 180g number isn't "wrong," just near the top of the
+  justified range rather than a comfortable middle (2.4 g/kg for Francisco
+  is ~187g, very close to the original 180g figure).
+- A combat-sport-specific ISSN position stand (Ricci et al. 2025, brand new)
+  recommends somewhat LESS than the bodybuilding literature for combat
+  athletes specifically (1.2-2.4 g/kg general prep, floor of 1.2-2.0 g/kg
+  during a gradual weight descent) — real, if the thinnest-tier source here
+  (a narrative synthesis leaning heavily toward acute/dehydration cutting
+  protocols that don't apply to Francisco's hard no-water-cut rule).
+- A single large protein dose (up to 100g) produces a longer, not wasted,
+  anabolic response versus a smaller one (Trommelen et al. 2023, *Cell
+  Reports Medicine*, tracer RCT) — so the original 113g single-meal problem
+  was a comfort/adherence issue, not a physiological one; solved here by
+  redistributing across meals, not by fearing large single doses.
+- His 12:00-21:00 intermittent-fasting eating window isn't itself a
+  concern: a real RCT (Tinsley et al. 2019, *Am J Clin Nutr*) found
+  time-restricted eating on almost exactly this window didn't blunt
+  resistance-training gains when protein/energy were matched (tested in
+  women, not a same-sex confirmation, but directionally supportive).
+
+**Honest caveats, not glossed over**: no study has ever tested Francisco's
+exact combination (gradual BJJ-plus-calisthenics cut, combat sport, resistance
+trained) — every number is a reasoned extrapolation from adjacent
+populations. The strongest direct RCT in a deficit context (Longland 2016)
+tested a dose close to the OLD 180g figure, not the new lower one — the case
+for 160g over 180g is about comfort/adherence and sitting mid-range rather
+than 180g being unsupported. No true dose-response RCT exists between ~1.8
+and ~2.7 g/kg during a deficit; 160g is a reasoned midpoint of real ranges,
+not a number with its own dedicated trial.
+
+**Changed**: `config/athlete.yaml: nutrition.protein_g_daily_min` 180 → 160
+— the sole source `coach/rules.py: nutrition_focus()` reads from (already
+fully data-driven, needed no code change). `frontend/src/components/log/
+LogWellnessTab.tsx`'s "Hit 180g protein" tri-state label (a hardcoded
+string, not templated from config) updated to match. Real output verified:
+`scripts/briefing.py` now prints "Hit 160g protein today — the one hard
+number that matters most." Below ~130g/day during the active cut is where
+the Morton/Nunes plateau plus Longland's low-protein-arm result suggest real
+risk begins; above ~185g is not harmful, just not required by any of the
+evidence reviewed.
 
 ## Definition of done for v1
 
