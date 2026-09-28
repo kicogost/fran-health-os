@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from health_os.ingest.health_auto_export import parse_body_composition
+from health_os.ingest.health_auto_export import _read_json_with_retry, parse_body_composition
 
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "health_auto_export"
 
@@ -140,12 +140,14 @@ class TestParseBodyComposition:
         assert len(errors) == 1
         assert "st" in errors[0]
 
-    def test_body_fat_percentage_metric_would_be_ignored_if_present(self, tmp_path: Path) -> None:
-        # Checked against Francisco's real export (2026-08-29): Renpho does
-        # NOT push body_fat_percentage to HealthKit on his account, so
-        # there's no real column for it -- this documents that the parser
-        # would simply ignore it (not crash, not misfile it) if a future
-        # export ever did include it, same as any other unmapped metric.
+    def test_body_fat_percentage_extracted_into_its_own_field(self, tmp_path: Path) -> None:
+        # Real correction, 2026-09-28: checked against Francisco's real
+        # export on 2026-08-29 and body_fat_percentage was confirmed absent
+        # from HealthKit on his account -- re-checked a fresh export on
+        # 2026-09-28 and it's now present (Renpho evidently started writing
+        # it at some point in between, a phone-side change, not anything in
+        # this codebase). Now a real, extracted column, same as weight/lean
+        # mass/BMI.
         (tmp_path / "HealthAutoExport-hypothetical.json").write_text(
             json.dumps(
                 {
@@ -156,8 +158,8 @@ class TestParseBodyComposition:
                                 "units": "%",
                                 "data": [
                                     {
-                                        "qty": 18.0,
-                                        "date": "2026-08-21 00:00:00 +0200",
+                                        "qty": 24.5,
+                                        "date": "2026-09-27 00:00:00 +0200",
                                         "source": "RENPHO Health",
                                     }
                                 ],
@@ -167,4 +169,74 @@ class TestParseBodyComposition:
                 }
             )
         )
-        assert list(parse_body_composition(tmp_path)) == []
+        by_date = {m.date: m for m in parse_body_composition(tmp_path)}
+        assert by_date["2026-09-27"].body_fat_pct == pytest.approx(24.5)
+        # No unit conversion applied -- "%" is already the right scale.
+        assert by_date["2026-09-27"].weight_kg is None
+
+
+class TestReadJsonWithRetry:
+    """Real, reproduced failure mode (2026-09-28): a freshly-synced file
+    under an on-demand iCloud Drive folder can transiently raise
+    `OSError: [Errno 11] Resource deadlock avoided` while macOS's iCloud
+    FileProvider daemon is still materializing it -- confirmed by watching a
+    real sync fail identically 4 times over ~18 hours, then succeed once the
+    file was read manually with nothing else changed. `_read_json_with_retry`
+    retries specifically on `OSError`, never on a real data problem
+    (`json.JSONDecodeError`, a `ValueError` subtype).
+    """
+
+    def test_retries_transient_oserror_and_succeeds(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "f.json"
+        path.write_text(json.dumps({"data": {"metrics": []}}))
+        real_open = Path.open
+        calls = {"n": 0}
+
+        def flaky_open(self: Path, *args: object, **kwargs: object):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise OSError(11, "Resource deadlock avoided")
+            return real_open(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", flaky_open)
+        monkeypatch.setattr("health_os.ingest.health_auto_export.time.sleep", lambda _seconds: None)
+
+        result = _read_json_with_retry(path)
+        assert result == {"data": {"metrics": []}}
+        assert calls["n"] == 3
+
+    def test_reraises_the_real_error_after_exhausting_retries(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "f.json"
+        path.write_text("{}")
+
+        def always_fails(self: Path, *args: object, **kwargs: object):
+            raise OSError(11, "Resource deadlock avoided")
+
+        monkeypatch.setattr(Path, "open", always_fails)
+        monkeypatch.setattr("health_os.ingest.health_auto_export.time.sleep", lambda _seconds: None)
+
+        with pytest.raises(OSError, match="Resource deadlock avoided"):
+            _read_json_with_retry(path)
+
+    def test_a_real_bad_file_is_not_retried(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Malformed JSON is a real data problem, not a transient race --
+        # retrying it would just waste time before failing the same way.
+        path = tmp_path / "bad.json"
+        path.write_text("not json")
+        real_open = Path.open
+        calls = {"n": 0}
+
+        def counting_open(self: Path, *args: object, **kwargs: object):
+            calls["n"] += 1
+            return real_open(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", counting_open)
+        with pytest.raises(json.JSONDecodeError):
+            _read_json_with_retry(path)
+        assert calls["n"] == 1

@@ -23,24 +23,39 @@ Real format, verified:
       }
     }
 
-Extracts three metrics from the same "Body Mass" bundle: `weight_body_mass`
+Extracts four metrics from the same "Body Mass" bundle: `weight_body_mass`
 -> `daily_metrics.weight_kg`, `lean_body_mass` -> `.lean_body_mass_kg`,
-`body_mass_index` -> `.bmi`. The latter two were originally left
-unextracted ("known, not-invented gap, not silently dropped without a
-reason on record") until Francisco asked directly (2026-08-29) whether
-Apple Health surfaces Renpho's body-composition data — checked against the
-real live export rather than assumed: `body_fat_percentage` is NOT present
-anywhere in it (Renpho likely computes it in its own app but doesn't push
-it to HealthKit on this scale/account), but lean mass and BMI are, so those
-two are now real, ingested columns. All three apply the exact same
+`body_mass_index` -> `.bmi`, `body_fat_percentage` -> `.body_fat_pct`. The
+last three were originally left unextracted ("known, not-invented gap, not
+silently dropped without a reason on record") until Francisco asked
+directly (2026-08-29) whether Apple Health surfaces Renpho's
+body-composition data — checked against the real live export rather than
+assumed: at that time, `body_fat_percentage` was confirmed NOT present
+anywhere in it (Renpho appeared to compute it in its own app without
+pushing it to HealthKit), so only lean mass and BMI were added then.
+**Correction, 2026-09-28**: re-checked a fresh export and `body_fat_percentage`
+IS now present (24.5% on 2026-09-27) — Renpho evidently started writing it
+to HealthKit at some point between those two dates (a phone-side change on
+Francisco's end, not anything in this pipeline). Now extracted the same
+way as the other three. `body_fat_pct` already existed as a `daily_metrics`
+column (migration 0007, populated from the RENPHO CSV export,
+`ingest/renpho_csv.py`) — this just gives it a second, live-updating source
+for the same field, same "two paths into one column" shape `weight_kg`
+already has. Precedence between the two needs no new logic: `scripts/sync.py`
+and `scripts/backfill.py` already call `sync_renpho_csv()`/the
+`renpho_csv` backfill step AFTER this module specifically so it wins on any
+date both cover (see `ingest/renpho_csv.py`'s module docstring for why the
+direct-from-RENPHO CSV is treated as more authoritative) — this module's
+`body_fat_pct` values simply fill the gap on all the OTHER dates, exactly
+like weight/lean-mass/BMI already do. All four apply the exact same
 allowlist-by-source-name policy as the bulk XML ingester
 (`config/sources.yaml: apple_health.weight_source_names`) by importing
 `AppleHealthSourceConfig` directly rather than duplicating it — a wrong
-source is just as much a problem for lean mass as for weight, since both
-come from the same physical scale reading. Same "latest reading per date
-wins, never averaged" rule (design principle 6) as
+source is just as much a problem for body fat % as for weight, since all
+four come from the same physical scale reading. Same "latest reading per
+date wins, never averaged" rule (design principle 6) as
 `ingest/apple_health.py: parse_daily_weight()`, tracked independently per
-field per date since the three metrics aren't always all present for the
+field per date since the four metrics aren't always all present for the
 same date (e.g. a date can have weight + BMI but no lean mass reading).
 
 Real-export gotcha, verified by testing rather than assumed: the `date`
@@ -65,7 +80,7 @@ The app also produced two much larger files during initial setup
 7-12 unrelated metrics (`heart_rate`, `sleep_analysis`, `step_count`, ...)
 from before the automation's "Select Health Metrics" setting was narrowed
 down to Body Mass only. `parse_body_composition()` only ever looks for the
-three metric names above in any file it's handed and ignores everything
+four metric names above in any file it's handed and ignores everything
 else, so those stray files are harmless to leave in the input directory —
 not just historically explained, actually inert.
 """
@@ -73,6 +88,7 @@ not just historically explained, actually inert.
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
@@ -88,17 +104,48 @@ _FILE_GLOB = "HealthAutoExport-*.json"
 _DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S %z"
 _WEIGHT_TO_KG = {"kg": 1.0, "lb": 0.453_592_37, "lbs": 0.453_592_37}
 
-# Health Auto Export metric name -> DailyMetric field name. All three ride
-# in the same "Body Mass" bundle (verified against Francisco's real export,
-# 2026-08-29) -- body_fat_percentage was checked for and is NOT present, so
-# it isn't listed here (not a silent omission -- see module docstring).
+# Real, reproduced failure mode (2026-09-28): a freshly-synced file under
+# HEALTH_AUTO_EXPORT_DIR (an on-demand iCloud Drive folder) can transiently
+# raise `OSError: [Errno 11] Resource deadlock avoided` when read right as
+# macOS's iCloud FileProvider daemon is still materializing it -- confirmed
+# real by watching it fail identically across 4 consecutive scheduled sync
+# runs over ~18 hours, then succeed the moment the file was read manually
+# (nothing in this parser changed in between). A JSON/data problem
+# (`json.JSONDecodeError`, a `ValueError` subtype, not `OSError`) is NOT
+# retried -- that's a real bad file, not a transient race, and retrying it
+# would just waste time before failing the same way.
+_READ_RETRY_ATTEMPTS = 3
+_READ_RETRY_DELAY_S = 1.0
+
+
+def _read_json_with_retry(path: Path) -> dict:
+    last_exc: OSError | None = None
+    for attempt in range(_READ_RETRY_ATTEMPTS):
+        if attempt:
+            time.sleep(_READ_RETRY_DELAY_S)
+        try:
+            with path.open(encoding="utf-8") as f:
+                return json.load(f)
+        except OSError as exc:
+            last_exc = exc
+    assert last_exc is not None
+    raise last_exc
+
+
+# Health Auto Export metric name -> DailyMetric field name. All four ride in
+# the same "Body Mass" bundle (verified against Francisco's real export --
+# body_fat_percentage was absent on 2026-08-29, confirmed present on
+# 2026-09-28, see module docstring for the full timeline).
 _METRIC_FIELD_MAP = {
     "weight_body_mass": "weight_kg",
     "lean_body_mass": "lean_body_mass_kg",
     "body_mass_index": "bmi",
+    "body_fat_percentage": "body_fat_pct",
 }
 # Only these two fields carry a mass unit (kg/lb) needing conversion; BMI's
-# "units" value is "count" (a dimensionless ratio) -- taken as-is.
+# "units" value is "count" (a dimensionless ratio) and body_fat_percentage's
+# is "%" (already the right scale, e.g. 24.5 meaning 24.5%) -- both taken
+# as-is.
 _MASS_FIELDS = {"weight_kg", "lean_body_mass_kg"}
 
 
@@ -120,9 +167,10 @@ def parse_body_composition(
     errors: list[str] | None = None,
 ) -> Iterator[DailyMetric]:
     """Yield one `DailyMetric` per local date with any of weight/lean body
-    mass/BMI from a known scale, across every `HealthAutoExport-*.json` file
-    found directly under `export_dir`. (Renamed from `parse_weight` 2026-08-29
-    when lean mass/BMI extraction was added — same function, wider scope.)
+    mass/BMI/body fat % from a known scale, across every
+    `HealthAutoExport-*.json` file found directly under `export_dir`.
+    (Renamed from `parse_weight` 2026-08-29 when lean mass/BMI extraction was
+    added — same function, wider scope; body fat % added 2026-09-28.)
 
     Reads *all* matching files, not just the newest — the app can produce
     several per automation run (a "Week" range plus whatever daily files
@@ -130,7 +178,7 @@ def parse_body_composition(
     latest-wins rule is applied across the combined set exactly as if it were
     one file, so overlap is harmless rather than something that has to be
     pre-filtered by the caller. Tracked independently per field per date (not
-    one shared latest-timestamp per date) since the three metrics aren't
+    one shared latest-timestamp per date) since the four metrics aren't
     always all present together — e.g. a real date can have weight + BMI but
     no lean mass reading that day.
 
@@ -150,8 +198,7 @@ def parse_body_composition(
     latest_by_date: dict[str, dict[str, tuple[datetime, float, str]]] = {}
 
     for path in sorted(Path(export_dir).glob(_FILE_GLOB)):
-        with path.open(encoding="utf-8") as f:
-            payload = json.load(f)
+        payload = _read_json_with_retry(path)
         for metric in payload.get("data", {}).get("metrics", []):
             field = _METRIC_FIELD_MAP.get(metric.get("name"))
             if field is None:
