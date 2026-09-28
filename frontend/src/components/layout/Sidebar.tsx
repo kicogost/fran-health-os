@@ -1,5 +1,6 @@
 import { Dumbbell, HeartPulse, Home, PenLine, Stethoscope, TrendingUp, Trophy } from "lucide-react"
 import { NavLink } from "react-router-dom"
+import { SyncButton } from "@/components/layout/SyncButton"
 
 // Same 6-page scope and order as the Streamlit dashboard's app.py (Today,
 // Trends, Training, Comp Prep, Log, Data Health) -- mirrored deliberately,
@@ -24,7 +25,7 @@ const NAV_ITEMS = [
  */
 export function Sidebar() {
   return (
-    <aside className="w-60 shrink-0 border-r border-border bg-card/50 flex flex-col">
+    <aside className="w-60 shrink-0 border-r border-border bg-card/50 flex flex-col sticky top-0 h-screen overflow-y-auto">
       <div className="px-5 py-5">
         <p className="text-base font-semibold text-foreground tracking-tight">Health OS</p>
         <p className="text-xs text-muted-foreground mt-0.5">Francisco</p>
@@ -49,6 +50,7 @@ export function Sidebar() {
           </NavLink>
         ))}
       </nav>
+      <SyncButton />
     </aside>
   )
 }

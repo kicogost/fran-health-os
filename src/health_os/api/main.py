@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse
 from health_os.api import log as log_api
 from health_os.api.comp_prep import build_comp_prep_payload
 from health_os.api.data_health import build_data_health_payload
+from health_os.api.sync import run_manual_sync
 from health_os.api.today import build_today_payload
 from health_os.api.training import build_training_payload
 from health_os.api.trends import ALLOWED_WINDOW_DAYS, build_trends_payload
@@ -50,6 +51,25 @@ app.add_middleware(
 def _load_config() -> dict[str, Any]:
     with CONFIG_PATH.open(encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+@app.post("/api/sync")
+def post_sync() -> dict[str, Any]:
+    """Manual "sync now" — runs the same live sync `scripts/sync.py` runs on
+    its schedule (`health_os.ingest.live_sync.run_live_sync()`), then
+    recomputes `derived_daily` for the same window, so the frontend's
+    refresh button pulls genuinely new data rather than re-reading the same
+    stale rows. Real Garmin/network calls, so this can take several seconds
+    — the frontend shows a loading state and re-fetches the current page
+    once it resolves. A failed source is reported, not raised as an
+    exception: a Garmin outage shouldn't 500 the whole button when Health
+    Auto Export/RENPHO CSV may still have something new to pick up.
+    """
+    conn = db.init_db()
+    try:
+        return run_manual_sync(conn, _load_config())
+    finally:
+        conn.close()
 
 
 @app.get("/api/today")

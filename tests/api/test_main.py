@@ -54,6 +54,24 @@ class TestGetToday:
         assert "sessions" in body
 
 
+class TestPostSync:
+    def test_wires_up_to_run_manual_sync_and_returns_its_result(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Never touch the real Garmin/Health Auto Export/RENPHO sources from
+        # a route smoke test -- monkeypatch the one function this route
+        # calls (tests/api/test_sync.py already covers that function's own
+        # real behavior against a real db) and confirm the route just wires
+        # through its result unchanged.
+        from health_os.api import main as main_module
+
+        fake_result = {"status": "success", "sources": {"garmin": True}}
+        monkeypatch.setattr(main_module, "run_manual_sync", lambda conn, config: fake_result)
+        response = client.post("/api/sync")
+        assert response.status_code == 200
+        assert response.json() == fake_result
+
+
 class TestGetCorrelations:
     def test_returns_200_with_insufficient_data_on_an_empty_db(self, client: TestClient) -> None:
         response = client.get("/api/insights/correlations")

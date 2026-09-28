@@ -82,6 +82,24 @@ function postJson<T>(path: string, body: unknown): Promise<T> {
   }).then((r) => handle<T>(r))
 }
 
+// --- Manual "sync now" (2026-09-17) -- see SyncButton.tsx for why this
+// exists: the scheduled launchd sync hasn't always run yet by the time the
+// app is opened, so this pulls fresh data from Garmin/Health Auto Export/
+// RENPHO on demand rather than just re-reading whatever's already in the DB.
+
+export interface SyncResult {
+  status: "success" | "partial_failure"
+  synced_at: string
+  window: { start_date: string; end_date: string }
+  sources: { garmin: boolean; health_auto_export: boolean; renpho_csv: boolean }
+  dedupe: { groups_merged: number; rows_deleted: number }
+  derived_metrics_rows_written: number
+}
+
+export function triggerSync(): Promise<SyncResult> {
+  return postJson<SyncResult>("/sync", {})
+}
+
 export function fetchToday(): Promise<TodayPayload> {
   return getJson<TodayPayload>("/today")
 }
