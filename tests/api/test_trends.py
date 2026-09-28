@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import sqlite3
 
+import pytest
+
 from health_os.api.trends import (
     READINESS_MIN_DAYS_FOR_WEAK_COMPONENT,
     _body_fat_pct_window_meaning,
@@ -16,6 +18,7 @@ from health_os.api.trends import (
 )
 from health_os.core import db as db_module
 from health_os.core.models import DailyMetric
+from health_os.metrics import body_comp
 
 _CONFIG = {"goals": {"primary": {"date": "2026-10-18", "weight_division_kg": 77.0}}}
 
@@ -253,8 +256,112 @@ class TestWindowAverageMatchesRaw:
         )
         payload = build_trends_payload(conn, 90, _CONFIG)
         fat_mass = payload["series"]["fat_mass_kg"]
-        assert set(fat_mass.keys()) == {"label", "raw", "smoothed", "average", "meaning"}
+        assert set(fat_mass.keys()) == {
+            "label",
+            "raw",
+            "smoothed",
+            "average",
+            "current",
+            "meaning",
+        }
         assert fat_mass["smoothed"] == [{"date": "2026-08-28", "value": 16.0}]
+
+
+class TestCurrentIsWindowIndependent:
+    """Locks in the 2026-09-28 fix (Francisco: "not sure if the average
+    weight you're computing... makes sense" -- after a real ~2-week gap in
+    weigh-ins followed by real, lower readings, the flat window mean read
+    misleadingly high). `current` on weight_kg/body_fat_pct/fat_mass_kg is
+    now the latest full-history 7-day EWMA point
+    (`body_comp.compute_weight_ewma()`), deliberately NEVER windowed --
+    `average` stays exactly the plain windowed mean, completely unchanged.
+    """
+
+    def test_weight_current_matches_full_history_ewma_not_the_window_average(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # 10 old, stale readings at 85kg, then a real gap, then 4 real lower
+        # readings at 78kg -- the plain mean stays anchored near 85kg; the
+        # EWMA (`current`) tracks the real, recent regime instead.
+        old_dates = [f"2026-06-{i:02d}" for i in range(1, 11)]
+        for d in old_dates:
+            db_module.upsert(
+                conn, "daily_metrics", DailyMetric(date=d, weight_kg=85.0).to_row(), ["date"]
+            )
+        recent_dates = ["2026-09-25", "2026-09-26", "2026-09-27", "2026-09-28"]
+        for d in recent_dates:
+            db_module.upsert(
+                conn, "daily_metrics", DailyMetric(date=d, weight_kg=78.0).to_row(), ["date"]
+            )
+        payload = build_trends_payload(conn, 365, _CONFIG)
+        weight_series = payload["series"]["weight_kg"]
+
+        full_obs = [(d, 85.0) for d in old_dates] + [(d, 78.0) for d in recent_dates]
+        expected_ewma = body_comp.compute_weight_ewma(full_obs)[-1][1]
+
+        assert weight_series["current"]["value"] == pytest.approx(expected_ewma)
+        assert weight_series["current"]["as_of"] == "2026-09-28"
+        # The plain average is unchanged -- still the flat mean of everything
+        # in the window, still meaningfully different from `current`.
+        assert weight_series["average"]["value"] == pytest.approx((10 * 85.0 + 4 * 78.0) / 14)
+        assert weight_series["current"]["value"] < weight_series["average"]["value"]
+
+    def test_current_is_populated_even_when_the_selected_window_has_zero_points(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # Full history has real weight data, but all of it is older than the
+        # narrow 30-day window -- `average` correctly shows nothing plotted,
+        # while `current` still reports the real last-known state
+        # (window-independent by design, same as Today/Comp Prep's own
+        # weight EWMA).
+        db_module.upsert(
+            conn, "daily_metrics", DailyMetric(date="2026-01-01", weight_kg=80.0).to_row(), ["date"]
+        )
+        # A recent row on an unrelated column so MAX(date) --- and therefore
+        # the 30-day window's cutoff --- anchors near "today", genuinely
+        # excluding the old weight reading from the window.
+        db_module.upsert(
+            conn,
+            "daily_metrics",
+            DailyMetric(date="2026-09-28", resting_hr=50.0).to_row(),
+            ["date"],
+        )
+        payload = build_trends_payload(conn, 30, _CONFIG)
+        weight_series = payload["series"]["weight_kg"]
+        assert weight_series["average"] == {"value": None, "n_days": 0}
+        assert weight_series["raw"] == []
+        assert weight_series["current"] == {"value": 80.0, "as_of": "2026-01-01"}
+        # And the meaning sentence still speaks from that real, if old, state
+        # -- rather than falsely claiming nothing was ever logged.
+        assert weight_series["meaning"]["headline"] != "No weight logged yet."
+
+    def test_body_fat_pct_and_fat_mass_also_carry_current(self, conn: sqlite3.Connection) -> None:
+        db_module.upsert(
+            conn,
+            "daily_metrics",
+            DailyMetric(date="2026-08-28", weight_kg=80.0, body_fat_pct=20.0).to_row(),
+            ["date"],
+        )
+        payload = build_trends_payload(conn, 90, _CONFIG)
+        assert payload["series"]["body_fat_pct"]["current"] == {
+            "value": 20.0,
+            "as_of": "2026-08-28",
+        }
+        assert payload["series"]["fat_mass_kg"]["current"] == {
+            "value": 16.0,
+            "as_of": "2026-08-28",
+        }
+
+    def test_weight_meaning_headline_now_says_currently_not_averaging(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        db_module.upsert(
+            conn, "daily_metrics", DailyMetric(date="2026-08-28", weight_kg=80.0).to_row(), ["date"]
+        )
+        payload = build_trends_payload(conn, 90, _CONFIG)
+        assert payload["series"]["weight_kg"]["meaning"]["headline"].startswith(
+            "Currently around 80.0kg"
+        )
 
 
 class TestWeightWindowMeaning:
@@ -265,7 +372,7 @@ class TestWeightWindowMeaning:
 
     def test_no_data(self) -> None:
         result = _weight_window_meaning(None, {"confidence": "insufficient_data"}, 77.0, None)
-        assert result == {"tone": "unknown", "headline": "No weight logged in this window yet."}
+        assert result == {"tone": "unknown", "headline": "No weight logged yet."}
 
     def test_trend_unknown_over_limit_reads_bad(self) -> None:
         result = _weight_window_meaning(80.0, {"confidence": "insufficient_data"}, 77.0, None)
@@ -426,7 +533,7 @@ class TestBodyFatPctWindowMeaning:
 
     def test_no_data(self) -> None:
         result = _body_fat_pct_window_meaning(None, {"confidence": "insufficient_data"})
-        assert result == {"tone": "unknown", "headline": "No body-fat readings in this window yet."}
+        assert result == {"tone": "unknown", "headline": "No body-fat readings yet."}
 
     def test_trend_not_full_yet(self) -> None:
         result = _body_fat_pct_window_meaning(22.0, {"confidence": "insufficient_data"})

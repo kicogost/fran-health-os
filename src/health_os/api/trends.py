@@ -66,6 +66,24 @@ Deliberately does NOT compare either series against a target body-fat %
 — a real, evidence-based target number is being researched separately and
 doesn't exist yet. See `_body_fat_pct_window_meaning()`'s docstring for
 exactly where that comparison would slot in once one is decided.
+
+**"Currently around..." replaces the windowed average as the analytical
+headline number for weight/body_fat_pct/fat_mass_kg, 2026-09-28.** Francisco,
+looking at a real "avg 79.5kg" figure after a ~2-week gap in weigh-ins
+followed by several lower readings as his cut accelerated: the plain window
+mean was dragged up by stale pre-gap readings averaged in equally with his
+current, much-lower ones. These three series' `meaning` sentence (and, for
+weight, its competition-weight-limit comparison) now leads with `current` —
+the latest 7-day EWMA point over the FULL history (`_latest_ewma_point()`),
+the same "where do you actually stand" number Today/Comp Prep already use
+for weight — deliberately window-independent, unlike `average`. The plain
+window mean is UNCHANGED and still returned as `average` (still exactly
+`sum(raw)/len(raw)`, still the small "avg" figure the chart card shows) —
+nothing about it was hidden or altered, only what the prose sentence leads
+with. HRV/RHR/sleep/readiness keep using the plain windowed average for
+their own "meaning" text — they update near-daily from the watch, so they
+don't share weight/body-fat/fat-mass's sparse, manually-triggered sampling
+pattern that made this a real problem in the first place.
 """
 
 from __future__ import annotations
@@ -161,6 +179,18 @@ def _trailing_week_avg(
     return sum(vals) / len(vals) if vals else None
 
 
+def _latest_ewma_point(ewma_full: list[tuple[str, float]]) -> dict[str, Any]:
+    """The last point of a full-history EWMA series (`body_comp.
+    compute_weight_ewma()`) -- "where you actually stand now," deliberately
+    window-independent (see `_weight_window_meaning()`'s docstring, 2026-09-28).
+    `{"value": None, "as_of": None}` when there's no history at all yet.
+    """
+    if not ewma_full:
+        return {"value": None, "as_of": None}
+    as_of, value = ewma_full[-1]
+    return {"value": value, "as_of": as_of}
+
+
 def _fetch_col_obs(conn: sqlite3.Connection, column: str) -> list[tuple[str, float]]:
     """Full available history (never windowed by the 30/90/365 selector) for
     one `daily_metrics` column — shared by every full-history computation
@@ -175,24 +205,38 @@ def _fetch_col_obs(conn: sqlite3.Connection, column: str) -> list[tuple[str, flo
 
 
 def _weight_window_meaning(
-    avg: float | None,
+    current: float | None,
     trend: dict[str, Any],
     weight_limit_kg: float | None,
     comp_countdown: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Weight's plain-language window read. `avg` is the WINDOWED chart
-    average (constraint: computed from the same `raw` array as the chart);
-    `trend` is the already-computed full-history 21-day OLS slope
+    """Weight's plain-language read. `current` is the latest 7-day EWMA
+    value over the FULL history (`body_comp.compute_weight_ewma()`'s last
+    point) — the same "where do you actually stand" number Today/Comp Prep
+    already use for weight, deliberately window-INDEPENDENT (switching the
+    30/90/365 selector doesn't change where you stand today). `trend` is
+    the already-computed full-history 21-day OLS slope
     (`body_comp.weight_trend_ols()`, the exact object
     `insights.weight_insight()` uses for the top-of-page card) — reused
     here for direction/rate rather than re-derived from the two chart
     endpoints, which this project has learned the hard way is a real class
     of bug (two independent "trend" reads silently disagreeing).
-    """
-    if avg is None:
-        return {"tone": "unknown", "headline": "No weight logged in this window yet."}
 
-    kg_over_limit = (avg - weight_limit_kg) if weight_limit_kg is not None else None
+    Real bug fixed 2026-09-28 (Francisco: "not sure if the average weight
+    you're computing... makes sense"): this used to lead with the plain
+    WINDOWED mean of every real weigh-in instead, which reads misleadingly
+    high/low right after a real gap in logging followed by a real trend —
+    his own case, ~2 weeks with no weigh-in, then several lower readings as
+    a cut accelerated, so the flat mean of the whole window sat well above
+    where he'd actually gotten to. The plain window average is UNCHANGED
+    and still shown, honestly labeled, as the chart card's small "avg"
+    figure — only the number this analytical sentence leads with and
+    compares against the competition limit changed.
+    """
+    if current is None:
+        return {"tone": "unknown", "headline": "No weight logged yet."}
+
+    kg_over_limit = (current - weight_limit_kg) if weight_limit_kg is not None else None
     if kg_over_limit is None:
         limit_clause = ""
     elif kg_over_limit <= 0:
@@ -203,7 +247,7 @@ def _weight_window_meaning(
     trend_known = trend.get("confidence") == "full" and trend.get("slope_kg_per_week") is not None
     if not trend_known:
         headline = (
-            f"Averaging {avg:.1f}kg this window{limit_clause} — not enough recent weigh-ins "
+            f"Currently around {current:.1f}kg{limit_clause} — not enough recent weigh-ins "
             "to see a trend yet."
         )
         tone = "unknown" if kg_over_limit is None else "bad" if kg_over_limit > 0 else "good"
@@ -214,13 +258,13 @@ def _weight_window_meaning(
     distinguishable = not (ci_low <= 0 <= ci_high)
 
     if not distinguishable:
-        headline = f"Averaging {avg:.1f}kg this window{limit_clause} — holding steady."
+        headline = f"Currently around {current:.1f}kg{limit_clause} — holding steady."
         tone = "neutral" if kg_over_limit is None else "bad" if kg_over_limit > 0 else "good"
         return {"tone": tone, "headline": headline}
 
     if slope < 0:
         headline = (
-            f"Averaging {avg:.1f}kg this window{limit_clause} — you've been losing, "
+            f"Currently around {current:.1f}kg{limit_clause} — you've been losing, "
             f"about {abs(slope):.1f}kg/week."
         )
         if comp_countdown is not None and comp_countdown.get("red_flag"):
@@ -231,7 +275,7 @@ def _weight_window_meaning(
         return {"tone": tone, "headline": headline}
 
     headline = (
-        f"Averaging {avg:.1f}kg this window{limit_clause} — you've been gaining, "
+        f"Currently around {current:.1f}kg{limit_clause} — you've been gaining, "
         f"about {slope:.1f}kg/week."
     )
     return {"tone": "bad", "headline": headline}
@@ -295,30 +339,34 @@ def _rhr_window_meaning(avg: float | None, baseline: dict[str, Any]) -> dict[str
     return {"tone": tone, "headline": f"Averaging {avg:.0f}bpm this window — {phrase}."}
 
 
-def _body_fat_pct_window_meaning(avg: float | None, trend: dict[str, Any]) -> dict[str, Any]:
+def _body_fat_pct_window_meaning(current: float | None, trend: dict[str, Any]) -> dict[str, Any]:
     """`trend` is the FULL-HISTORY `body_comp.body_fat_pct_trend_ols()` 21-day
     OLS slope (computed once by the caller, same "compute once, reuse"
-    discipline as weight/HRV/RHR above) -- `avg` is the WINDOWED chart
-    average (constraint: `_window_average()` of the same `raw` array the
-    chart itself renders).
+    discipline as weight/HRV/RHR above) -- `current` is the latest 7-day
+    EWMA value over the full history (same window-independent "where do you
+    stand now" fix as `_weight_window_meaning()`, 2026-09-28 — body-fat %
+    readings come from the same sparse, bioimpedance scale readings as
+    weight, so they have the exact same "a real gap then a real trend"
+    failure mode). The plain window average is unchanged, still shown as
+    the chart card's own small "avg" figure.
 
-    Deliberately has NO clause comparing `avg` against a target body-fat %
-    the way `_weight_window_meaning()` compares against
+    Deliberately has NO clause comparing `current` against a target
+    body-fat % the way `_weight_window_meaning()` compares against
     `goals.primary.weight_division_kg` -- no such target number has been
     decided yet (a real, evidence-based one is being researched separately,
     per CLAUDE.md). Once one exists, a comparison clause can slot in here
     the same way weight's `limit_clause`/`comp_countdown` detail works
     today -- left out for now on purpose, not an oversight.
     """
-    if avg is None:
-        return {"tone": "unknown", "headline": "No body-fat readings in this window yet."}
+    if current is None:
+        return {"tone": "unknown", "headline": "No body-fat readings yet."}
 
     trend_known = trend.get("confidence") == "full" and trend.get("slope_pct_per_week") is not None
     if not trend_known:
         return {
             "tone": "unknown",
             "headline": (
-                f"Averaging {avg:.1f}% body fat this window — not enough recent readings "
+                f"Currently around {current:.1f}% body fat — not enough recent readings "
                 "to see a trend yet."
             ),
         }
@@ -330,42 +378,46 @@ def _body_fat_pct_window_meaning(avg: float | None, trend: dict[str, Any]) -> di
     if not distinguishable:
         return {
             "tone": "neutral",
-            "headline": f"Averaging {avg:.1f}% body fat this window — holding steady.",
+            "headline": f"Currently around {current:.1f}% body fat — holding steady.",
         }
     if slope < 0:
         return {
             "tone": "good",
             "headline": (
-                f"Averaging {avg:.1f}% body fat this window — trending down, about "
+                f"Currently around {current:.1f}% body fat — trending down, about "
                 f"{abs(slope):.1f} points a week."
             ),
         }
     return {
         "tone": "bad",
         "headline": (
-            f"Averaging {avg:.1f}% body fat this window — trending up, about "
+            f"Currently around {current:.1f}% body fat — trending up, about "
             f"{slope:.1f} points a week."
         ),
     }
 
 
-def _fat_mass_window_meaning(avg: float | None, trend: dict[str, Any]) -> dict[str, Any]:
+def _fat_mass_window_meaning(current: float | None, trend: dict[str, Any]) -> dict[str, Any]:
     """`trend` is the FULL-HISTORY `body_comp.weight_trend_ols()` result
     applied to the fat-mass-kg series (`compute_fat_mass_series()`) --
-    reused unchanged since fat mass really is in kg, same as weight. `avg`
-    is the windowed chart average of that same joined series.
+    reused unchanged since fat mass really is in kg, same as weight.
+    `current` is the latest 7-day EWMA value over that same full-history
+    series (same window-independent "where do you stand now" fix as
+    `_weight_window_meaning()`, 2026-09-28 — fat mass shares weight/body-fat
+    %'s sparse, scale-reading sampling pattern). The plain window average is
+    unchanged, still shown as this card's own small "avg" figure.
 
     This is the number that actually answers "is my weight change coming
     from fat or muscle": a real, computed kg trend, not an inference — fat
     mass is literally weight_kg * body_fat_pct / 100, so a falling fat-mass
     trend means falling fat, by definition of the inputs, not a guess.
     """
-    if avg is None:
+    if current is None:
         return {
             "tone": "unknown",
             "headline": (
-                "Not enough days with both a weigh-in and a body-fat reading in this "
-                "window yet to work out fat mass."
+                "Not enough days with both a weigh-in and a body-fat reading yet to work "
+                "out fat mass."
             ),
         }
 
@@ -374,7 +426,7 @@ def _fat_mass_window_meaning(avg: float | None, trend: dict[str, Any]) -> dict[s
         return {
             "tone": "unknown",
             "headline": (
-                f"Averaging {avg:.1f}kg of fat mass this window — not enough recent "
+                f"Currently around {current:.1f}kg of fat mass — not enough recent "
                 "readings to see a trend yet."
             ),
         }
@@ -386,21 +438,20 @@ def _fat_mass_window_meaning(avg: float | None, trend: dict[str, Any]) -> dict[s
     if not distinguishable:
         return {
             "tone": "neutral",
-            "headline": f"Averaging {avg:.1f}kg of fat mass this window — holding steady.",
+            "headline": f"Currently around {current:.1f}kg of fat mass — holding steady.",
         }
     if slope < 0:
         return {
             "tone": "good",
             "headline": (
-                f"Averaging {avg:.1f}kg of fat mass this window — trending down, about "
+                f"Currently around {current:.1f}kg of fat mass — trending down, about "
                 f"{abs(slope):.1f}kg/week. That's real fat loss, not just water or muscle."
             ),
         }
     return {
         "tone": "bad",
         "headline": (
-            f"Averaging {avg:.1f}kg of fat mass this window — trending up, about "
-            f"{slope:.1f}kg/week."
+            f"Currently around {current:.1f}kg of fat mass — trending up, about {slope:.1f}kg/week."
         ),
     }
 
@@ -591,24 +642,24 @@ def _build_sleep_total(stage_rows: list[sqlite3.Row]) -> dict[str, Any]:
 
 def _build_fat_mass_series(
     cutoff: str,
-    weight_obs_full: list[tuple[str, float]],
-    body_fat_pct_obs_full: list[tuple[str, float]],
+    fat_mass_obs_full: list[tuple[str, float]],
     fat_mass_trend: dict[str, Any],
+    fat_mass_current: dict[str, Any],
 ) -> dict[str, Any]:
     """Fat mass (kg) isn't a stored `daily_metrics` column, so it can't flow
     through the generic `_TIME_SERIES_COLUMNS` loop the way `body_fat_pct`
     does -- built here instead, mirroring that loop's own shape exactly
-    (`label`/`raw`/`smoothed`/`average`/`meaning`) so the payload entry is a
-    real `TimeSeries`, not a second, thinner shape.
+    (`label`/`raw`/`smoothed`/`average`/`meaning`/`current`) so the payload
+    entry is a real `TimeSeries`, not a second, thinner shape.
 
-    `weight_obs_full`/`body_fat_pct_obs_full` are the SAME full-history
-    lists the caller already fetched for the weight/body-fat trend
-    computations -- joined ONCE via `body_comp.compute_fat_mass_series()`
-    then filtered to the display window, never a second, independently-
-    windowed query (the same "average always matches what's plotted"
-    constraint every other series in this module upholds).
+    `fat_mass_obs_full` is the SAME full-history joined series
+    (`body_comp.compute_fat_mass_series()`) the caller already built once
+    for the trend/EWMA computations -- filtered here to the display window,
+    never a second, independently-windowed query (the same "average always
+    matches what's plotted" constraint every other series in this module
+    upholds). `fat_mass_current` is that same full-history series' latest
+    7-day EWMA point (`_latest_ewma_point()`), window-independent by design.
     """
-    fat_mass_obs_full = body_comp.compute_fat_mass_series(weight_obs_full, body_fat_pct_obs_full)
     windowed = [(d, v) for d, v in fat_mass_obs_full if d >= cutoff]
     values = [v for _, v in windowed]
     avg = _window_average(values)
@@ -617,7 +668,8 @@ def _build_fat_mass_series(
         "raw": [{"date": d, "value": v} for d, v in windowed],
         "smoothed": [{"date": d, "value": v} for d, v in _smooth(windowed)],
         "average": {"value": avg, "n_days": len(values)},
-        "meaning": _fat_mass_window_meaning(avg, fat_mass_trend),
+        "current": fat_mass_current,
+        "meaning": _fat_mass_window_meaning(fat_mass_current["value"], fat_mass_trend),
     }
 
 
@@ -669,16 +721,24 @@ def build_trends_payload(
     body_fat_pct_obs_full = _fetch_col_obs(conn, "body_fat_pct")
 
     trend = body_comp.weight_trend_ols(weight_obs_full)
+    weight_ewma_full = body_comp.compute_weight_ewma(weight_obs_full)
+    weight_current = _latest_ewma_point(weight_ewma_full)
+
     body_fat_trend = body_comp.body_fat_pct_trend_ols(body_fat_pct_obs_full)
+    body_fat_ewma_full = body_comp.compute_weight_ewma(body_fat_pct_obs_full)
+    body_fat_current = _latest_ewma_point(body_fat_ewma_full)
+
     fat_mass_obs_full = body_comp.compute_fat_mass_series(weight_obs_full, body_fat_pct_obs_full)
     fat_mass_trend = body_comp.weight_trend_ols(fat_mass_obs_full)
+    fat_mass_ewma_full = body_comp.compute_weight_ewma(fat_mass_obs_full)
+    fat_mass_current = _latest_ewma_point(fat_mass_ewma_full)
+
     goal = config.get("goals", {}).get("primary")
     weight_limit_kg = goal.get("weight_division_kg") if goal is not None else None
     comp_countdown = None
-    if weight_obs_full and goal is not None:
-        ewma_series = body_comp.compute_weight_ewma(weight_obs_full)
+    if weight_ewma_full and goal is not None:
         comp_countdown = body_comp.comp_countdown(
-            current_weight_kg=ewma_series[-1][1],
+            current_weight_kg=weight_ewma_full[-1][1],
             trend_slope_kg_per_week=trend["slope_kg_per_week"],
             comp_date=goal["date"],
             weight_limit_kg=goal["weight_division_kg"],
@@ -689,13 +749,23 @@ def build_trends_payload(
     rhr_baseline = baselines.compute_rhr_baseline(rhr_obs_full)
     sleep_debt = baselines.compute_sleep_debt(sleep_obs_full)
 
+    # weight_kg/body_fat_pct lead their "meaning" sentence with `current`
+    # (latest full-history EWMA point), not the windowed `avg` this generic
+    # loop otherwise passes every builder -- see _weight_window_meaning()'s
+    # docstring for why (2026-09-28). HRV/RHR have no such sparse-sampling
+    # problem (the watch updates near-daily) so they keep using `avg`.
+    _CURRENT_BY_COLUMN = {"weight_kg": weight_current, "body_fat_pct": body_fat_current}
     _MEANING_BUILDERS = {
         "weight_kg": (
-            lambda avg: _weight_window_meaning(avg, trend, weight_limit_kg, comp_countdown)
+            lambda avg: _weight_window_meaning(
+                weight_current["value"], trend, weight_limit_kg, comp_countdown
+            )
         ),
         "hrv_overnight_ms": lambda avg: _hrv_window_meaning(avg, hrv_baseline),
         "resting_hr": lambda avg: _rhr_window_meaning(avg, rhr_baseline),
-        "body_fat_pct": lambda avg: _body_fat_pct_window_meaning(avg, body_fat_trend),
+        "body_fat_pct": (
+            lambda avg: _body_fat_pct_window_meaning(body_fat_current["value"], body_fat_trend)
+        ),
     }
 
     series: dict[str, Any] = {}
@@ -715,9 +785,11 @@ def build_trends_payload(
             "average": {"value": avg, "n_days": len(values)},
             "meaning": _MEANING_BUILDERS[column](avg),
         }
+        if column in _CURRENT_BY_COLUMN:
+            series[column]["current"] = _CURRENT_BY_COLUMN[column]
 
     series["fat_mass_kg"] = _build_fat_mass_series(
-        cutoff, weight_obs_full, body_fat_pct_obs_full, fat_mass_trend
+        cutoff, fat_mass_obs_full, fat_mass_trend, fat_mass_current
     )
 
     stage_rows = conn.execute(

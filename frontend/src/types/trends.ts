@@ -21,11 +21,28 @@ export interface WindowMeaning {
   headline: string
 }
 
+// Added 2026-09-28 (Francisco: a real ~2-week gap in weigh-ins followed by
+// several real, lower readings made "avg 79.5kg" read misleadingly high --
+// it's the plain mean of everything in the window, stale pre-gap readings
+// included). `current` is the latest full-history 7-day EWMA point
+// (api/trends.py: `_latest_ewma_point()`), the same "where do you actually
+// stand" number Today/Comp Prep already use for weight -- deliberately
+// window-INDEPENDENT, unlike `average`/`raw`/`smoothed`, which stay exactly
+// windowed by the 30/90/365 selector as before. Only present on
+// weight_kg/body_fat_pct/fat_mass_kg -- HRV/RHR/sleep/readiness update
+// near-daily from the watch, so they don't share this sparse, manually-
+// triggered sampling pattern and keep using the plain windowed average.
+export interface CurrentValue {
+  value: number | null
+  as_of: string | null
+}
+
 export interface TimeSeries {
   label: string
   raw: SeriesPoint[]
   smoothed: SeriesPoint[]
   average: WindowAverage
+  current?: CurrentValue
   meaning: WindowMeaning
 }
 

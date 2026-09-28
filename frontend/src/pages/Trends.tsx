@@ -2,7 +2,14 @@ import { useEffect, useState } from "react"
 import { Activity, Gauge, HeartPulse, Moon, Percent, Scale, Search, TriangleAlert } from "lucide-react"
 import { ApiError, fetchCorrelations, fetchTrends } from "@/lib/api"
 import { CARD_CLASS, CARD_CLASS_FLAT } from "@/lib/styles"
-import type { CorrelationResult, TrendInsight, TrendsPayload, WindowMeaning } from "@/types/trends"
+import type {
+  CorrelationResult,
+  CurrentValue,
+  TrendInsight,
+  TrendsPayload,
+  WindowAverage,
+  WindowMeaning,
+} from "@/types/trends"
 import { TrendChart } from "@/components/charts/TrendChart"
 import { StackedBarChart } from "@/components/charts/StackedBarChart"
 
@@ -129,9 +136,9 @@ export function TrendsPage() {
             icon={Gauge}
             title="Readiness score"
             hasData={!!data.readiness.raw.length}
-            averageLabel={
+            badgeLabel={
               data.readiness.average.value != null
-                ? Math.round(data.readiness.average.value).toString()
+                ? `avg ${Math.round(data.readiness.average.value)}`
                 : null
             }
             summary={data.readiness.meaning}
@@ -158,7 +165,8 @@ export function TrendsPage() {
             icon={Scale}
             title="Weight (kg)"
             hasData={!!data.series.weight_kg?.raw.length}
-            averageLabel={formatUnitAverage(data.series.weight_kg?.average.value, "kg", 1)}
+            badgeLabel={formatCurrentLabel(data.series.weight_kg?.current, "kg", 1)}
+            secondaryNote={formatWindowAverageNote(data.series.weight_kg?.average, "kg", 1)}
             summary={data.series.weight_kg?.meaning}
           >
             {data.series.weight_kg && (
@@ -175,7 +183,8 @@ export function TrendsPage() {
             icon={Percent}
             title="Body fat (%)"
             hasData={!!data.series.body_fat_pct?.raw.length}
-            averageLabel={formatUnitAverage(data.series.body_fat_pct?.average.value, "%", 1)}
+            badgeLabel={formatCurrentLabel(data.series.body_fat_pct?.current, "%", 1)}
+            secondaryNote={formatWindowAverageNote(data.series.body_fat_pct?.average, "%", 1)}
             summary={data.series.body_fat_pct?.meaning}
           >
             {data.series.body_fat_pct && (
@@ -186,12 +195,12 @@ export function TrendsPage() {
                 unit="%"
               />
             )}
-            {data.series.fat_mass_kg?.average.value != null && (
+            {data.series.fat_mass_kg?.current?.value != null && (
               <p
                 className="text-xs mt-2 leading-snug"
                 style={{ color: TONE_COLOR[data.series.fat_mass_kg.meaning.tone] }}
               >
-                Fat mass: avg {data.series.fat_mass_kg.average.value.toFixed(1)}kg —{" "}
+                Fat mass: now {data.series.fat_mass_kg.current.value.toFixed(1)}kg —{" "}
                 {data.series.fat_mass_kg.meaning.headline}
               </p>
             )}
@@ -201,7 +210,7 @@ export function TrendsPage() {
             icon={HeartPulse}
             title="HRV overnight (ms)"
             hasData={!!data.series.hrv_overnight_ms?.raw.length}
-            averageLabel={formatUnitAverage(data.series.hrv_overnight_ms?.average.value, "ms", 0)}
+            badgeLabel={avgBadge(formatUnitAverage(data.series.hrv_overnight_ms?.average.value, "ms", 0))}
             summary={data.series.hrv_overnight_ms?.meaning}
           >
             {data.series.hrv_overnight_ms && (
@@ -218,7 +227,7 @@ export function TrendsPage() {
             icon={Activity}
             title="Resting heart rate (bpm)"
             hasData={!!data.series.resting_hr?.raw.length}
-            averageLabel={formatUnitAverage(data.series.resting_hr?.average.value, "bpm", 0)}
+            badgeLabel={avgBadge(formatUnitAverage(data.series.resting_hr?.average.value, "bpm", 0))}
             summary={data.series.resting_hr?.meaning}
           >
             {data.series.resting_hr && (
@@ -235,7 +244,7 @@ export function TrendsPage() {
             icon={Moon}
             title="Sleep stages (minutes)"
             hasData={data.sleep_stages.length > 0}
-            averageLabel={formatHoursMinutes(data.sleep_total.average.value)}
+            badgeLabel={avgBadge(formatHoursMinutes(data.sleep_total.average.value))}
             summary={data.sleep_total.meaning}
           >
             <StackedBarChart data={data.sleep_stages} bars={SLEEP_STAGE_BARS} />
@@ -289,6 +298,47 @@ function formatHoursMinutes(totalMinutes: number | null | undefined): string | n
   return `${h}h${m.toString().padStart(2, "0")}m`
 }
 
+/** Prefixes a formatted number with "avg " for the card's header badge --
+ * HRV/RHR/sleep/readiness keep using the plain windowed average there
+ * (they update near-daily, so it doesn't go stale the way a manually-
+ * triggered scale reading can), unlike weight/body-fat/fat-mass below.
+ */
+function avgBadge(label: string | null): string | null {
+  return label ? `avg ${label}` : null
+}
+
+/** The card header badge for weight_kg/body_fat_pct -- 2026-09-28, replacing
+ * the plain windowed average there (see `types/trends.ts: CurrentValue`'s
+ * own docstring for why). "now " to read as "where you stand", distinct
+ * from the "avg " badges the other cards still show.
+ */
+function formatCurrentLabel(
+  current: CurrentValue | null | undefined,
+  unit: string,
+  decimals: number,
+): string | null {
+  if (current?.value == null) return null
+  return `now ${formatUnitAverage(current.value, unit, decimals)}`
+}
+
+/** The small, secondary line under weight_kg/body_fat_pct's "meaning"
+ * sentence -- the plain windowed average is UNCHANGED and still fully
+ * disclosed here (never hidden), just demoted from the prominent header
+ * badge now that `current` (the EWMA "now" figure) answers the "where do I
+ * stand" question the badge used to answer less reliably after a real gap
+ * in logging.
+ */
+function formatWindowAverageNote(
+  average: WindowAverage | null | undefined,
+  unit: string,
+  decimals: number,
+): string | null {
+  if (average?.value == null || average.n_days === 0) return null
+  const label = formatUnitAverage(average.value, unit, decimals)
+  const noun = average.n_days === 1 ? "reading" : "readings"
+  return `Window average: ${label} from ${average.n_days} real ${noun}.`
+}
+
 /** The live per-window average + plain-language "what it means", added
  * 2026-09-09 and moved inline next to the chart title the same day (Francisco:
  * "it should show up next to the title in each of these charts" -- the first
@@ -304,14 +354,16 @@ function ChartCard({
   icon: Icon,
   title,
   hasData,
-  averageLabel,
+  badgeLabel,
+  secondaryNote,
   summary,
   children,
 }: {
   icon: React.ComponentType<{ className?: string; strokeWidth?: number }>
   title: string
   hasData: boolean
-  averageLabel?: string | null
+  badgeLabel?: string | null
+  secondaryNote?: string | null
   summary?: WindowMeaning
   children: React.ReactNode
 }) {
@@ -324,17 +376,24 @@ function ChartCard({
             {title}
           </p>
         </div>
-        {averageLabel && summary && (
+        {badgeLabel && summary && (
           <span
             className="text-xs font-semibold tabular-nums shrink-0"
             style={{ color: TONE_COLOR[summary.tone] }}
           >
-            avg {averageLabel}
+            {badgeLabel}
           </span>
         )}
       </div>
-      {summary && (
-        <p className="text-xs text-muted-foreground mb-3 leading-snug">{summary.headline}</p>
+      {(summary || secondaryNote) && (
+        <div className="mb-3">
+          {summary && <p className="text-xs text-muted-foreground leading-snug">{summary.headline}</p>}
+          {secondaryNote && (
+            <p className="text-[11px] text-muted-foreground/70 leading-snug mt-0.5">
+              {secondaryNote}
+            </p>
+          )}
+        </div>
       )}
       {hasData ? (
         children
