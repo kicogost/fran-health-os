@@ -255,6 +255,17 @@ body_measurements:
   waist_baseline_cm: 86
   waist_measurement_protocol: "Sunday, fasted, below navel"
 
+# Francisco's own stated fixed rolling structure (2026-09-29): "we always do
+# 5 minute rounds with 60 second rest." Used by metrics/bjj_laps.py:
+# auto_detect_rounds() to locate round/rest boundaries directly from a BJJ
+# activity's raw heart-rate stream, for sessions he hasn't manually lapped --
+# he doesn't want to press a button every round while he's sparring. This is
+# HIS real convention, not a physiological constant, so it lives here rather
+# than hardcoded in the detector itself.
+bjj_recording:
+  round_duration_s: 300
+  rest_duration_s: 60
+
 training_load:
   # BJJ manual-log load (Foster's method: duration_min x session_rpe, computed
   # automatically by core.models.BjjSession) x this factor should land on the same

@@ -5,13 +5,15 @@ from __future__ import annotations
 
 import pytest
 
-from health_os.core.models import ActivityLap
+from health_os.core.models import ActivityAutoSegment, ActivityLap
 from health_os.metrics.bjj_laps import (
     LABEL_INSUFFICIENT_DATA,
     LABEL_LIKELY_REST,
     LABEL_LIKELY_SPARRING,
     LABEL_WARMUP_OR_DRILLING,
+    auto_detect_rounds,
     classify_bjj_laps,
+    compute_auto_sparring_intensity,
     compute_sparring_intensity,
 )
 
@@ -264,3 +266,203 @@ class TestComputeSparringIntensity:
         # Only lap 4 contributes -- lap 2 is dropped for lacking duration.
         assert result["avg_hr"] == pytest.approx(172.0)
         assert result["sparring_duration_min"] == pytest.approx(400 / 60.0, abs=0.05)
+
+
+def _synthetic_stream(
+    *,
+    warmup_s: float,
+    warmup_hr: float,
+    round_s: float,
+    round_hr: float,
+    rest_s: float,
+    rest_hr: float,
+    n_cycles: int,
+    sample_step_s: float = 5.0,
+) -> list[tuple[float, float]]:
+    """A hand-built HR stream with a KNOWN embedded round/rest cadence, so
+    `auto_detect_rounds()`'s output can be checked against ground truth
+    instead of just "it returned something."
+    """
+    stream: list[tuple[float, float]] = []
+    t = 0.0
+    while t < warmup_s:
+        stream.append((t, warmup_hr))
+        t += sample_step_s
+    cycle_start = warmup_s
+    for _ in range(n_cycles):
+        t = cycle_start
+        while t < cycle_start + round_s:
+            stream.append((t, round_hr))
+            t += sample_step_s
+        t = cycle_start + round_s
+        while t < cycle_start + round_s + rest_s:
+            stream.append((t, rest_hr))
+            t += sample_step_s
+        cycle_start += round_s + rest_s
+    return stream
+
+
+class TestAutoDetectRounds:
+    """`auto_detect_rounds()` -- fitting Francisco's own stated fixed
+    cadence (5min round + 60s rest) to a raw HR stream, added 2026-09-29 so
+    he doesn't have to press lap while sparring.
+    """
+
+    def test_finds_rounds_in_a_clean_synthetic_recording(self) -> None:
+        stream = _synthetic_stream(
+            warmup_s=600,
+            warmup_hr=110,
+            round_s=300,
+            round_hr=150,
+            rest_s=60,
+            rest_hr=100,
+            n_cycles=4,
+        )
+        segments = auto_detect_rounds("garmin:1", stream, round_duration_s=300, rest_duration_s=60)
+
+        assert segments[0].label == "warmup_or_drilling"
+        assert segments[0].start_s == 0.0
+        assert segments[0].end_s == pytest.approx(600, abs=15)
+        assert segments[0].avg_hr == pytest.approx(110, abs=1)
+
+        rounds = [s for s in segments if s.label == "round"]
+        rests = [s for s in segments if s.label == "rest"]
+        assert len(rounds) == 4
+        assert len(rests) == 4
+        for r in rounds:
+            assert r.avg_hr == pytest.approx(150, abs=1)
+        for r in rests:
+            assert r.avg_hr == pytest.approx(100, abs=1)
+
+        # segment_index is sequential starting at 0, activity_id carried
+        # through to every segment.
+        assert [s.segment_index for s in segments] == list(range(len(segments)))
+        assert all(s.activity_id == "garmin:1" for s in segments)
+
+    def test_no_leading_warmup_when_rounds_start_immediately(self) -> None:
+        stream = _synthetic_stream(
+            warmup_s=0,
+            warmup_hr=110,
+            round_s=300,
+            round_hr=150,
+            rest_s=60,
+            rest_hr=100,
+            n_cycles=3,
+        )
+        segments = auto_detect_rounds("garmin:1", stream, round_duration_s=300, rest_duration_s=60)
+        assert segments[0].label == "round"  # no warmup_or_drilling segment emitted at all
+
+    def test_last_segment_truncated_to_real_data_not_padded(self) -> None:
+        # 3 full cycles generated, then cut 100s into what would be the 3rd
+        # round -- only a partial round should be emitted, never padded out
+        # to 300s of data that was never actually recorded.
+        stream = _synthetic_stream(
+            warmup_s=0,
+            warmup_hr=110,
+            round_s=300,
+            round_hr=150,
+            rest_s=60,
+            rest_hr=100,
+            n_cycles=3,
+        )
+        cutoff = 2 * 360 + 100
+        stream = [(t, hr) for t, hr in stream if t <= cutoff]
+        stream.append((cutoff, 148))
+        segments = auto_detect_rounds("garmin:1", stream, round_duration_s=300, rest_duration_s=60)
+        last = segments[-1]
+        assert last.label == "round"
+        assert last.end_s == pytest.approx(cutoff, abs=5)
+        assert last.end_s - last.start_s < 300
+
+    def test_insufficient_cycles_returns_empty(self) -> None:
+        # Only 1 full cycle of real data -- MIN_CYCLES_FOR_AUTO_DETECT (2)
+        # isn't met, so this must not guess.
+        stream = _synthetic_stream(
+            warmup_s=0,
+            warmup_hr=110,
+            round_s=300,
+            round_hr=150,
+            rest_s=60,
+            rest_hr=100,
+            n_cycles=1,
+        )
+        assert (
+            auto_detect_rounds("garmin:1", stream, round_duration_s=300, rest_duration_s=60) == []
+        )
+
+    def test_no_real_separation_returns_empty(self) -> None:
+        # A continuous roll with no real rest breaks -- HR never actually
+        # separates into a round/rest pattern, so this must not fit noise.
+        stream = [(float(t), 145.0) for t in range(0, 2400, 5)]
+        assert (
+            auto_detect_rounds("garmin:1", stream, round_duration_s=300, rest_duration_s=60) == []
+        )
+
+    def test_empty_stream_returns_empty(self) -> None:
+        assert auto_detect_rounds("garmin:1", [], round_duration_s=300, rest_duration_s=60) == []
+
+    def test_result_rows_are_valid_activity_auto_segments(self) -> None:
+        # Round-trips through the real model's own validation (label must be
+        # one of the three allowed values) -- not just duck-typed dicts.
+        stream = _synthetic_stream(
+            warmup_s=300,
+            warmup_hr=100,
+            round_s=300,
+            round_hr=150,
+            rest_s=60,
+            rest_hr=95,
+            n_cycles=3,
+        )
+        segments = auto_detect_rounds("garmin:1", stream, round_duration_s=300, rest_duration_s=60)
+        assert all(isinstance(s, ActivityAutoSegment) for s in segments)
+
+
+class TestComputeAutoSparringIntensity:
+    """`compute_auto_sparring_intensity()` -- the auto-detected-segment
+    sibling of `compute_sparring_intensity()`, added 2026-09-29.
+    """
+
+    def _segment(self, label: str, avg_hr: float | None, start_s: float, end_s: float):
+        return ActivityAutoSegment(
+            activity_id="garmin:1",
+            segment_index=0,
+            start_s=start_s,
+            end_s=end_s,
+            label=label,
+            avg_hr=avg_hr,
+        )
+
+    def test_computes_pct_hrr_from_round_segments_only(self) -> None:
+        segments = [
+            self._segment("warmup_or_drilling", 100.0, 0, 300),
+            self._segment("round", 165.0, 300, 600),
+            self._segment("rest", 105.0, 600, 660),
+            self._segment("round", 170.0, 660, 960),
+        ]
+        result = compute_auto_sparring_intensity(segments, resting_hr=49.0, max_hr=191.2)
+        assert result is not None
+        assert result["source"] == "auto_detected"
+        # Duration-weighted avg_hr across the two 300s round segments (equal
+        # weight here since both are 300s): (165+170)/2 = 167.5.
+        assert result["avg_hr"] == pytest.approx(167.5)
+        assert result["sparring_duration_min"] == pytest.approx(600 / 60.0)
+
+    def test_no_round_segments_returns_none(self) -> None:
+        segments = [self._segment("warmup_or_drilling", 100.0, 0, 300)]
+        assert compute_auto_sparring_intensity(segments, resting_hr=49.0, max_hr=191.2) is None
+
+    def test_empty_segments_returns_none(self) -> None:
+        assert compute_auto_sparring_intensity([], resting_hr=49.0, max_hr=191.2) is None
+
+    def test_missing_resting_hr_returns_none(self) -> None:
+        segments = [self._segment("round", 165.0, 300, 600)]
+        assert compute_auto_sparring_intensity(segments, resting_hr=None, max_hr=191.2) is None
+
+    def test_missing_max_hr_returns_none(self) -> None:
+        segments = [self._segment("round", 165.0, 300, 600)]
+        assert compute_auto_sparring_intensity(segments, resting_hr=49.0, max_hr=None) is None
+
+    def test_max_hr_not_greater_than_resting_hr_raises(self) -> None:
+        segments = [self._segment("round", 165.0, 300, 600)]
+        with pytest.raises(ValueError, match="must be greater than"):
+            compute_auto_sparring_intensity(segments, resting_hr=190.0, max_hr=190.0)

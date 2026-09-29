@@ -7,6 +7,7 @@ import pytest
 from health_os.core import db as db_module
 from health_os.core.models import (
     Activity,
+    ActivityAutoSegment,
     ActivityLap,
     Allergy,
     BjjSession,
@@ -337,6 +338,86 @@ class TestActivityLap:
         )
         with pytest.raises(sqlite3.IntegrityError):
             db_module.upsert(conn, "activity_laps", lap.to_row(), ["activity_id", "lap_index"])
+
+
+class TestActivityAutoSegment:
+    def test_round_trip(self, conn: sqlite3.Connection) -> None:
+        _insert_parent_activity(conn)
+        segment = ActivityAutoSegment(
+            activity_id="garmin:123",
+            segment_index=1,
+            start_s=600.0,
+            end_s=900.0,
+            label="round",
+            avg_hr=145.2,
+            max_hr=168.0,
+        )
+        db_module.upsert(
+            conn, "activity_auto_segments", segment.to_row(), ["activity_id", "segment_index"]
+        )
+        row = conn.execute(
+            "SELECT * FROM activity_auto_segments WHERE activity_id = ? AND segment_index = ?",
+            ("garmin:123", 1),
+        ).fetchone()
+        reloaded = ActivityAutoSegment.from_row(row)
+        assert reloaded.label == "round"
+        assert reloaded.start_s == 600.0
+        assert reloaded.end_s == 900.0
+        assert reloaded.avg_hr == 145.2
+
+    def test_rejects_invalid_label(self) -> None:
+        with pytest.raises(ValueError, match="label must be one of"):
+            ActivityAutoSegment(
+                activity_id="garmin:123",
+                segment_index=0,
+                start_s=0.0,
+                end_s=60.0,
+                label="sparring",
+            )
+
+    def test_unique_on_activity_and_segment_index_upserts_not_duplicates(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        _insert_parent_activity(conn)
+        segment = ActivityAutoSegment(
+            activity_id="garmin:123",
+            segment_index=0,
+            start_s=0.0,
+            end_s=60.0,
+            label="warmup_or_drilling",
+        )
+        db_module.upsert(
+            conn, "activity_auto_segments", segment.to_row(), ["activity_id", "segment_index"]
+        )
+        updated = ActivityAutoSegment(
+            activity_id="garmin:123",
+            segment_index=0,
+            start_s=0.0,
+            end_s=60.0,
+            label="warmup_or_drilling",
+            avg_hr=90.0,
+        )
+        db_module.upsert(
+            conn, "activity_auto_segments", updated.to_row(), ["activity_id", "segment_index"]
+        )
+        rows = conn.execute(
+            "SELECT * FROM activity_auto_segments WHERE activity_id = ?", ("garmin:123",)
+        ).fetchall()
+        assert len(rows) == 1
+        assert rows[0]["avg_hr"] == 90.0
+
+    def test_rejects_segment_referencing_unknown_activity(self, conn: sqlite3.Connection) -> None:
+        segment = ActivityAutoSegment(
+            activity_id="garmin:does-not-exist",
+            segment_index=0,
+            start_s=0.0,
+            end_s=60.0,
+            label="round",
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            db_module.upsert(
+                conn, "activity_auto_segments", segment.to_row(), ["activity_id", "segment_index"]
+            )
 
 
 class TestSubjectiveLogEntry:

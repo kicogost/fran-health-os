@@ -34,7 +34,7 @@ from health_os.metrics.derived_daily import compute_derived_metrics, store_deriv
 def run_manual_sync(
     conn: sqlite3.Connection, config: dict[str, Any], days: int = DEFAULT_WINDOW_DAYS
 ) -> dict[str, Any]:
-    sync_result = run_live_sync(conn, days=days)
+    sync_result = run_live_sync(conn, config, days=days)
 
     dates = [d.isoformat() for d in _date_range(sync_result.start_date, sync_result.end_date)]
     derived_rows_written = 0

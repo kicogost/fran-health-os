@@ -58,6 +58,15 @@ dose as 90 minutes of the whole class on a scale calibrated against whole
 sessions. `compute_sparring_intensity()` replaced it with the standard
 Karvonen %HRR formula banded into Karvonen/Zoladz zones — see `metrics.
 bjj_laps`'s module docstring for the full account.
+
+**Auto-detected fallback (added 2026-09-29)**: `_sparring_intensity_for_date()`
+now falls back to `metrics.bjj_laps.compute_auto_sparring_intensity()` (built
+from `auto_detect_rounds()`'s fixed-cadence template fit) whenever a BJJ
+activity has no real manual laps to work from — Francisco doesn't want to
+press a button every round while he's sparring. Manual laps stay the ground
+truth and are always preferred when they exist; the result's own `"source"`
+field (`"manual"` vs. `"auto_detected"`) tells the two apart, never silently
+presented as equally certain.
 """
 
 from __future__ import annotations
@@ -69,8 +78,8 @@ from datetime import date as date_cls
 from datetime import timedelta
 from typing import Any
 
-from health_os.core.models import ActivityLap
-from health_os.metrics.bjj_laps import compute_sparring_intensity
+from health_os.core.models import ActivityAutoSegment, ActivityLap
+from health_os.metrics.bjj_laps import compute_auto_sparring_intensity, compute_sparring_intensity
 
 # Garmin sport/sub_sport values that mean "this is a BJJ session" --
 # matches the same vocabulary already established in core/dedupe.py and
@@ -381,11 +390,19 @@ def build_daily_strain(
 def _sparring_intensity_for_date(
     conn: sqlite3.Connection, date: str, config: dict[str, Any]
 ) -> dict[str, Any] | None:
-    """Looks up this date's real BJJ activity (if any) and its laps, then
-    delegates the actual sparring-vs-rest classification and %HRR math to
-    `metrics.bjj_laps.compute_sparring_intensity()` -- reusing the SAME
+    """Looks up this date's real BJJ activity (if any), then delegates the
+    actual sparring-vs-rest read to `metrics.bjj_laps` -- reusing the SAME
     `resting_hr`/`max_hr` lookup `_gather_day_components()` already uses for
     the whole-session TRIMP call above, not a second, divergent one.
+
+    Manual laps (`compute_sparring_intensity()`, real ground truth from
+    Francisco's own lap presses) are tried first and preferred whenever they
+    produce a real result. `compute_auto_sparring_intensity()` (2026-09-29,
+    built from `auto_detect_rounds()`'s fixed-cadence template fit) is the
+    fallback for a session with no manual laps to work from -- he doesn't
+    want to press a button every round while sparring. Never both: the
+    result's own `"source"` field always says which one actually produced
+    it.
 
     Deliberately NOT folded into `_gather_day_components()` itself -- that
     function is also what `build_activity_based_load_series()`/
@@ -399,10 +416,10 @@ def _sparring_intensity_for_date(
 
     `metrics.bjj_laps` no longer imports anything from this module (the
     corrected `compute_sparring_intensity()` needs no Strain-scale
-    machinery at all), so `compute_sparring_intensity` is imported at the
-    top of this module now -- unlike the original version of this function,
-    which had to defer the equivalent import to call time to break a
-    two-module cycle that no longer exists.
+    machinery at all), so both functions are imported at the top of this
+    module now -- unlike the original version of this function, which had
+    to defer the equivalent import to call time to break a two-module cycle
+    that no longer exists.
     """
     activity_rows = conn.execute(
         "SELECT activity_id, sport, sub_sport FROM activities "
@@ -419,13 +436,9 @@ def _sparring_intensity_for_date(
 
     # In practice this account has never had more than one real BJJ activity
     # on the same date -- if that ever changes, the first one found is used
-    # rather than silently combining laps across two separate sessions.
-    lap_rows = conn.execute(
-        "SELECT * FROM activity_laps WHERE activity_id = ? ORDER BY lap_index",
-        (bjj_activity_ids[0],),
-    ).fetchall()
-    if not lap_rows:
-        return None
+    # rather than silently combining laps/segments across two separate
+    # sessions.
+    activity_id = bjj_activity_ids[0]
 
     daily_row = conn.execute(
         "SELECT resting_hr FROM daily_metrics WHERE date = ?", (date,)
@@ -434,9 +447,26 @@ def _sparring_intensity_for_date(
     if resting_hr is None:
         return None
 
-    laps = [ActivityLap.from_row(row) for row in lap_rows]
     max_hr = estimate_max_hr(config["profile"]["age"])
-    return compute_sparring_intensity(laps, resting_hr=resting_hr, max_hr=max_hr)
+
+    lap_rows = conn.execute(
+        "SELECT * FROM activity_laps WHERE activity_id = ? ORDER BY lap_index",
+        (activity_id,),
+    ).fetchall()
+    if lap_rows:
+        laps = [ActivityLap.from_row(row) for row in lap_rows]
+        manual_result = compute_sparring_intensity(laps, resting_hr=resting_hr, max_hr=max_hr)
+        if manual_result is not None:
+            return manual_result
+
+    segment_rows = conn.execute(
+        "SELECT * FROM activity_auto_segments WHERE activity_id = ? ORDER BY segment_index",
+        (activity_id,),
+    ).fetchall()
+    if not segment_rows:
+        return None
+    segments = [ActivityAutoSegment.from_row(row) for row in segment_rows]
+    return compute_auto_sparring_intensity(segments, resting_hr=resting_hr, max_hr=max_hr)
 
 
 def _earliest_load_relevant_date(conn: sqlite3.Connection, as_of_date: str) -> str | None:

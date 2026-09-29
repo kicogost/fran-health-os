@@ -41,7 +41,9 @@ def _fake_result(**overrides: object) -> LiveSyncResult:
 
 class TestRunManualSync:
     def test_success_shape(self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr("health_os.api.sync.run_live_sync", lambda conn, days=3: _fake_result())
+        monkeypatch.setattr(
+            "health_os.api.sync.run_live_sync", lambda conn, config, days=3: _fake_result()
+        )
         result = run_manual_sync(conn, _CONFIG)
 
         assert result["status"] == "success"
@@ -59,7 +61,7 @@ class TestRunManualSync:
     ) -> None:
         monkeypatch.setattr(
             "health_os.api.sync.run_live_sync",
-            lambda conn, days=3: _fake_result(garmin_ok=False),
+            lambda conn, config, days=3: _fake_result(garmin_ok=False),
         )
         result = run_manual_sync(conn, _CONFIG)
 
@@ -71,7 +73,9 @@ class TestRunManualSync:
     ) -> None:
         monkeypatch.setattr(
             "health_os.api.sync.run_live_sync",
-            lambda conn, days=3: _fake_result(start_date="2026-09-16", end_date="2026-09-17"),
+            lambda conn, config, days=3: _fake_result(
+                start_date="2026-09-16", end_date="2026-09-17"
+            ),
         )
         result = run_manual_sync(conn, _CONFIG)
 
@@ -87,7 +91,7 @@ class TestRunManualSync:
     ) -> None:
         monkeypatch.setattr(
             "health_os.api.sync.run_live_sync",
-            lambda conn, days=3: _fake_result(
+            lambda conn, config, days=3: _fake_result(
                 dedupe=DedupeResult(
                     groups_merged=2,
                     rows_deleted=2,

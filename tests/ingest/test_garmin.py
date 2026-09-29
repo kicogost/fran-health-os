@@ -75,6 +75,8 @@ class _FakeClient:
         self.raise_on_get_activities: Exception | None = None
         self.splits: dict[str, dict] = {}
         self.raise_on_get_activity_splits: Exception | None = None
+        self.details: dict[str, dict] = {}
+        self.raise_on_get_activity_details: Exception | None = None
 
     def get_activities_by_date(
         self, startdate: str, enddate: str | None = None, activitytype=None, sortorder=None
@@ -87,6 +89,13 @@ class _FakeClient:
         if self.raise_on_get_activity_splits is not None:
             raise self.raise_on_get_activity_splits
         return self.splits.get(str(activity_id), {"activityId": activity_id, "lapDTOs": []})
+
+    def get_activity_details(self, activity_id: str) -> dict:
+        if self.raise_on_get_activity_details is not None:
+            raise self.raise_on_get_activity_details
+        return self.details.get(
+            str(activity_id), {"metricDescriptors": [], "activityDetailMetrics": []}
+        )
 
 
 def _one_day() -> tuple[date, date]:
@@ -469,3 +478,65 @@ class TestFetchActivityLaps:
         laps = list(garmin.fetch_activity_laps(client, "1"))
         assert laps[0].avg_hr is None
         assert laps[0].max_hr is None
+
+
+def _details_response(points: list[dict]) -> dict:
+    """Real response shape, verified 2026-09-29 against Francisco's actual
+    account (activityId 24539554938) -- descriptors name each metric via
+    `key`, with its own positional `metricsIndex` into every point's flat
+    `metrics` list. Only the two descriptors `fetch_activity_hr_stream()`
+    actually needs are included here; the real response has several more
+    (body battery, cadence, ...), which the function must ignore.
+    """
+    return {
+        "metricDescriptors": [
+            {"metricsIndex": 0, "key": "sumElapsedDuration", "unit": {"factor": 1000.0}},
+            {"metricsIndex": 1, "key": "directHeartRate", "unit": {"factor": 1.0}},
+        ],
+        "activityDetailMetrics": points,
+    }
+
+
+def _point(elapsed_s: float, hr: float | None) -> dict:
+    return {"metrics": [elapsed_s, hr]}
+
+
+class TestFetchActivityHrStream:
+    def test_maps_real_shaped_details_response(self) -> None:
+        client = _FakeClient()
+        client.details["24539554938"] = _details_response(
+            [_point(0.0, 104.0), _point(3.2, 108.0), _point(6.5, 111.0)]
+        )
+        stream = garmin.fetch_activity_hr_stream(client, "24539554938")
+        assert stream == [(0.0, 104.0), (3.2, 108.0), (6.5, 111.0)]
+
+    def test_zero_heart_rate_reading_skipped_not_treated_as_real(self) -> None:
+        client = _FakeClient()
+        client.details["1"] = _details_response(
+            [_point(0.0, 0.0), _point(3.0, 95.0), _point(6.0, None)]
+        )
+        stream = garmin.fetch_activity_hr_stream(client, "1")
+        assert stream == [(3.0, 95.0)]
+
+    def test_missing_descriptor_returns_empty_and_records_error(self) -> None:
+        client = _FakeClient()
+        client.details["1"] = {
+            "metricDescriptors": [{"metricsIndex": 0, "key": "directBodyBattery"}],
+            "activityDetailMetrics": [{"metrics": [67.0]}],
+        }
+        errors: list[str] = []
+        stream = garmin.fetch_activity_hr_stream(client, "1", errors=errors)
+        assert stream == []
+        assert len(errors) == 1
+
+    def test_get_activity_details_failure_is_recorded_not_raised(self) -> None:
+        client = _FakeClient()
+        client.raise_on_get_activity_details = RuntimeError("network down")
+        errors: list[str] = []
+        stream = garmin.fetch_activity_hr_stream(client, "1", errors=errors)
+        assert stream == []
+        assert "network down" in errors[0]
+
+    def test_no_activity_found_yields_empty(self) -> None:
+        client = _FakeClient()
+        assert garmin.fetch_activity_hr_stream(client, "999") == []

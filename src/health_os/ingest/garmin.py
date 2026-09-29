@@ -404,3 +404,72 @@ def fetch_activity_laps(
             calories=lap.get("calories"),
             intensity_type=lap.get("intensityType"),
         )
+
+
+def fetch_activity_hr_stream(
+    client: Garmin, activity_id: str, *, errors: list[str] | None = None
+) -> list[tuple[float, float]]:
+    """(elapsed_seconds, heart_rate_bpm) pairs across an activity's full
+    duration, from `get_activity_details()` — a genuine, fine-grained
+    time-series Garmin exposes per activity (confirmed directly against a
+    real 78-minute BJJ session, 2026-09-29: ~1 point every ~3 seconds, 1436
+    real points), not just the single avg/max summary `fetch_activities()`
+    already captures. Built for `metrics/bjj_laps.py: auto_detect_rounds()`
+    — locating round/rest boundaries from HR alone for Francisco's un-lapped
+    BJJ sessions (he doesn't want to press a button every round while
+    sparring).
+
+    `metricDescriptors`/`activityDetailMetrics`'s shape (confirmed by direct
+    inspection against the real account, not assumed from docs): a list of
+    descriptors, each naming one metric (`directHeartRate`,
+    `sumElapsedDuration`, ...) via its own `key`, plus a `metricsIndex` — its
+    positional index into every point's flat `metrics` list. Looked up by
+    NAME here, never a hardcoded index, since Garmin could reorder or add
+    descriptors without warning (the same defensive posture every other raw
+    dict in this module gets). `sumElapsedDuration`'s raw value is already
+    in whole seconds despite its own descriptor listing a `factor` of
+    1000.0 — cross-checked directly, not assumed: a real point's elapsed
+    value (2211.0) matched exactly the same point's `directTimestamp`
+    epoch-millisecond delta from the very first point (2211000ms), so no
+    factor division is applied here. Heart-rate readings of 0 (no strap
+    contact yet, or a genuine gap) are skipped — never treated as a real
+    0bpm value.
+
+    Returns `[]` (never invents a stream) on any fetch/parse failure or if
+    either needed descriptor is missing, recorded to `errors` rather than
+    raised — the same per-item resilience every other function in this
+    module already follows.
+    """
+    try:
+        details = client.get_activity_details(str(activity_id))
+    except Exception as exc:  # noqa: BLE001 - reported to caller, not swallowed
+        if errors is not None:
+            errors.append(f"get_activity_details({activity_id}) failed: {exc}")
+        return []
+
+    descriptors = details.get("metricDescriptors") or []
+    hr_index = next(
+        (d["metricsIndex"] for d in descriptors if d.get("key") == "directHeartRate"), None
+    )
+    duration_index = next(
+        (d["metricsIndex"] for d in descriptors if d.get("key") == "sumElapsedDuration"), None
+    )
+    if hr_index is None or duration_index is None:
+        if errors is not None:
+            errors.append(
+                f"activity {activity_id}: no heart-rate/duration metric in details response"
+            )
+        return []
+
+    stream: list[tuple[float, float]] = []
+    for point in details.get("activityDetailMetrics") or []:
+        values = point.get("metrics") or []
+        if len(values) <= max(hr_index, duration_index):
+            continue
+        hr = values[hr_index]
+        elapsed_s = values[duration_index]
+        if hr is None or elapsed_s is None or hr <= 0:
+            continue
+        stream.append((float(elapsed_s), float(hr)))
+
+    return stream

@@ -6,7 +6,7 @@ import sqlite3
 import pytest
 
 from health_os.core import db as db_module
-from health_os.core.models import ActivityLap
+from health_os.core.models import ActivityAutoSegment, ActivityLap
 from health_os.metrics.strain import (
     STRAIN_FOSTER_SCALE,
     STRAIN_SATURATION_K,
@@ -549,6 +549,127 @@ class TestBuildDailyStrain:
         assert sparring["zone"] == 4
         assert sparring["zone_label"] == "hard"
         assert sparring["avg_hr"] == pytest.approx(168.5)
+
+
+class TestSparringIntensityAutoFallback:
+    """Auto-detected round segments (2026-09-29) as the fallback for a BJJ
+    session Francisco didn't manually lap -- manual laps stay the ground
+    truth and win whenever they produce a real result.
+    """
+
+    def _seed_activity(self, conn: sqlite3.Connection, date: str, activity_id: str) -> None:
+        db_module.upsert(conn, "daily_metrics", {"date": date, "resting_hr": 49.0}, ["date"])
+        db_module.upsert(
+            conn,
+            "activities",
+            {
+                "activity_id": activity_id,
+                "source": "garmin",
+                "source_id": activity_id.split(":", 1)[1],
+                "start_utc": f"{date}T18:00:00Z",
+                "local_date": date,
+                "sport": "other",
+                "sub_sport": "bjj",
+                "duration_s": 5400,
+                "avg_hr": 130,
+            },
+            ["activity_id"],
+        )
+
+    def _seed_auto_segments(self, conn: sqlite3.Connection, activity_id: str) -> None:
+        segments = [
+            ActivityAutoSegment(
+                activity_id=activity_id,
+                segment_index=0,
+                start_s=0,
+                end_s=600,
+                label="warmup_or_drilling",
+                avg_hr=100,
+            ),
+            ActivityAutoSegment(
+                activity_id=activity_id,
+                segment_index=1,
+                start_s=600,
+                end_s=900,
+                label="round",
+                avg_hr=165,
+            ),
+            ActivityAutoSegment(
+                activity_id=activity_id,
+                segment_index=2,
+                start_s=900,
+                end_s=960,
+                label="rest",
+                avg_hr=105,
+            ),
+        ]
+        for segment in segments:
+            db_module.upsert(
+                conn, "activity_auto_segments", segment.to_row(), ["activity_id", "segment_index"]
+            )
+
+    def test_falls_back_to_auto_detected_segments_when_no_manual_laps_exist(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        self._seed_activity(conn, "2026-09-29", "garmin:bjj1")
+        self._seed_auto_segments(conn, "garmin:bjj1")
+
+        result = build_daily_strain(conn, "2026-09-29", _CONFIG)
+        sparring = result["sparring_intensity"]
+        assert sparring is not None
+        assert sparring["source"] == "auto_detected"
+        assert sparring["avg_hr"] == pytest.approx(165.0)
+
+    def test_manual_laps_win_over_auto_segments_when_both_exist(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # A real session could in principle have both if Francisco started
+        # lapping partway through -- manual ground truth must always be
+        # preferred over the heuristic fallback.
+        self._seed_activity(conn, "2026-08-31", "garmin:bjj1")
+        _seed_bjj_activity_with_laps(conn, "2026-08-31", "garmin:bjj1")
+        self._seed_auto_segments(conn, "garmin:bjj1")
+
+        result = build_daily_strain(conn, "2026-08-31", _CONFIG)
+        sparring = result["sparring_intensity"]
+        assert sparring is not None
+        assert sparring["source"] == "manual"
+        # The manual fixture's own hand-verified avg_hr (see
+        # test_real_bjj_session_with_sparring_laps_produces_hand_verified_value)
+        # -- confirms this isn't accidentally the auto-segment value (165).
+        assert sparring["avg_hr"] == pytest.approx(168.5)
+
+    def test_falls_back_to_auto_when_manual_laps_exist_but_classify_insufficient(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # Only 1 real round lap -- classify_bjj_laps() can't attempt a
+        # median split, so the manual path returns None even though lap
+        # rows exist; the auto-detected segments should still be used.
+        self._seed_activity(conn, "2026-09-29", "garmin:bjj1")
+        for lap in [
+            ActivityLap(
+                activity_id="garmin:bjj1", lap_index=1, start_utc="2026-09-29T18:00:00Z", avg_hr=90
+            ),
+            ActivityLap(
+                activity_id="garmin:bjj1",
+                lap_index=2,
+                start_utc="2026-09-29T19:00:00Z",
+                avg_hr=150,
+                duration_s=300,
+            ),
+        ]:
+            db_module.upsert(conn, "activity_laps", lap.to_row(), ["activity_id", "lap_index"])
+        self._seed_auto_segments(conn, "garmin:bjj1")
+
+        result = build_daily_strain(conn, "2026-09-29", _CONFIG)
+        sparring = result["sparring_intensity"]
+        assert sparring is not None
+        assert sparring["source"] == "auto_detected"
+
+    def test_no_manual_laps_and_no_auto_segments_gives_none(self, conn: sqlite3.Connection) -> None:
+        self._seed_activity(conn, "2026-09-29", "garmin:bjj1")
+        result = build_daily_strain(conn, "2026-09-29", _CONFIG)
+        assert result["sparring_intensity"] is None
 
 
 class TestBuildDailyStrainSparringDoesNotLeakIntoLoadSeries:

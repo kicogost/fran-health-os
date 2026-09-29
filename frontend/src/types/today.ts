@@ -68,12 +68,20 @@ export interface StrainComponent {
 // `Strain` below -- that was the wrong kind of metric for "how hard were
 // the rounds" (see metrics/bjj_laps.py's module docstring for the full
 // account) and is not what this shape represents.
+//
+// `source` (added 2026-09-29): "manual" when this came from Francisco's own
+// real lap presses (ground truth), "auto_detected" when it's a heuristic
+// fit of his known 5min-round/60s-rest cadence to the activity's raw HR
+// stream instead (metrics/bjj_laps.py: auto_detect_rounds()) -- built so he
+// doesn't have to press a button every round while sparring. Never shown as
+// equally certain as the manual read.
 export interface SparringIntensity {
   pct_hrr: number
   zone: number
   zone_label: string
   avg_hr: number
   sparring_duration_min: number
+  source: "manual" | "auto_detected"
 }
 
 export interface Strain {

@@ -46,6 +46,34 @@ weighted across the sparring-classified laps, banded into the standard
 Karvonen/Zoladz training zones (Zone 1-5). This is real, published,
 widely-used sports-science convention — not a bespoke formula requiring its
 own calibration constant, unlike the saturating exponential it replaces.
+
+**`auto_detect_rounds()` (added 2026-09-29)** answers a real limitation of
+everything above: it all depends on Francisco actually pressing lap at the
+start of every round, and he doesn't want to be doing that while he's
+sparring and focused on it. He gave the one fact that makes this tractable
+without guessing: "we always do 5 minute rounds with 60 second rest" — a
+FIXED, KNOWN cadence (`config/athlete.yaml: bjj_recording`), not something
+that has to be inferred from scratch. So this isn't blind changepoint
+detection on a noisy HR trace — it's fitting ONE free parameter (where the
+known round/rest template actually starts, after however long the leading
+drilling block ran) by brute-force search over candidate start times,
+picking whichever one best separates "round" HR from "rest" HR across the
+whole activity. Built on `ingest/garmin.py: fetch_activity_hr_stream()`'s
+real, fine-grained (~1 point/3s) HR time series — a genuinely different kind
+of raw input from the discrete per-lap `ActivityLap` rows the rest of this
+module works from.
+
+Same design-principle-6 discipline as `classify_bjj_laps()`'s own
+`insufficient_data` gate: below `MIN_CYCLES_FOR_AUTO_DETECT` full round+rest
+cycles of real data, or below `MIN_SEPARATION_BPM` of actual round-vs-rest
+HR separation at the best-fitting start time, this returns an empty list
+rather than a low-confidence guess dressed up as a real read. A real, stated
+limitation, not glossed over: this assumes ONE clean drilling block followed
+by uninterrupted round/rest cycling all the way to the end of the
+recording — an unplanned extra break, a stopped-and-restarted watch, or a
+genuinely irregular round length would confuse it. `compute_sparring_
+intensity()`'s manual-lap path stays the ground truth whenever Francisco
+does lap a session; this is the fallback for when he doesn't.
 """
 
 from __future__ import annotations
@@ -54,9 +82,16 @@ import statistics
 from dataclasses import dataclass
 from typing import Any
 
-from health_os.core.models import ActivityLap
+from health_os.core.models import ActivityAutoSegment, ActivityLap
 
 MIN_ROUND_LAPS_FOR_SPLIT = 2  # need at least 2 round laps for a median split to mean anything
+
+# `auto_detect_rounds()` defaults -- both reasoned, no literature number
+# exists for either (same spirit as this project's other seed-phase
+# constants, e.g. body_comp.MIN_POINTS_FOR_TREND).
+MIN_CYCLES_FOR_AUTO_DETECT = 2  # need at least 2 full round+rest cycles to trust a fit
+MIN_SEPARATION_BPM = 10.0  # minimum round-vs-rest HR gap before trusting the best-fit start time
+_START_TIME_SEARCH_STEP_S = 15.0  # candidate start-time resolution -- cheap to search finely
 
 LABEL_WARMUP_OR_DRILLING = "warmup_or_drilling"
 LABEL_LIKELY_SPARRING = "likely_sparring"
@@ -218,6 +253,12 @@ def compute_sparring_intensity(
     behavior for the same invalid input) if `max_hr <= resting_hr` — that's
     a data-integrity problem, not a "missing data" one, so it isn't papered
     over with a silent `None`.
+
+    The result carries `"source": "manual"` (vs. `compute_auto_sparring_
+    intensity()`'s `"auto_detected"`, 2026-09-29) so a caller/reader can
+    always tell whether this came from Francisco's own real lap presses
+    (ground truth) or a heuristic fit to the raw HR stream — never
+    presented as equally certain (design principle 9).
     """
     if resting_hr is None or max_hr is None:
         return None
@@ -225,15 +266,34 @@ def compute_sparring_intensity(
         raise ValueError(f"max_hr ({max_hr}) must be greater than resting_hr ({resting_hr})")
 
     sparring_laps = [c.lap for c in classify_bjj_laps(laps) if c.label == LABEL_LIKELY_SPARRING]
-    sparring_laps = [lap for lap in sparring_laps if lap.avg_hr is not None and lap.duration_s]
-    if not sparring_laps:
-        return None
+    items = [
+        (lap.avg_hr, lap.duration_s)
+        for lap in sparring_laps
+        if lap.avg_hr is not None and lap.duration_s
+    ]
+    result = _duration_weighted_hrr_result(items, resting_hr, max_hr)
+    if result is not None:
+        result["source"] = "manual"
+    return result
 
-    total_duration_s = sum(lap.duration_s for lap in sparring_laps)
-    weighted_avg_hr = sum(lap.avg_hr * lap.duration_s for lap in sparring_laps) / total_duration_s
+
+def _duration_weighted_hrr_result(
+    items: list[tuple[float, float]], resting_hr: float, max_hr: float
+) -> dict[str, Any] | None:
+    """The shared math behind both `compute_sparring_intensity()` (manual
+    laps) and `compute_auto_sparring_intensity()` (auto-detected segments,
+    2026-09-29) — `items` is a list of (avg_hr, duration_s) pairs for
+    whichever "round"/"likely_sparring" units the caller already identified.
+    `None` (never invented) for an empty `items` or zero total duration.
+    """
+    if not items:
+        return None
+    total_duration_s = sum(duration for _, duration in items)
+    if total_duration_s <= 0:
+        return None
+    weighted_avg_hr = sum(hr * duration for hr, duration in items) / total_duration_s
     pct_hrr = (weighted_avg_hr - resting_hr) / (max_hr - resting_hr) * 100.0
     zone, zone_label = _hrr_zone(pct_hrr)
-
     return {
         "pct_hrr": round(pct_hrr, 1),
         "zone": zone,
@@ -241,3 +301,197 @@ def compute_sparring_intensity(
         "avg_hr": round(weighted_avg_hr, 1),
         "sparring_duration_min": round(total_duration_s / 60.0, 1),
     }
+
+
+def compute_auto_sparring_intensity(
+    segments: list[ActivityAutoSegment], resting_hr: float | None, max_hr: float | None
+) -> dict[str, Any] | None:
+    """Same Karvonen %HRR intensity read as `compute_sparring_intensity()`,
+    for a BJJ activity Francisco did NOT manually lap — built from
+    `auto_detect_rounds()`'s already-labeled segments instead. No
+    classification step is needed here (unlike the manual path's
+    `classify_bjj_laps()`): a segment's label is already known by
+    construction from the fixed-cadence template fit, not inferred from its
+    own HR level after the fact.
+
+    Returns `None` (never invented) when `resting_hr`/`max_hr` is missing or
+    no segment is labeled `"round"` (a rest day, a non-BJJ day, or a session
+    `auto_detect_rounds()` couldn't confidently fit at all). Raises
+    `ValueError` on `max_hr <= resting_hr`, same as the manual path.
+
+    The result carries `"source": "auto_detected"` — see
+    `compute_sparring_intensity()`'s own docstring for why this is always
+    labeled, never silently presented as ground truth.
+    """
+    if resting_hr is None or max_hr is None:
+        return None
+    if max_hr <= resting_hr:
+        raise ValueError(f"max_hr ({max_hr}) must be greater than resting_hr ({resting_hr})")
+
+    items = [
+        (segment.avg_hr, segment.end_s - segment.start_s)
+        for segment in segments
+        if segment.label == "round" and segment.avg_hr is not None
+    ]
+    result = _duration_weighted_hrr_result(items, resting_hr, max_hr)
+    if result is not None:
+        result["source"] = "auto_detected"
+    return result
+
+
+def auto_detect_rounds(
+    activity_id: str,
+    hr_stream: list[tuple[float, float]],
+    round_duration_s: float,
+    rest_duration_s: float,
+    *,
+    min_cycles: int = MIN_CYCLES_FOR_AUTO_DETECT,
+    min_separation_bpm: float = MIN_SEPARATION_BPM,
+) -> list[ActivityAutoSegment]:
+    """Locates Francisco's known, fixed round/rest cadence
+    (`round_duration_s`/`rest_duration_s`, from `config/athlete.yaml:
+    bjj_recording`) directly in a BJJ activity's raw heart-rate stream
+    (`ingest/garmin.py: fetch_activity_hr_stream()`'s (elapsed_seconds,
+    heart_rate) pairs), for sessions he hasn't manually lapped. See the
+    module docstring for the full reasoning (a template fit with one free
+    parameter, not blind changepoint detection).
+
+    Algorithm: the only real unknown is WHEN the round/rest cycling starts
+    (the leading drilling/warmup block's length varies session to session,
+    per his own established lapping convention where lap 1 is always
+    drilling). Brute-force search over candidate start times (every
+    `_START_TIME_SEARCH_STEP_S` seconds, from 0 up to the latest point that
+    still leaves room for `min_cycles` full cycles) — for each candidate,
+    everything from that point onward is tiled into repeating
+    round/rest cycles and scored by how well it separates round-phase HR
+    from rest-phase HR (mean round HR minus mean rest HR). The candidate
+    with the best separation wins. This is cheap (a few hundred candidates,
+    each one pass over a ~1000-2000 point stream) — no need for anything
+    fancier.
+
+    Returns `[]` (never a low-confidence guess, design principle 6) when:
+    - the stream is empty;
+    - the stream's total duration can't fit `min_cycles` full cycles at all;
+    - even the best-fitting start time's round-vs-rest separation is below
+      `min_separation_bpm` — the pattern genuinely isn't showing up clearly
+      enough to trust (e.g. a continuous roll with no real rest breaks, or a
+      stream too noisy/short to tell).
+
+    Otherwise returns one `ActivityAutoSegment` per detected segment, in
+    order (`segment_index` assigned sequentially starting at 0): an initial
+    `"warmup_or_drilling"` segment covering everything before the detected
+    start time (only if that start time is > 0), then alternating
+    `"round"`/`"rest"` segments tiling from there to the end of the stream —
+    the final segment is truncated to the real data available rather than
+    padded out to a full `round_duration_s`/`rest_duration_s` (never
+    inventing data past what was actually recorded).
+
+    Known, stated limitation: this assumes ONE clean drilling block followed
+    by uninterrupted cycling to the end. An unplanned extra break, a paused-
+    and-resumed recording, or genuinely irregular round lengths would
+    confuse the fit — not detected or flagged separately here, since doing
+    so would need real examples of those failure modes to design against,
+    which don't exist yet.
+    """
+    if not hr_stream:
+        return []
+
+    stream = sorted(hr_stream, key=lambda point: point[0])
+    total_duration_s = stream[-1][0]
+    cycle_s = round_duration_s + rest_duration_s
+    min_required_s = cycle_s * min_cycles
+    if total_duration_s < min_required_s:
+        return []
+
+    best_start: float | None = None
+    best_separation: float | None = None
+    max_start = total_duration_s - min_required_s
+    start_candidate = 0.0
+    while start_candidate <= max_start:
+        round_hrs: list[float] = []
+        rest_hrs: list[float] = []
+        for t, hr in stream:
+            if t < start_candidate:
+                continue
+            phase = (t - start_candidate) % cycle_s
+            (round_hrs if phase < round_duration_s else rest_hrs).append(hr)
+        if round_hrs and rest_hrs:
+            separation = (sum(round_hrs) / len(round_hrs)) - (sum(rest_hrs) / len(rest_hrs))
+            if best_separation is None or separation > best_separation:
+                best_separation = separation
+                best_start = start_candidate
+        start_candidate += _START_TIME_SEARCH_STEP_S
+
+    if best_start is None or best_separation is None or best_separation < min_separation_bpm:
+        return []
+
+    def _segment_stats(points: list[tuple[float, float]]) -> tuple[float, float] | None:
+        if not points:
+            return None
+        hrs = [hr for _, hr in points]
+        return sum(hrs) / len(hrs), max(hrs)
+
+    segments: list[ActivityAutoSegment] = []
+    segment_index = 0
+
+    if best_start > 0:
+        warmup_points = [(t, hr) for t, hr in stream if t < best_start]
+        stats = _segment_stats(warmup_points)
+        if stats is not None:
+            avg_hr, max_hr_seen = stats
+            segments.append(
+                ActivityAutoSegment(
+                    activity_id=activity_id,
+                    segment_index=segment_index,
+                    start_s=0.0,
+                    end_s=best_start,
+                    label="warmup_or_drilling",
+                    avg_hr=avg_hr,
+                    max_hr=max_hr_seen,
+                )
+            )
+            segment_index += 1
+
+    cycle_start = best_start
+    while cycle_start < total_duration_s:
+        round_end = min(cycle_start + round_duration_s, total_duration_s)
+        round_points = [(t, hr) for t, hr in stream if cycle_start <= t < round_end]
+        stats = _segment_stats(round_points)
+        if stats is not None:
+            avg_hr, max_hr_seen = stats
+            segments.append(
+                ActivityAutoSegment(
+                    activity_id=activity_id,
+                    segment_index=segment_index,
+                    start_s=cycle_start,
+                    end_s=round_end,
+                    label="round",
+                    avg_hr=avg_hr,
+                    max_hr=max_hr_seen,
+                )
+            )
+            segment_index += 1
+
+        rest_start = round_end
+        rest_end = min(cycle_start + cycle_s, total_duration_s)
+        if rest_start < rest_end:
+            rest_points = [(t, hr) for t, hr in stream if rest_start <= t < rest_end]
+            stats = _segment_stats(rest_points)
+            if stats is not None:
+                avg_hr, max_hr_seen = stats
+                segments.append(
+                    ActivityAutoSegment(
+                        activity_id=activity_id,
+                        segment_index=segment_index,
+                        start_s=rest_start,
+                        end_s=rest_end,
+                        label="rest",
+                        avg_hr=avg_hr,
+                        max_hr=max_hr_seen,
+                    )
+                )
+                segment_index += 1
+
+        cycle_start += cycle_s
+
+    return segments

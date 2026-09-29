@@ -4219,6 +4219,111 @@ the Morton/Nunes plateau plus Longland's low-protein-arm result suggest real
 risk begins; above ~185g is not harmful, just not required by any of the
 evidence reviewed.
 
+## Auto-detected BJJ rounds from raw HR alone, a real limitation found (2026-09-29)
+
+Francisco asked directly whether round/rest boundaries could be inferred
+from heart-rate ups and downs alone, since he doesn't want to press a lap
+button while sparring and focused on it — then gave the one fact that makes
+this tractable: "we always do 5 minute rounds with 60 second rest," a FIXED,
+KNOWN cadence, not something that has to be discovered from scratch.
+
+**Verified the raw input exists before building anything**: Garmin's
+`get_activity_details()` exposes a genuine per-activity heart-rate TIME
+SERIES (confirmed directly against a real 2026-09-29 session — 1,436 real
+points across 78 minutes, ~1 every 3 seconds), not just the single avg/max
+summary already captured. `ingest/garmin.py: fetch_activity_hr_stream()`
+extracts (elapsed_seconds, heart_rate) pairs from it, looking up
+`directHeartRate`/`sumElapsedDuration` by descriptor NAME (not a hardcoded
+index, since Garmin could reorder these).
+
+**Built** (`metrics/bjj_laps.py: auto_detect_rounds()`, migration 0010
+`activity_auto_segments`): a template-fitting approach, not blind
+changepoint detection — the only real unknown is WHEN the round/rest
+cycling starts (the leading drilling block's length varies class to
+class), found by brute-force search over candidate start times, scoring
+each by how well it separates round-phase HR from rest-phase HR across the
+whole activity. Requires a minimum real separation
+(`MIN_SEPARATION_BPM = 10.0`, reasoned default) and minimum cycle count
+(`MIN_CYCLES_FOR_AUTO_DETECT = 2`) before trusting a fit at all — same
+"never guess when the signal is too weak" gate as `classify_bjj_laps()`'s
+own `insufficient_data`. Wired into `ingest/live_sync.py: sync_garmin()`'s
+existing BJJ block: runs ONLY when an activity has ≤1 real manual lap (no
+real round-by-round ground truth to prefer instead) — manual laps always
+win when they exist. `metrics/strain.py: _sparring_intensity_for_date()`
+now tries the manual path first, falls back to
+`compute_auto_sparring_intensity()` (the auto-segment sibling of
+`compute_sparring_intensity()`, same Karvonen %HRR math) when manual laps
+don't exist or don't classify. The result's own `"source"` field
+(`"manual"` vs. `"auto_detected"`) is threaded all the way to the frontend
+caption ("Sparring rounds (estimated from heart-rate pattern)...") so an
+estimate is never shown as equally certain as real ground truth.
+
+Round/rest durations live in `config/athlete.yaml: bjj_recording`
+(Francisco's own stated convention, not a physiological constant, so not
+hardcoded in the detector itself).
+
+**Verified against clean synthetic data first** — 8 new tests hand-construct
+HR streams with a KNOWN embedded cadence and confirm the detector finds the
+right start time, correctly labels warmup/round/rest, truncates the final
+segment to real data rather than padding it, and returns `[]` (never
+guesses) below the minimum cycle count or when there's no real round-vs-rest
+separation at all (e.g. a continuous roll with no breaks).
+
+**Then verified end-to-end against the real account, and a real limitation
+surfaced immediately** — the exact kind of finding this project's own
+discipline exists to catch rather than paper over. Francisco's real
+2026-09-29 session (un-lapped, 78 real minutes) manually logged as 5 rounds
+rolled. The auto-detector found only 3: it correctly located a genuine,
+strongly-separated stretch (avg round HR ~185bpm vs. dips to ~165-178bpm) in
+the LAST ~17 minutes of the recording, but didn't extend back far enough to
+capture the real earlier rounds. Plotting the actual HR trace (30-second
+bins) explains why: the true rolling block ran from roughly minute 43 to
+77.5 — 34.5 minutes, consistent with ~5 real rounds — but the 60-second rest
+breaks inside it only drop HR by 10-25bpm (a real, expected physiological
+fact: HR doesn't fully recover between hard rounds), and real round-to-round
+timing isn't perfectly rigid. A purely fixed, zero-drift 6-minute template
+matched an initial anchor point well, but drifted out of phase with the real
+(slightly irregular) round timing after a few cycles — so it kept matching
+the last few rounds cleanly while losing the earlier ones to phase drift,
+rather than under- or over-counting randomly. The first ~43 minutes (technical
+drilling, its own irregular ~10-minute burst pattern unrelated to the 5+1
+cadence) was correctly excluded by the separation gate — not part of this
+finding.
+
+**Left as-is, not silently patched**: the resulting `%HRR`/zone number from
+the 3 detected segments (95.9% HRR, Zone 5 "max", avg_hr 185.5) is still
+plausibly a reasonable INTENSITY estimate for the session — the whole real
+rolling block ran consistently 150-192bpm throughout, so a partial capture
+still reads a fair "how hard were the rounds" answer even though the ROUND
+COUNT undercounts. This matches what `compute_sparring_intensity()`/
+`compute_auto_sparring_intensity()` have always promised (a same-day
+intensity read across whatever real signal was found), not a guaranteed
+complete round tally. A more robust fix exists in principle (a locally
+re-anchoring/adaptive detector that tolerates round-to-round timing drift,
+instead of one rigid global template) but is a real, bigger redesign with
+only one real example to validate against so far — flagged for Francisco to
+decide whether it's worth the investment once a few more un-lapped sessions
+accumulate to test against, not built speculatively here.
+
+39 new tests total (`auto_detect_rounds()`, `fetch_activity_hr_stream()`,
+`compute_auto_sparring_intensity()`, `_sparring_intensity_for_date()`'s
+fallback/priority ordering, `ActivityAutoSegment` model round-trip), 868
+tests passing, ruff/ruff-format clean, frontend `tsc -b`/build clean.
+
+**Decision, same day**: Francisco chose to ship this as-is rather than block
+on the bigger redesign, and asked directly to be reminded to revisit it once
+more real data exists. **Next session, check this first**:
+`SELECT COUNT(DISTINCT activity_id) FROM activity_auto_segments;` (1 as of
+today, from the 2026-09-29 session above). Once **4 or more** real un-lapped
+sessions have accumulated, proactively raise this with Francisco — pull all
+of them, compare the detector's round count/boundaries against whatever
+ground truth exists (`bjj_sessions.rounds_rolled`, or real manual laps if he
+happened to lap any of them), and decide together whether the drift pattern
+is consistent enough to design a real fix against (the locally re-anchoring/
+adaptive detector idea above) or whether the current version is good enough
+to leave alone. Don't rebuild speculatively before then. (Also saved as a
+memory entry: `bjj-auto-round-detection-revisit`.)
+
 ## Definition of done for v1
 
 One command each morning: syncs Garmin + Strava, recomputes everything, prints a

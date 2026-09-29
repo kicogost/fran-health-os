@@ -49,8 +49,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import yaml  # noqa: E402
+
 from health_os.core import db  # noqa: E402
 from health_os.ingest.live_sync import DEFAULT_WINDOW_DAYS, run_live_sync  # noqa: E402
+
+CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "athlete.yaml"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -64,9 +68,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--db-path", default=None, help="Override HEALTH_OS_DB_PATH")
     args = parser.parse_args(argv)
 
+    with CONFIG_PATH.open(encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+
     conn = db.init_db(args.db_path)
     try:
-        result = run_live_sync(conn, days=args.days)
+        result = run_live_sync(conn, config, days=args.days)
     finally:
         conn.close()
 

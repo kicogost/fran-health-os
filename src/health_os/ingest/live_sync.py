@@ -20,6 +20,7 @@ import traceback
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from garminconnect import GarminConnectAuthenticationError
 
@@ -27,6 +28,7 @@ from health_os.core import db
 from health_os.core.dedupe import DedupeResult, dedupe_activities
 from health_os.core.timezones import to_local_date
 from health_os.ingest import garmin, health_auto_export, renpho_csv
+from health_os.metrics.bjj_laps import auto_detect_rounds
 
 DEFAULT_WINDOW_DAYS = 3
 DEFAULT_HEALTH_AUTO_EXPORT_DIR = "data/raw/health_auto_export"
@@ -39,7 +41,9 @@ def today_local() -> date:
     return date.fromisoformat(to_local_date(datetime.now(UTC)))
 
 
-def sync_garmin(conn: sqlite3.Connection, start_date: date, end_date: date) -> bool:
+def sync_garmin(
+    conn: sqlite3.Connection, config: dict[str, Any], start_date: date, end_date: date
+) -> bool:
     run_id = db.start_ingest_run(conn, "garmin_live")
     rows_in = rows_upserted = 0
     errors: list[str] = []
@@ -96,6 +100,34 @@ def sync_garmin(conn: sqlite3.Connection, start_date: date, end_date: date) -> b
                     lap_count += 1
                 if lap_count:
                     print(f"    laps: {lap_count} lap(s) upserted")
+
+                # Auto-detect rounds from the raw HR stream ONLY when
+                # Francisco didn't manually lap this session (2026-09-29 --
+                # he doesn't want to press a button while sparring). <= 1
+                # covers both "no laps at all" and "just lap 1", which per
+                # his own convention is always the warmup/drilling lap, not
+                # a real round -- either way there's no manual ground truth
+                # to prefer over the auto-detected read.
+                if lap_count <= 1:
+                    hr_stream = garmin.fetch_activity_hr_stream(
+                        client, activity.source_id, errors=errors
+                    )
+                    bjj_recording = config.get("bjj_recording", {})
+                    segments = auto_detect_rounds(
+                        activity.activity_id,
+                        hr_stream,
+                        round_duration_s=bjj_recording.get("round_duration_s", 300),
+                        rest_duration_s=bjj_recording.get("rest_duration_s", 60),
+                    )
+                    for segment in segments:
+                        db.upsert(
+                            conn,
+                            "activity_auto_segments",
+                            segment.to_row(),
+                            ["activity_id", "segment_index"],
+                        )
+                    if segments:
+                        print(f"    auto-detected: {len(segments)} round/rest segment(s)")
     except Exception as exc:  # noqa: BLE001 - reported to ingest_runs, not swallowed
         errors.append(str(exc))
         db.finish_ingest_run(
@@ -253,18 +285,22 @@ class LiveSyncResult:
         return self.garmin_ok and self.health_auto_export_ok and self.renpho_csv_ok
 
 
-def run_live_sync(conn: sqlite3.Connection, days: int = DEFAULT_WINDOW_DAYS) -> LiveSyncResult:
+def run_live_sync(
+    conn: sqlite3.Connection, config: dict[str, Any], days: int = DEFAULT_WINDOW_DAYS
+) -> LiveSyncResult:
     """Runs all three live sources for the trailing `days`-day window ending
     today (Europe/Madrid), then the cross-source dedup pass that always runs
     after ingestion regardless of per-source outcome (design principle 5) —
     the exact orchestration `scripts/sync.py`'s `main()` used to inline
     directly; now the one shared implementation for both that CLI entrypoint
-    and `api/sync.py`'s manual "sync now" endpoint.
+    and `api/sync.py`'s manual "sync now" endpoint. `config` (athlete.yaml)
+    is needed for `sync_garmin()`'s BJJ auto-round-detection step
+    (`config["bjj_recording"]`, 2026-09-29).
     """
     end_date = today_local()
     start_date = end_date - timedelta(days=days - 1)
 
-    garmin_ok = sync_garmin(conn, start_date, end_date)
+    garmin_ok = sync_garmin(conn, config, start_date, end_date)
     health_auto_export_ok = sync_health_auto_export(conn)
     renpho_csv_ok = sync_renpho_csv(conn)
 

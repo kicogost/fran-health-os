@@ -236,6 +236,55 @@ class ActivityLap:
         )
 
 
+ACTIVITY_AUTO_SEGMENT_LABELS = ("warmup_or_drilling", "round", "rest")
+
+
+@dataclass(slots=True)
+class ActivityAutoSegment:
+    """One row of `activity_auto_segments` (migration 0010) — grain:
+    (activity_id, segment_index). A DERIVED round/rest boundary for a BJJ
+    activity Francisco didn't manually lap, produced by `metrics/bjj_laps.py:
+    auto_detect_rounds()` fitting his own stated fixed cadence (5min round +
+    60s rest) to the activity's raw heart-rate stream. Deliberately a
+    separate model/table from `ActivityLap` (which holds ONLY what Garmin
+    itself reports) — `label` is set here directly since the detector
+    already knows each segment's phase by construction, unlike
+    `activity_laps`'s own after-the-fact, self-relative classification.
+    """
+
+    activity_id: str
+    segment_index: int
+    start_s: float
+    end_s: float
+    label: str
+    id: int | None = None
+    avg_hr: float | None = None
+    max_hr: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.label not in ACTIVITY_AUTO_SEGMENT_LABELS:
+            raise ValueError(
+                f"label must be one of {ACTIVITY_AUTO_SEGMENT_LABELS}, got {self.label!r}"
+            )
+
+    def to_row(self, *, include_none: bool = False) -> dict[str, Any]:
+        return _row_dict(self, include_none=include_none)
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> ActivityAutoSegment:
+        keys = row.keys()
+        return cls(
+            id=row["id"] if "id" in keys else None,
+            activity_id=row["activity_id"],
+            segment_index=row["segment_index"],
+            start_s=row["start_s"],
+            end_s=row["end_s"],
+            label=row["label"],
+            avg_hr=row["avg_hr"] if "avg_hr" in keys else None,
+            max_hr=row["max_hr"] if "max_hr" in keys else None,
+        )
+
+
 SESSION_FEELINGS = ("dizzy", "gassed", "tired", "okay")  # worst to best
 
 

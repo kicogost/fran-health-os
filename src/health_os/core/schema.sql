@@ -7,7 +7,7 @@
 -- without reading every migration in sequence. tests/core/test_schema_sync.py fails
 -- if this drifts from the migrations.
 --
--- Current version: 9 (core/migrations/0001_initial_schema.sql,
+-- Current version: 10 (core/migrations/0001_initial_schema.sql,
 -- core/migrations/0002_bjj_wellness_and_load.sql,
 -- core/migrations/0003_calisthenics_sessions.sql,
 -- core/migrations/0004_activity_laps.sql,
@@ -15,7 +15,8 @@
 -- core/migrations/0006_illness_log.sql,
 -- core/migrations/0007_renpho_body_composition.sql,
 -- core/migrations/0008_calisthenics_load.sql,
--- core/migrations/0009_health_history.sql)
+-- core/migrations/0009_health_history.sql,
+-- core/migrations/0010_activity_auto_segments.sql)
 --
 -- Note: this snapshot is semantically compared against the migrated schema
 -- (column name/type/notnull/pk/default per table), not byte-for-byte SQL text —
@@ -133,6 +134,29 @@ CREATE TABLE IF NOT EXISTS activity_laps (
     created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     UNIQUE (activity_id, lap_index)
+);
+
+-- Auto-detected round/rest segments — added migration 0010 for un-lapped BJJ
+-- activities (Francisco doesn't want to press a lap button while sparring).
+-- `metrics/bjj_laps.py: auto_detect_rounds()` fits his own stated fixed
+-- cadence (5min round + 60s rest, config/athlete.yaml: bjj_recording) to the
+-- activity's raw heart-rate stream. A SEPARATE table from `activity_laps` on
+-- purpose (that one holds only what Garmin itself reports) — `label` is
+-- stored directly here since the detector already knows each segment's
+-- phase by construction, unlike `activity_laps`'s own after-the-fact,
+-- self-relative classification.
+CREATE TABLE IF NOT EXISTS activity_auto_segments (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    activity_id    TEXT NOT NULL REFERENCES activities (activity_id),
+    segment_index  INTEGER NOT NULL,
+    start_s        REAL NOT NULL,
+    end_s          REAL NOT NULL,
+    label          TEXT NOT NULL CHECK (label IN ('warmup_or_drilling', 'round', 'rest')),
+    avg_hr         REAL,
+    max_hr         REAL,
+    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE (activity_id, segment_index)
 );
 
 -- Manual BJJ log — first-class ingestion path (kickoff doc section 2.4), not an
