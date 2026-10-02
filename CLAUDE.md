@@ -4324,6 +4324,38 @@ adaptive detector idea above) or whether the current version is good enough
 to leave alone. Don't rebuild speculatively before then. (Also saved as a
 memory entry: `bjj-auto-round-detection-revisit`.)
 
+**Real bug found and fixed, 2026-10-02 — the detector hadn't actually run on
+either of the two real sessions since it was built.** Francisco asked
+directly whether his 2026-10-02 open-mat session (10 rounds rolled, 5
+gassed, RPE 9 — his hardest recorded session) had used the new engine. It
+hadn't: `ingest/live_sync.py`'s trigger condition (`lap_count <= 1`, meaning
+"no real manual lapping happened") was checking the RAW Garmin lap count,
+which doesn't distinguish a real lap from an accidental near-instantaneous
+one — both the 2026-09-28 AND 2026-10-02 activities have the exact same
+shape (one near-full-session lap + one ~1-second final lap, almost
+certainly a stray double-tap or a split Garmin inserts when the recording
+stops), so `lap_count` read 2 for both and the detector was silently
+skipped, even though there was no real round-by-round ground truth to
+prefer. Fixed with `MIN_REAL_LAP_DURATION_S = 30.0` — only laps at or above
+this duration count toward "real lapping happened" now; every raw lap is
+still upserted into `activity_laps` regardless (never discard real Garmin
+data), only the DECISION of whether to also auto-detect changed.
+
+Re-ran the sync for real after the fix: it now correctly fires for
+2026-10-02's activity (`garmin:24581473994`) — **and reproduces the exact
+same documented limitation on a second real session**: found only 3 round
+segments in the last ~17 minutes (88.7% HRR, Zone 4 "hard", avg_hr 175.4),
+against Francisco's own real count of 10 rounds. The detected
+"warmup_or_drilling" block's own average HR (151.75bpm, suspiciously high
+for genuine warmup) is itself evidence some real rounds likely bled into
+that bucket rather than being separated out — consistent with the
+already-documented phase-drift failure mode, not a new, different bug.
+This is now **2 of the 4 real sessions** needed before the revisit trigger
+above fires — the 2026-09-28 session's own auto-segments were never
+backfilled retroactively (the fix only takes effect going forward; its
+real HR stream could still be re-run by hand if wanted, but wasn't done
+here since it doesn't change the revisit math either way).
+
 ## Definition of done for v1
 
 One command each morning: syncs Garmin + Strava, recomputes everything, prints a

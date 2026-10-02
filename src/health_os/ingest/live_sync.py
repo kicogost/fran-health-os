@@ -34,6 +34,10 @@ DEFAULT_WINDOW_DAYS = 3
 DEFAULT_HEALTH_AUTO_EXPORT_DIR = "data/raw/health_auto_export"
 DEFAULT_RENPHO_CSV_DIR = "data/raw/renpho"
 
+# A lap shorter than this is an accidental button-tap, not a real
+# round-by-round boundary -- see the real bug this fixed, 2026-10-02.
+MIN_REAL_LAP_DURATION_S = 30.0
+
 
 def today_local() -> date:
     """Europe/Madrid's current calendar date, not the sync machine's system
@@ -95,20 +99,35 @@ def sync_garmin(
             # be one extra API call per activity for no benefit.
             if activity.sub_sport == "bjj":
                 lap_count = 0
+                real_lap_count = 0
                 for lap in garmin.fetch_activity_laps(client, activity.source_id, errors=errors):
                     db.upsert(conn, "activity_laps", lap.to_row(), ["activity_id", "lap_index"])
                     lap_count += 1
+                    # A near-instantaneous "lap" (an accidental double-tap of
+                    # the lap button, or a final split Garmin inserts when
+                    # the recording stops) isn't real round-by-round
+                    # lapping -- real bug found 2026-10-02: Francisco's
+                    # 2026-09-28 AND 2026-10-02 sessions both had exactly
+                    # this shape (one near-full-session lap + one ~1s final
+                    # lap), which made `lap_count <= 1` below incorrectly
+                    # treat them as "manually lapped" and skip
+                    # auto-detection entirely, even though there was no real
+                    # round-by-round ground truth to prefer. Still upserted
+                    # above regardless (never discard real raw Garmin data)
+                    # -- only excluded from this count.
+                    if (lap.duration_s or 0) >= MIN_REAL_LAP_DURATION_S:
+                        real_lap_count += 1
                 if lap_count:
                     print(f"    laps: {lap_count} lap(s) upserted")
 
                 # Auto-detect rounds from the raw HR stream ONLY when
                 # Francisco didn't manually lap this session (2026-09-29 --
                 # he doesn't want to press a button while sparring). <= 1
-                # covers both "no laps at all" and "just lap 1", which per
-                # his own convention is always the warmup/drilling lap, not
-                # a real round -- either way there's no manual ground truth
-                # to prefer over the auto-detected read.
-                if lap_count <= 1:
+                # covers both "no real laps at all" and "just one real lap"
+                # (per his own convention, lap 1 is always the warmup/
+                # drilling lap, not a real round) -- either way there's no
+                # manual ground truth to prefer over the auto-detected read.
+                if real_lap_count <= 1:
                     hr_stream = garmin.fetch_activity_hr_stream(
                         client, activity.source_id, errors=errors
                     )
