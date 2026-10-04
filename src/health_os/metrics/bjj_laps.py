@@ -339,6 +339,39 @@ def compute_auto_sparring_intensity(
     return result
 
 
+def _rounds_consistently_above_rests(
+    segments: list[ActivityAutoSegment], round_duration_s: float
+) -> bool:
+    """Per-cycle sanity check on a template fit (2026-10-03): every COMPLETE
+    round segment must have a higher average HR than each rest segment right
+    next to it. The global separation gate alone can be satisfied by one
+    genuinely hard stretch while the template is forced onto a session that
+    doesn't follow the round/rest cadence at all -- the real case was
+    competition-format training (2-min positional rounds, shark-tank
+    sparring, 30s sprints), where the fit produced "rounds" at 122bpm sitting
+    below the 131bpm "rest" before them. Both real 5+1 sessions on record
+    pass with every round above its neighbouring rests. A truncated final
+    round (shorter than `round_duration_s`) is excluded -- it's a partial
+    window, not a real round. No margin beyond strictly-greater: real 5+1
+    data already shows rounds only ~2bpm above an adjacent rest (HR doesn't
+    fully recover in 60s), so any margin would reject genuine sessions.
+    """
+    for i, segment in enumerate(segments):
+        if segment.label != "round" or segment.avg_hr is None:
+            continue
+        if segment.end_s - segment.start_s < round_duration_s:
+            continue
+        for neighbour_index in (i - 1, i + 1):
+            if not 0 <= neighbour_index < len(segments):
+                continue
+            neighbour = segments[neighbour_index]
+            if neighbour.label != "rest" or neighbour.avg_hr is None:
+                continue
+            if segment.avg_hr <= neighbour.avg_hr:
+                return False
+    return True
+
+
 def auto_detect_rounds(
     activity_id: str,
     hr_stream: list[tuple[float, float]],
@@ -375,7 +408,11 @@ def auto_detect_rounds(
     - even the best-fitting start time's round-vs-rest separation is below
       `min_separation_bpm` — the pattern genuinely isn't showing up clearly
       enough to trust (e.g. a continuous roll with no real rest breaks, or a
-      stream too noisy/short to tell).
+      stream too noisy/short to tell);
+    - any complete round in the fit doesn't sit above the rest periods
+      next to it (`_rounds_consistently_above_rests()`) -- the session
+      doesn't actually follow the round/rest cadence, e.g. competition-
+      format training with different round lengths.
 
     Otherwise returns one `ActivityAutoSegment` per detected segment, in
     order (`segment_index` assigned sequentially starting at 0): an initial
@@ -493,5 +530,8 @@ def auto_detect_rounds(
                 segment_index += 1
 
         cycle_start += cycle_s
+
+    if not _rounds_consistently_above_rests(segments, round_duration_s):
+        return []
 
     return segments

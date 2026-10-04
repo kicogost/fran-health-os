@@ -11,6 +11,7 @@ from health_os.metrics.bjj_laps import (
     LABEL_LIKELY_REST,
     LABEL_LIKELY_SPARRING,
     LABEL_WARMUP_OR_DRILLING,
+    _rounds_consistently_above_rests,
     auto_detect_rounds,
     classify_bjj_laps,
     compute_auto_sparring_intensity,
@@ -415,6 +416,88 @@ class TestAutoDetectRounds:
         )
         segments = auto_detect_rounds("garmin:1", stream, round_duration_s=300, rest_duration_s=60)
         assert all(isinstance(s, ActivityAutoSegment) for s in segments)
+
+    def test_rejects_fit_when_a_round_falls_below_an_adjacent_rest(self) -> None:
+        # Two clean cycles, then the cadence breaks: a "round" window at 90bpm
+        # sits below the 100bpm rest before it. The global separation is still
+        # large (the first two cycles carry it), so only the per-cycle check
+        # stops this -- the competition-format failure from 2026-10-03.
+        stream = _synthetic_stream(
+            warmup_s=0,
+            warmup_hr=110,
+            round_s=300,
+            round_hr=150,
+            rest_s=60,
+            rest_hr=100,
+            n_cycles=4,
+        )
+        stream = [(t, 90.0 if 720 <= t < 1020 else hr) for t, hr in stream]
+        assert (
+            auto_detect_rounds("garmin:1", stream, round_duration_s=300, rest_duration_s=60) == []
+        )
+
+
+def _seg(index: int, label: str, start: float, end: float, hr: float) -> ActivityAutoSegment:
+    return ActivityAutoSegment(
+        activity_id="garmin:1",
+        segment_index=index,
+        start_s=start,
+        end_s=end,
+        label=label,
+        avg_hr=hr,
+        max_hr=hr,
+    )
+
+
+class TestRoundsConsistentlyAboveRests:
+    """`_rounds_consistently_above_rests()` -- the per-cycle sanity check
+    added 2026-10-03, tested directly against segment lists shaped like the
+    real recordings (rounded avg HRs from `activity_auto_segments`)."""
+
+    def test_real_5_plus_1_shape_passes_even_with_small_gaps(self) -> None:
+        # garmin:24539554938 (2026-09-29): one round only ~2bpm above the rest
+        # after it -- must still pass, HR doesn't fully recover in 60s.
+        segments = [
+            _seg(0, "warmup_or_drilling", 0, 3630, 124),
+            _seg(1, "round", 3630, 3930, 188),
+            _seg(2, "rest", 3930, 3990, 178),
+            _seg(3, "round", 3990, 4290, 180),
+            _seg(4, "rest", 4290, 4350, 165),
+            _seg(5, "round", 4350, 4650, 189),
+            _seg(6, "rest", 4650, 4665, 179),
+        ]
+        assert _rounds_consistently_above_rests(segments, 300) is True
+
+    def test_comp_format_shape_fails(self) -> None:
+        # garmin:24588212879 (2026-10-03): a 122bpm "round" right after a
+        # 131bpm "rest" -- the template doesn't fit this session.
+        segments = [
+            _seg(0, "warmup_or_drilling", 0, 4020, 133),
+            _seg(1, "round", 4020, 4320, 180),
+            _seg(2, "rest", 4320, 4380, 131),
+            _seg(3, "round", 4380, 4680, 122),
+            _seg(4, "rest", 4680, 4740, 121),
+        ]
+        assert _rounds_consistently_above_rests(segments, 300) is False
+
+    def test_truncated_final_round_is_ignored(self) -> None:
+        # A 68s partial round at the very end isn't a real round -- its low HR
+        # (the cooldown as the watch is stopped) must not reject the fit.
+        segments = [
+            _seg(0, "round", 0, 300, 170),
+            _seg(1, "rest", 300, 360, 150),
+            _seg(2, "round", 360, 660, 172),
+            _seg(3, "rest", 660, 720, 152),
+            _seg(4, "round", 720, 788, 140),
+        ]
+        assert _rounds_consistently_above_rests(segments, 300) is True
+
+    def test_equal_hr_counts_as_not_above(self) -> None:
+        segments = [
+            _seg(0, "round", 0, 300, 150),
+            _seg(1, "rest", 300, 360, 150),
+        ]
+        assert _rounds_consistently_above_rests(segments, 300) is False
 
 
 class TestComputeAutoSparringIntensity:

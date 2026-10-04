@@ -4356,6 +4356,28 @@ backfilled retroactively (the fix only takes effect going forward; its
 real HR stream could still be re-run by hand if wanted, but wasn't done
 here since it doesn't change the revisit math either way).
 
+**Per-cycle consistency check added, 2026-10-03 — the detector no longer
+forces its template onto sessions that don't follow it.** Francisco's
+2026-10-03 session was competition-format training (2x2min guard passing,
+2x2min retention, 2x2min closed-guard escapes, 2x3min shark-tank sparring,
+3x30s speed passes — repeats once on 2026-10-10, then done), not the 5+1
+cadence. The detector still fired: one genuinely hard stretch (180bpm)
+cleared the global `MIN_SEPARATION_BPM` gate on its own, and the rest of the
+template got tiled over unrelated HR — "rounds" at 122bpm sitting right
+after a 131bpm "rest" — producing a wrong Zone 3 sparring-intensity caption
+on Today. Fixed with `metrics/bjj_laps.py: _rounds_consistently_above_rests()`:
+every COMPLETE round must have a strictly higher avg HR than each adjacent
+rest, or `auto_detect_rounds()` returns `[]`. Checked against both real 5+1
+sessions on record first — both pass (tightest real gap: a round only ~2bpm
+above the following rest, which is why there's no extra margin). A truncated
+final round is excluded from the check. Separately, `ingest/live_sync.py`
+now DELETEs an activity's existing auto-segments before writing a re-fit
+(only when the HR stream actually downloaded, so a transient fetch failure
+can't wipe a good fit) — upsert-only had meant a re-fit finding fewer/no
+segments left stale rows behind. Real re-sync result: 2026-10-03's 10 bad
+segments removed, sparring intensity now `None` (Strain 13.1 unaffected),
+2026-10-02's 7 segments re-fit unchanged. 5 new tests, 873 passing.
+
 ## Definition of done for v1
 
 One command each morning: syncs Garmin + Strava, recomputes everything, prints a

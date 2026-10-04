@@ -138,6 +138,16 @@ def sync_garmin(
                         round_duration_s=bjj_recording.get("round_duration_s", 300),
                         rest_duration_s=bjj_recording.get("rest_duration_s", 60),
                     )
+                    # Replace, not just upsert: a re-fit that finds fewer segments (or
+                    # none -- e.g. a non-5+1 session rejected by the detector's
+                    # consistency check) must not leave stale segments behind. Only
+                    # when the stream actually downloaded, so a transient fetch
+                    # failure can't wipe a previously-good fit.
+                    if hr_stream:
+                        conn.execute(
+                            "DELETE FROM activity_auto_segments WHERE activity_id = ?",
+                            (activity.activity_id,),
+                        )
                     for segment in segments:
                         db.upsert(
                             conn,
