@@ -68,6 +68,12 @@ ACTIVITIES_GLOB = "*summarizedActivities.json"
 UDS_GLOB = "UDSFile_*.json"
 SLEEP_GLOB = "*_sleepData.json"
 HEALTH_STATUS_GLOB = "*_healthStatusData.json"
+# VO2max lives in DI-Connect-Metrics, not with the rest of the wellness data
+# (found 2026-10-06 -- it was in the real export all along, just never read).
+# MaxMetData is Garmin's daily calibrated value; ActivityVo2Max is the per-
+# activity reading and only fills dates MaxMetData doesn't cover.
+MAX_MET_GLOB = "MetricsMaxMetData_*.json"
+ACTIVITY_VO2MAX_GLOB = "ActivityVo2Max_*.json"
 
 _CM_TO_M = 0.01
 _MS_TO_S = 0.001
@@ -218,6 +224,33 @@ def _extract_health_status_fields(day: dict[str, Any]) -> dict[str, Any]:
     return fields
 
 
+def _vo2max_by_date(paths: list[Path]) -> dict[str, float]:
+    """One VO2max per calendar date from Garmin's metric files. Running wins
+    over any other sport on the same date: every real value on this account
+    is running-based, and it's the anchor `metrics/vo2max.py` calibrates
+    against -- a cycling value (power-meter based) would be a different
+    measurement, never silently mixed in."""
+    chosen: dict[str, tuple[bool, float]] = {}
+    for path in paths:
+        with path.open(encoding="utf-8") as f:
+            for entry in json.load(f):
+                date = entry.get("calendarDate")
+                value = entry.get("vo2MaxValue")
+                if not date or value is None:
+                    continue
+                is_running = entry.get("sport") == "RUNNING"
+                existing = chosen.get(date)
+                if existing is None or (is_running and not existing[0]):
+                    chosen[date] = (is_running, float(value))
+    return {date: value for date, (_, value) in chosen.items()}
+
+
+def _parse_vo2max(export_dir: Path) -> dict[str, float]:
+    by_date = _vo2max_by_date(_find_files(export_dir, ACTIVITY_VO2MAX_GLOB))
+    by_date.update(_vo2max_by_date(_find_files(export_dir, MAX_MET_GLOB)))
+    return by_date
+
+
 def parse_daily_metrics(export_dir: Path) -> Iterator[DailyMetric]:
     """Merge UDS + sleep + health-status JSON into one `DailyMetric` per
     calendar date. Every populated field is tagged `"garmin"` in `sources`
@@ -246,6 +279,9 @@ def parse_daily_metrics(export_dir: Path) -> Iterator[DailyMetric]:
                 date = day.get("calendarDate")
                 if date:
                     by_date.setdefault(date, {}).update(_extract_health_status_fields(day))
+
+    for date, vo2max in _parse_vo2max(export_dir).items():
+        by_date.setdefault(date, {})["vo2max"] = vo2max
 
     for date in sorted(by_date):
         fields = by_date[date]

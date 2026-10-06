@@ -106,6 +106,23 @@ class TestParseDailyMetrics:
         assert day.hrv_status == "LOW"
         assert day.spo2_avg is None  # SPO2 entry present but has no "value"
 
+    def test_vo2max_running_value_preferred_over_cycling(self) -> None:
+        by_date = {m.date: m for m in parse_daily_metrics(FIXTURE_DIR)}
+        # MaxMetData has both CYCLING 49 and RUNNING 52 on this date, and
+        # ActivityVo2Max has 51 -- the daily running MaxMet value wins.
+        assert by_date["2026-01-15"].vo2max == pytest.approx(52.0)
+        assert by_date["2026-01-15"].sources["vo2max"] == "garmin"
+
+    def test_vo2max_null_value_skipped(self) -> None:
+        by_date = {m.date: m for m in parse_daily_metrics(FIXTURE_DIR)}
+        assert by_date["2026-01-16"].vo2max is None
+
+    def test_vo2max_only_date_still_yielded(self) -> None:
+        # A per-activity VO2max on a date with no other wellness data is
+        # still a real reading, not dropped.
+        by_date = {m.date: m for m in parse_daily_metrics(FIXTURE_DIR)}
+        assert by_date["2026-01-17"].vo2max == pytest.approx(50.0)
+
     def test_dates_yielded_in_ascending_order(self) -> None:
         dates = [m.date for m in parse_daily_metrics(FIXTURE_DIR)]
         assert dates == sorted(dates)
