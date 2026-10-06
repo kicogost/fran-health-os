@@ -4378,6 +4378,60 @@ segments left stale rows behind. Real re-sync result: 2026-10-03's 10 bad
 segments removed, sparring intensity now `None` (Strain 13.1 unaffected),
 2026-10-02's 7 segments re-fit unchanged. 5 new tests, 873 passing.
 
+## VO2max section built — measured history + a personally-calibrated estimate (2026-10-06)
+
+Francisco asked for a VO2max section inferred from BJJ training and resting HR,
+since he doesn't run (knee guardrail) and has no power meter — research first.
+
+**Real gap found first**: the Garmin bulk export had 12 real run-based VO2max
+readings all along (`DI-Connect-Metrics/MetricsMaxMetData_*.json` +
+`ActivityVo2Max_*.json`: 50 in Jun 2025 → 51 Mar 2026 → 53-54 Apr-May → 53 on
+2026-06-13, the last) — `ingest/garmin_bulk.py` never read that folder.
+Now parsed into `daily_metrics.vo2max` (running preferred over any other sport
+on the same date; daily MaxMet over per-activity), 3 new tests, real backfill
+re-run (dedupe found nothing new).
+
+**Research** (research agent, every citation checked against its PubMed record;
+neither previously-caught fabricated WHOOP paper recurred). Key findings:
+- Uth et al. 2004 (PMID 14624296, VO2max ≈ 15.3 × HRmax/HRrest) is the only
+  resting-data method with usable error in trained men, but the 15.3 rests on 10
+  people, an independent test found 14.6 ± 2.6 (Castagna 2022, PMID 35301581),
+  and both used supine rested HR. A wearable's daily-minimum RHR biases it high
+  — confirmed on this account: raw formula gives 57.1 for June vs Garmin's 53.
+- No validated method turns HR into VO2max without a known workload (speed/
+  power): BJJ HR and group-ride speed can't be inputs. HRR is confounded by the
+  preceding effort (Daanen 2012, PMID 22357753). HRV is bidirectional/saturating.
+- Within-person RHR change tracks VO2max change only weakly (r=0.37, Hansen
+  2025, PMID 39833426). Garmin's own estimate carries ~5-7% error (meta-analysis
+  PMID 35072942). BJJ athletes' VO2max: 42-52 (Andreato 2017, PMID 28194734).
+- Jackson 1990 / HUNT non-exercise coefficients could NOT be verified from a
+  primary source — deliberately not implemented.
+
+**Built**: `metrics/vo2max.py` (pure) — headline is the last REAL measurement
+with its age; secondary estimate = personal factor (fitted to his own 7 usable
+anchors, i.e. those with a 28-day RHR median behind them) × HRmax / 28-day
+median RHR, ±1σ with σ = √(3.5² + σ_cal² + (0.3 × weeks since anchor)²), capped
+at anchor −16%/+10%, low confidence after 12 weeks, hidden after 26. The 0.3/
+week drift is a reasoned default (no literature value). HRmax = 197 lives in
+`config/athlete.yaml: fitness.hr_max_bpm`, set by hand — NOT derived from
+`MAX(activities.max_hr)`, because a 207 optical glitch exists on a strength
+session. A "maintained, not improved" caveat appears whenever the estimate
+exceeds the anchor (RHR also falls during a calorie deficit). BJJ round→rest HR
+drop (`bjj_rest_recovery()`, from `activity_auto_segments`), RHR/HRV 28-day
+then→now, and a weight-only ml/kg/min effect are context only, never inputs.
+`api/fitness.py` + `GET /api/fitness/vo2max`; `components/fitness/
+Vo2maxSection.tsx` on Trends (independent of the window selector, real time
+axis). The estimate line only starts AFTER the last real measurement — drawn
+through the anchor period it visibly disagreed with the real readings.
+
+**Honest real-data finding**: the personal fit is loose (σ_cal 3.1) — in mid-May
+his 28-day RHR rose to 55-56 while Garmin still read 54, exactly the weak link
+the research flagged. Real output 2026-10-06: **53 measured (115 days ago),
+estimate ~56, likely range 49-63, low confidence**. BJJ rest drops: 13 / 18 /
+17 bpm (29 Sep / 2 Oct / 5 Oct). Only a real exercise-based measurement (power
+meter / smart trainer / lab test) can re-anchor it. 27 new tests, suite green,
+ruff/tsc/build clean, verified via Chrome-headless screenshot of the live page.
+
 ## Definition of done for v1
 
 One command each morning: syncs Garmin + Strava, recomputes everything, prints a

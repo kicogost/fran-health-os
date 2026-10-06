@@ -1,5 +1,6 @@
 import type { CompPrepPayload } from "@/types/compPrep"
 import type { DataHealthPayload } from "@/types/dataHealth"
+import type { Vo2maxPayload } from "@/types/fitness"
 import type {
   AllergyRequest,
   AllergyRow,
@@ -118,6 +119,10 @@ export function fetchCompPrep(): Promise<CompPrepPayload> {
 
 export function fetchDataHealth(): Promise<DataHealthPayload> {
   return getJson<DataHealthPayload>("/data-health")
+}
+
+export function fetchVo2max(): Promise<Vo2maxPayload> {
+  return getJson<Vo2maxPayload>("/fitness/vo2max")
 }
 
 export function fetchCorrelations(): Promise<CorrelationResult[]> {

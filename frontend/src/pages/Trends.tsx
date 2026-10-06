@@ -12,6 +12,7 @@ import type {
 } from "@/types/trends"
 import { TrendChart } from "@/components/charts/TrendChart"
 import { StackedBarChart } from "@/components/charts/StackedBarChart"
+import { Vo2maxSection } from "@/components/fitness/Vo2maxSection"
 
 const WINDOW_OPTIONS = [30, 90, 365] as const
 
@@ -122,6 +123,8 @@ export function TrendsPage() {
               <InsightCard key={i} insight={insight} />
             ))}
           </div>
+
+          <Vo2maxSection />
 
           {!hasConfirmedCorrelation && correlations && (
             <p className="text-xs text-muted-foreground px-1">

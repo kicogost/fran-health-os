@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse
 from health_os.api import log as log_api
 from health_os.api.comp_prep import build_comp_prep_payload
 from health_os.api.data_health import build_data_health_payload
+from health_os.api.fitness import build_fitness_payload
 from health_os.api.sync import run_manual_sync
 from health_os.api.today import build_today_payload
 from health_os.api.training import build_training_payload
@@ -98,6 +99,18 @@ def get_trends(window_days: int = 90) -> dict[str, Any]:
     conn = db.init_db()
     try:
         return build_trends_payload(conn, window_days, _load_config())
+    finally:
+        conn.close()
+
+
+@app.get("/api/fitness/vo2max")
+def get_fitness_vo2max() -> dict[str, Any]:
+    conn = db.init_db()
+    try:
+        # Same "latest daily_metrics date" convention as /api/training.
+        row = conn.execute("SELECT MAX(date) AS d FROM daily_metrics").fetchone()
+        as_of_date = row["d"] if row and row["d"] else to_local_date(datetime.now(UTC))
+        return build_fitness_payload(conn, _load_config(), as_of_date)
     finally:
         conn.close()
 
