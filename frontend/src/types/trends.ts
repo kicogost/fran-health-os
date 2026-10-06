@@ -89,7 +89,7 @@ export interface ReadinessHistory {
 // bad=red, neutral=gray, unknown=muted (real "not enough data" state, never
 // silently neutral), info=blue (a detected pattern, neither good nor bad).
 export interface TrendInsight {
-  metric: "weight" | "sleep" | "hrv" | "rhr" | "correlation"
+  metric: "weight" | "goal" | "sleep" | "hrv" | "rhr" | "correlation"
   tone: "good" | "neutral" | "bad" | "unknown" | "info"
   headline: string
   detail: string | null

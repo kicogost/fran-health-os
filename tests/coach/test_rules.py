@@ -540,3 +540,53 @@ class TestShouldDeload:
         )
         assert result["recommended"] is False
         assert result["markers_fired"] == ["rhr_sustained_rise"]
+
+
+class TestActivePlan:
+    """`active_plan()` -- the comp-prep plan until `weekly_architecture`
+    starts, the post-comp week after (real gap closed 2026-10-06: the
+    coaching layer used to read `comp_prep` unconditionally)."""
+
+    _CONFIG = {
+        "comp_prep": {
+            "weekly_template": [{"day": "sunday", "sessions": [{"type": "rest"}]}],
+            "strength_sessions": {"strength_a": {"exercises": ["old: 3x5"]}},
+        },
+        "weekly_architecture": {
+            "active": True,
+            "starts": "2026-10-19",
+            "weekly_template": [
+                {"day": "sunday", "sessions": [{"type": "bike", "subtype": "intervals_4x4"}]}
+            ],
+            "strength_sessions": {"strength_a": {"exercises": ["new: 4x5"]}},
+        },
+    }
+
+    def test_comp_prep_before_start(self) -> None:
+        assert scheduled_sessions_for(self._CONFIG, "sunday", "2026-10-18") == [{"type": "rest"}]
+
+    def test_post_comp_from_start_date(self) -> None:
+        sessions = scheduled_sessions_for(self._CONFIG, "sunday", "2026-10-25")
+        assert sessions == [{"type": "bike", "subtype": "intervals_4x4"}]
+
+    def test_strength_breakdown_follows_the_date(self) -> None:
+        assert (
+            calisthenics_exercise_breakdown(self._CONFIG, "strength_a", "2026-10-12") == "old: 3x5"
+        )
+        assert (
+            calisthenics_exercise_breakdown(self._CONFIG, "strength_a", "2026-10-19") == "new: 4x5"
+        )
+
+    def test_inactive_post_comp_plan_never_takes_over(self) -> None:
+        config = {
+            **self._CONFIG,
+            "weekly_architecture": {**self._CONFIG["weekly_architecture"], "active": False},
+        }
+        assert scheduled_sessions_for(config, "sunday", "2027-01-01") == [{"type": "rest"}]
+
+    def test_no_date_keeps_comp_prep(self) -> None:
+        assert scheduled_sessions_for(self._CONFIG, "sunday") == [{"type": "rest"}]
+
+    def test_intervals_guidance_skips_on_amber(self) -> None:
+        session = {"type": "bike", "subtype": "intervals_4x4"}
+        assert "Skip the intervals" in session_guidance(session, "amber")

@@ -57,7 +57,7 @@ class TestResolveSessionInteractiveMode:
         monkeypatch.setattr(
             log_calisthenics,
             "_load_prescribed_exercises",
-            lambda session_type: ["pull-ups: 4x5", "push-ups: 3x8"],
+            lambda session_type, on_date=None: ["pull-ups: 4x5", "push-ups: 3x8"],
         )
         answers = iter(
             [
@@ -91,7 +91,7 @@ class TestResolveSessionInteractiveMode:
         monkeypatch.setattr(
             log_calisthenics,
             "_load_prescribed_exercises",
-            lambda session_type: ["pull-ups: 4x5", "push-ups: 3x8"],
+            lambda session_type, on_date=None: ["pull-ups: 4x5", "push-ups: 3x8"],
         )
         answers = iter(
             [
@@ -187,7 +187,9 @@ class TestResolveSessionCustomExercises:
         with real sets/reps before this -- confirms it works even when
         _load_prescribed_exercises returns nothing at all.
         """
-        monkeypatch.setattr(log_calisthenics, "_load_prescribed_exercises", lambda session_type: [])
+        monkeypatch.setattr(
+            log_calisthenics, "_load_prescribed_exercises", lambda session_type, on_date=None: []
+        )
         answers = iter(
             [
                 "2026-09-02",  # date

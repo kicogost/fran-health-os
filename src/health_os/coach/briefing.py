@@ -192,7 +192,9 @@ def compute_daily_plan(
     # existed until 2026-08-30 (the schedule was in config, nothing read it).
     taper_override = rules.taper_day_override(config, today)
     sessions_today = (
-        [taper_override] if taper_override else rules.scheduled_sessions_for(config, weekday_name)
+        [taper_override]
+        if taper_override
+        else rules.scheduled_sessions_for(config, weekday_name, today)
     )
     downgrade = rules.should_downgrade_to_rest(band_history)
 
@@ -218,7 +220,7 @@ def compute_daily_plan(
         # calisthenics entries don't carry `notes` today, but a future one
         # (or an injury-guardrail note) must not be silently dropped.
         if session.get("type") == "calisthenics":
-            breakdown = rules.calisthenics_exercise_breakdown(config, session.get("subtype"))
+            breakdown = rules.calisthenics_exercise_breakdown(config, session.get("subtype"), today)
             if breakdown:
                 existing_notes = session.get("notes")
                 session_out["notes"] = (
@@ -368,6 +370,33 @@ def _notable_trend_observation(
         return "Your resting heart rate has been higher than usual for 3 days in a row."
 
     weight_obs = _rows_to_tuples(daily_rows, "weight_kg")
+
+    # Post-comp goal (15% body fat, lean mass kept or gained): speak up only
+    # for the two failure modes the goal exists to prevent, and only once the
+    # phase has started -- body_comp.body_recomp_progress().
+    post_comp_goal = config.get("goals", {}).get("post_comp")
+    if post_comp_goal and today >= str(post_comp_goal["starts"]):
+        progress = body_comp.body_recomp_progress(
+            weight_obs=weight_obs,
+            body_fat_obs=_rows_to_tuples(daily_rows, "body_fat_pct"),
+            lean_obs=_rows_to_tuples(daily_rows, "lean_body_mass_kg"),
+            target_body_fat_pct=float(post_comp_goal["target_body_fat_pct"]),
+            loss_kg_per_week_range=tuple(post_comp_goal["fat_loss_kg_per_week_range"]),
+            starts=str(post_comp_goal["starts"]),
+            today=today,
+        )
+        if progress["status"] == "lean_mass_dropping":
+            return (
+                "Your lean mass has been trending down — keep protein on target, keep "
+                "progressing the strength sessions, and don't speed the cut up."
+            )
+        if progress["status"] == "losing_too_fast":
+            fast = progress["loss_kg_per_week_range"][1]
+            return (
+                f"You're losing weight faster than {fast:g}kg/week — too fast to protect "
+                "muscle. Eat a little more."
+            )
+
     if weight_obs:
         trend = body_comp.weight_trend_ols(weight_obs)
         if trend["confidence"] == "full":

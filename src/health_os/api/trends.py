@@ -61,11 +61,9 @@ meaning discipline as every series above, not a new heuristic:
   `smoothed` line (a real EWMA/OLS-trend-tracked series in its own right,
   not a caption-only number).
 
-Deliberately does NOT compare either series against a target body-fat %
-(unlike weight's own comparison against `goals.primary.weight_division_kg`)
-— a real, evidence-based target number is being researched separately and
-doesn't exist yet. See `_body_fat_pct_window_meaning()`'s docstring for
-exactly where that comparison would slot in once one is decided.
+Body-fat % is compared against `goals.body_fat_pct_target_range` (12-15%,
+researched 2026-10-06) -- see `_body_fat_pct_window_meaning()`. Fat mass
+has no target of its own.
 
 **"Currently around..." replaces the windowed average as the analytical
 headline number for weight/body_fat_pct/fat_mass_kg, 2026-09-28.** Francisco,
@@ -339,7 +337,24 @@ def _rhr_window_meaning(avg: float | None, baseline: dict[str, Any]) -> dict[str
     return {"tone": tone, "headline": f"Averaging {avg:.0f}bpm this window — {phrase}."}
 
 
-def _body_fat_pct_window_meaning(current: float | None, trend: dict[str, Any]) -> dict[str, Any]:
+def _body_fat_target_clause(current: float, target_range: list[float] | None) -> str:
+    """ " That's N points above your 12-15% target." -- `config/athlete.yaml:
+    goals.body_fat_pct_target_range`, researched 2026-10-06. Empty when no
+    target is configured."""
+    if not target_range:
+        return ""
+    low, high = target_range
+    span = f"{low:g}–{high:g}%"
+    if current > high:
+        return f" That's about {current - high:.1f} points above your {span} target."
+    if current < low:
+        return f" That's below your {span} target range."
+    return f" That's inside your {span} target."
+
+
+def _body_fat_pct_window_meaning(
+    current: float | None, trend: dict[str, Any], target_range: list[float] | None = None
+) -> dict[str, Any]:
     """`trend` is the FULL-HISTORY `body_comp.body_fat_pct_trend_ols()` 21-day
     OLS slope (computed once by the caller, same "compute once, reuse"
     discipline as weight/HRV/RHR above) -- `current` is the latest 7-day
@@ -350,16 +365,14 @@ def _body_fat_pct_window_meaning(current: float | None, trend: dict[str, Any]) -
     failure mode). The plain window average is unchanged, still shown as
     the chart card's own small "avg" figure.
 
-    Deliberately has NO clause comparing `current` against a target
-    body-fat % the way `_weight_window_meaning()` compares against
-    `goals.primary.weight_division_kg` -- no such target number has been
-    decided yet (a real, evidence-based one is being researched separately,
-    per CLAUDE.md). Once one exists, a comparison clause can slot in here
-    the same way weight's `limit_clause`/`comp_countdown` detail works
-    today -- left out for now on purpose, not an oversight.
+    `target_range` (`goals.body_fat_pct_target_range`, added 2026-10-06
+    once a researched target existed) appends a distance-to-target sentence.
+    Tone stays driven by the trend, not by distance to target: being above
+    target while trending down is progress, not a bad reading.
     """
     if current is None:
         return {"tone": "unknown", "headline": "No body-fat readings yet."}
+    target = _body_fat_target_clause(current, target_range)
 
     trend_known = trend.get("confidence") == "full" and trend.get("slope_pct_per_week") is not None
     if not trend_known:
@@ -367,7 +380,7 @@ def _body_fat_pct_window_meaning(current: float | None, trend: dict[str, Any]) -
             "tone": "unknown",
             "headline": (
                 f"Currently around {current:.1f}% body fat — not enough recent readings "
-                "to see a trend yet."
+                f"to see a trend yet.{target}"
             ),
         }
 
@@ -378,21 +391,21 @@ def _body_fat_pct_window_meaning(current: float | None, trend: dict[str, Any]) -
     if not distinguishable:
         return {
             "tone": "neutral",
-            "headline": f"Currently around {current:.1f}% body fat — holding steady.",
+            "headline": f"Currently around {current:.1f}% body fat — holding steady.{target}",
         }
     if slope < 0:
         return {
             "tone": "good",
             "headline": (
                 f"Currently around {current:.1f}% body fat — trending down, about "
-                f"{abs(slope):.1f} points a week."
+                f"{abs(slope):.1f} points a week.{target}"
             ),
         }
     return {
         "tone": "bad",
         "headline": (
             f"Currently around {current:.1f}% body fat — trending up, about "
-            f"{slope:.1f} points a week."
+            f"{slope:.1f} points a week.{target}"
         ),
     }
 
@@ -567,6 +580,7 @@ def _build_insights(
     sleep_debt: dict[str, Any],
     hrv_baseline: dict[str, Any],
     rhr_baseline: dict[str, Any],
+    body_goal: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Uses the FULL available history for every input (never windowed by
     the 30/90/365 selector) — same reasoning `correlations.py` already uses:
@@ -580,6 +594,8 @@ def _build_insights(
     result: list[dict[str, Any]] = []
 
     result.append(insights.weight_insight(trend, comp_countdown))
+    if body_goal is not None:
+        result.append(insights.body_goal_insight(body_goal))
 
     this_week_avg = last_week_avg = None
     if sleep_obs:
@@ -733,6 +749,24 @@ def build_trends_payload(
     fat_mass_ewma_full = body_comp.compute_weight_ewma(fat_mass_obs_full)
     fat_mass_current = _latest_ewma_point(fat_mass_ewma_full)
 
+    # Post-comp body-composition goal (2026-10-06): 15% body fat with lean
+    # mass kept or gained -- metrics/body_comp.py: body_recomp_progress().
+    post_comp_goal = config.get("goals", {}).get("post_comp")
+    body_goal = None
+    if post_comp_goal:
+        latest_row = conn.execute("SELECT MAX(date) AS d FROM daily_metrics").fetchone()
+        body_goal = body_comp.body_recomp_progress(
+            weight_obs=weight_obs_full,
+            body_fat_obs=body_fat_pct_obs_full,
+            lean_obs=_fetch_col_obs(conn, "lean_body_mass_kg"),
+            target_body_fat_pct=float(post_comp_goal["target_body_fat_pct"]),
+            loss_kg_per_week_range=tuple(post_comp_goal["fat_loss_kg_per_week_range"]),
+            starts=str(post_comp_goal["starts"]),
+            today=latest_row["d"]
+            if latest_row and latest_row["d"]
+            else str(post_comp_goal["starts"]),
+        )
+
     goal = config.get("goals", {}).get("primary")
     weight_limit_kg = goal.get("weight_division_kg") if goal is not None else None
     comp_countdown = None
@@ -764,7 +798,11 @@ def build_trends_payload(
         "hrv_overnight_ms": lambda avg: _hrv_window_meaning(avg, hrv_baseline),
         "resting_hr": lambda avg: _rhr_window_meaning(avg, rhr_baseline),
         "body_fat_pct": (
-            lambda avg: _body_fat_pct_window_meaning(body_fat_current["value"], body_fat_trend)
+            lambda avg: _body_fat_pct_window_meaning(
+                body_fat_current["value"],
+                body_fat_trend,
+                config.get("goals", {}).get("body_fat_pct_target_range"),
+            )
         ),
     }
 
@@ -826,6 +864,7 @@ def build_trends_payload(
             sleep_debt=sleep_debt,
             hrv_baseline=hrv_baseline,
             rhr_baseline=rhr_baseline,
+            body_goal=body_goal,
         ),
     }
 

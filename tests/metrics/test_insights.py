@@ -376,3 +376,45 @@ class TestConsistencyInsight:
     def test_healthy_mix_is_good_tone(self) -> None:
         result = consistency_insight({"confidence": "full", "flag_high_monotony": False})
         assert result["tone"] == "good"
+
+
+class TestBodyGoalInsight:
+    _BASE = {
+        "status": "on_track",
+        "active": True,
+        "starts": "2026-10-19",
+        "target_body_fat_pct": 15.0,
+        "current_weight_kg": 77.8,
+        "current_body_fat_pct": 23.8,
+        "current_lean_mass_kg": 59.2,
+        "target_weight_kg": 69.6,
+        "kg_to_lose": 8.2,
+        "weeks_at_safe_pace": [15, 21],
+        "loss_kg_per_week_range": [0.4, 0.55],
+    }
+
+    def test_before_start_frames_the_plan(self) -> None:
+        from health_os.metrics.insights import body_goal_insight
+
+        result = body_goal_insight({**self._BASE, "active": False})
+        assert result["metric"] == "goal"
+        assert "After the comp (from 19 Oct)" in result["headline"]
+        assert "8.2kg of fat" in result["detail"]
+        assert "15–21 weeks" in result["detail"]
+
+    def test_lean_mass_dropping_is_bad(self) -> None:
+        from health_os.metrics.insights import body_goal_insight
+
+        result = body_goal_insight({**self._BASE, "status": "lean_mass_dropping"})
+        assert result["tone"] == "bad"
+        assert "lean mass" in result["headline"]
+
+    def test_on_track_is_good(self) -> None:
+        from health_os.metrics.insights import body_goal_insight
+
+        assert body_goal_insight(self._BASE)["tone"] == "good"
+
+    def test_insufficient(self) -> None:
+        from health_os.metrics.insights import body_goal_insight
+
+        assert body_goal_insight({"status": "insufficient_data"})["tone"] == "unknown"

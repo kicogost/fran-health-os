@@ -41,11 +41,27 @@ goals:
   secondary:
     - "visible muscle definition"
     - "better mat conditioning"
+  # Researched 2026-10-06 (CLAUDE.md "Post-comp ideal week"): BJJ athletes'
+  # body fat averages ~12% (Andreato 2017 systematic review); "visibly lean" has
+  # no research threshold, 12-15% is coaching consensus. Read against the Renpho
+  # trend, not its absolute value -- consumer bioimpedance can be off by several
+  # points vs DEXA. Shown on the Trends body-fat chart.
+  body_fat_pct_target_range: [12, 15]
+  # The post-comp goal Francisco set (2026-10-06): reach 15% body fat while
+  # keeping or gaining lean mass, powered by the strength sessions in
+  # `weekly_architecture`. Pace: ~0.5-0.7% of bodyweight a week preserves lean
+  # mass (Garthe et al. 2011) -- ~0.4-0.55 kg/week at his weight. Tracked by
+  # metrics/body_comp.py: body_recomp_progress() on Trends and in the briefing.
+  post_comp:
+    starts: "2026-10-19"
+    goal: "Reach 15% body fat while keeping or gaining lean mass"
+    target_body_fat_pct: 15
+    fat_loss_kg_per_week_range: [0.4, 0.55]
 
 # --- Comp-prep block plan (active 2026-08-24 through 2026-10-18) ---
 # This supersedes `weekly_architecture` below for the duration of the camp. Source:
-# docs/comp_prep_2026-10-18.md. After the comp, training reverts to
-# `weekly_architecture` (the steady-state shape) unless Francisco says otherwise.
+# docs/comp_prep_2026-10-18.md. From 2026-10-19, `weekly_architecture` (the
+# researched post-comp week) takes over automatically.
 comp_prep:
   active: true
   starts: "2026-08-24"
@@ -173,47 +189,95 @@ comp_prep:
   hard_no_water_cut: true
   ruleset_reference: docs/comp_prep_2026-10-18.md   # full white-belt no-gi game plan lives there; not modeled in DB/rules — nothing in it is machine-actionable
 
-# Steady-state weekly architecture. NOT currently active — see `comp_prep` above,
-# which supersedes this until 2026-10-18. Kept here as what training reverts to
-# after the comp, pending confirmation from Francisco post-comp.
+# Post-comp weekly plan -- takes over from `comp_prep` automatically on
+# `starts` (coach/rules.py: active_plan() picks by date), replacing the old
+# steady-state schedule that sat here unused (see git history). Researched
+# 2026-10-06 (CLAUDE.md "Post-comp ideal week"): 2 full-body strength days with
+# strength kept >=3h apart from BJJ (concurrent-training meta-analyses), 2 hard
+# BJJ days, a real rest day, Saturday's ride kept easy (his own data: Fri open
+# mat + a hard Saturday gave his worst recovery night, 2026-10-03/04), and
+# optional Sunday bike intervals (Ovretveit 2019 4x4 protocol). Strength days
+# pair his own strength-yoga with pull-ups/toes-to-bar/a push and one loaded
+# leg exercise -- his design, legs added at his OK (2026-10-06).
 weekly_architecture:
-  active: false
-  supersededBy: comp_prep
-  schedule:
+  active: true
+  starts: "2026-10-19"
+  weekly_template:
     - day: monday
       sessions:
-        - {type: mobility, time: pre_breakfast, duration_min: 15}
-        - {type: bjj, subtype: class, time: "18:00", duration_min: 90}
+        - type: calisthenics
+          subtype: strength_a
+          duration_min: 70
+          notes: "Morning, 3h+ before BJJ. Strength block first, strength-yoga flow after."
+        - type: bjj
+          subtype: no_gi_technical
+          format: "60min drilling + 30min rolling (4-5 x 5min rounds)"
+          notes: "technical focus"
     - day: tuesday
       sessions:
-        - {type: mobility, time: pre_breakfast, duration_min: 15}
-        - {type: calisthenics, subtype: push_and_lower, time: morning, duration_min: 45}
-        - {type: gi_drilling, subtype: technique_only, time: evening}
+        - type: bjj
+          subtype: hard_rounds
+          format: "60min drilling + 30min rolling (4-5 x 5min rounds)"
+          notes: "hard day 1 of 2"
     - day: wednesday
       sessions:
-        - {type: mobility, time: pre_breakfast, duration_min: 15}
-        - {type: bjj, subtype: class, time: "18:00", duration_min: 90}
+        - type: calisthenics
+          subtype: strength_b
+          duration_min: 70
+          notes: "Morning, 3h+ before BJJ. Strength block first, strength-yoga flow after."
+        - type: bjj
+          subtype: no_gi_technical
+          format: "60min drilling + 30min rolling (4-5 x 5min rounds)"
+          notes: "technical focus, lighter rolls"
     - day: thursday
       sessions:
-        - {type: mobility, time: pre_breakfast, duration_min: 15}
-        - {type: calisthenics, subtype: pull_and_posterior, time: morning, duration_min: 45}
+        - type: rest
+          notes: "Full rest. Optional 20-30 min easy mobility yoga."
     - day: friday
       sessions:
-        - {type: mobility, time: pre_breakfast, duration_min: 15}
-        - {type: bjj, subtype: open_mat, time: "18:00", duration_min: 120}
+        - type: bjj
+          subtype: open_mat
+          format: "up to 10-15 x rolls"
+          notes: "hard day 2 of 2"
     - day: saturday
       sessions:
-        - {type: mobility, time: pre_breakfast, duration_min: 15}
-        - {type: bike, subtype: easy_z2, time: "07:30", duration_min_range: [90, 120]}
+        - type: bike
+          subtype: easy_z2
+          distance_km_range: [40, 60]
+          zone_range: "Z2, kept genuinely easy"
+          notes: "Easy on purpose -- the day after open mat."
     - day: sunday
       sessions:
-        - {type: rest_or_active_recovery}
-        - {type: weekly_retro}
-  dinner_time: "21:00"
+        - type: bike
+          subtype: intervals_4x4
+          duration_min: 25
+          notes: "Optional, green days only: 4 x 4 min at 85-95% max HR (~167-187 bpm), 3 min easy between. Otherwise rest or light strength yoga."
+  strength_sessions:
+    strength_a:
+      day: monday
+      duration_min: 70
+      exercises:
+        - "pull-ups (add weight once 4x8 is easy): 4x5-8"
+        - "push-ups or dips (progress via deficit or added weight): 3x6-10"
+        - "Bulgarian split squats, backpack or kettlebell: 3x8/leg"
+        - "toes-to-bar: 3x6-10"
+        - "strength-yoga flow (chaturanga holds, leg holds, back work, mobility): 30-40 min"
+    strength_b:
+      day: wednesday
+      duration_min: 70
+      exercises:
+        - "chin-ups or towel pull-ups (grip): 4x5-8"
+        - "archer or pseudo-planche push-ups: 3x6-10"
+        - "barbell Romanian deadlift (up to 60 kg is plenty for now): 3x6-8"
+        - "toes-to-bar: 3x6-10"
+        - "strength-yoga flow (chaturanga holds, leg holds, back work, mobility): 30-40 min"
+    notes: >
+      Strength block first, then yoga (long static stretching right before lifting
+      slightly reduces strength). Progress when every set hits the top of the rep
+      range at RPE 8 or below. Chaturanga holds count as pushing volume, so the
+      separate push stays at 3 sets. No pressing progression in a week with a logged
+      neck niggle (hard guardrail, enforced in coach/rules.py).
 
-# Nutrition guardrails the coaching layer must respect and never violate.
-# See kickoff doc section 7 "hard safety rails" — these are enforced in the
-# rules engine (coach/rules.py), not just documented here.
 nutrition:
   protein_g_daily_min: 160         # the one hard number -- lowered from 180 on 2026-09-28 per
                                     # real, cited research (see CLAUDE.md); ~2.7g/kg of

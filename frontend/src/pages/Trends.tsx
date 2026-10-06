@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { Activity, Gauge, HeartPulse, Moon, Percent, Scale, Search, TriangleAlert } from "lucide-react"
+import { Activity, Gauge, HeartPulse, Moon, Percent, Scale, Search, Target, TriangleAlert } from "lucide-react"
 import { ApiError, fetchCorrelations, fetchTrends } from "@/lib/api"
 import { CARD_CLASS, CARD_CLASS_FLAT } from "@/lib/styles"
 import type {
@@ -25,6 +25,7 @@ const SLEEP_STAGE_BARS = [
 
 const INSIGHT_ICONS: Record<TrendInsight["metric"], React.ComponentType<{ className?: string; strokeWidth?: number }>> = {
   weight: Scale,
+  goal: Target,
   sleep: Moon,
   hrv: HeartPulse,
   rhr: Activity,

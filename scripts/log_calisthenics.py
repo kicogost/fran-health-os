@@ -35,6 +35,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from health_os.coach import rules  # noqa: E402
 from health_os.core import db  # noqa: E402
 from health_os.core.models import CalisthenicsSession  # noqa: E402
 
@@ -94,10 +95,11 @@ def _exercise_name(raw: str) -> str:
     return raw.split(":")[0].strip()
 
 
-def _load_prescribed_exercises(session_type: str) -> list[str]:
+def _load_prescribed_exercises(session_type: str, on_date: str | None = None) -> list[str]:
     with CONFIG_PATH.open(encoding="utf-8") as f:
         config = yaml.safe_load(f)
-    sessions = config["comp_prep"]["strength_sessions"]
+    # The plan in force on the date being logged (comp prep vs post-comp week).
+    sessions = rules.active_plan(config, on_date).get("strength_sessions", {})
     return sessions.get(session_type, {}).get("exercises", [])
 
 
@@ -123,7 +125,7 @@ def resolve_session(args: argparse.Namespace) -> CalisthenicsSession:
         date = _prompt("Date (YYYY-MM-DD)", args.date or _today_madrid())
         session_type = _prompt_choice_calisthenics()
         exercises = []
-        prescribed = _load_prescribed_exercises(session_type)
+        prescribed = _load_prescribed_exercises(session_type, date)
         if prescribed:
             print(f"Logging {len(prescribed)} exercises (blank sets to skip detail on one):")
             for raw in prescribed:

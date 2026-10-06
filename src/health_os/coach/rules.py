@@ -12,7 +12,7 @@ metrics, never recomputing them itself.
 Two hard safety rails are enforced BY CONSTRUCTION rather than by a runtime
 check, and that's documented explicitly rather than left implicit:
 - **Never recommend running.** `_SESSION_GUIDANCE`'s vocabulary of session
-  types (drawn from `config/athlete.yaml: comp_prep.weekly_template`) never
+  types (drawn from the active plan's `weekly_template`, see `active_plan()`) never
   includes running in the first place — there is no code path that could
   emit it, because the athlete's own weekly architecture never schedules it
   (the prior knee injury guardrail lives at the config layer already).
@@ -56,13 +56,30 @@ def classify_readiness_band(score: float | None) -> str:
     return "red"
 
 
-def scheduled_sessions_for(config: dict[str, Any], weekday_name: str) -> list[dict[str, Any]]:
-    """Sessions scheduled for `weekday_name` (lowercase, e.g. "friday") per
-    `config/athlete.yaml: comp_prep.weekly_template`. Parameterized on the
+def active_plan(config: dict[str, Any], on_date: str | None) -> dict[str, Any]:
+    """The training plan in force on `on_date`: `weekly_architecture` (the
+    post-comp week) once its `starts` date is reached, `comp_prep` before
+    that. Real gap closed 2026-10-06: every plan lookup used to read
+    `comp_prep` unconditionally, so after the comp the coaching layer would
+    have kept narrating the camp schedule forever and the post-comp plan in
+    config was never read by anything. `on_date=None` keeps the comp-prep
+    plan (callers without a date -- tests, legacy paths)."""
+    post = config.get("weekly_architecture") or {}
+    starts = post.get("starts")
+    if on_date and starts and post.get("active") and on_date >= str(starts):
+        return post
+    return config.get("comp_prep") or {}
+
+
+def scheduled_sessions_for(
+    config: dict[str, Any], weekday_name: str, on_date: str | None = None
+) -> list[dict[str, Any]]:
+    """Sessions scheduled for `weekday_name` (lowercase, e.g. "friday") in
+    the plan active on `on_date` (see `active_plan()`). Parameterized on the
     weekday name rather than reading the clock itself, so this is testable
     without mocking `datetime.now()`.
     """
-    for day_entry in config["comp_prep"]["weekly_template"]:
+    for day_entry in active_plan(config, on_date).get("weekly_template", []):
         if day_entry["day"] == weekday_name:
             return day_entry["sessions"]
     return []
@@ -100,6 +117,11 @@ _SESSION_GUIDANCE: dict[tuple[str, str | None], dict[str, str]] = {
         "green": "Attempt a load progression.",
         "amber": "Hold current load, don't push a new PR.",
         "red": "Mobility + light kettlebell instead of the full session.",
+    },
+    ("bike", "intervals_4x4"): {
+        "green": "Optional — go for it if you feel good: 4 x 4 min hard, 3 min easy between.",
+        "amber": "Skip the intervals — easy spin or rest instead.",
+        "red": "Skip it — rest.",
     },
     ("rest", None): {
         "green": "Full rest as scheduled.",
@@ -147,7 +169,9 @@ def session_guidance(
     return table[band]
 
 
-def calisthenics_exercise_breakdown(config: dict[str, Any], subtype: str | None) -> str | None:
+def calisthenics_exercise_breakdown(
+    config: dict[str, Any], subtype: str | None, on_date: str | None = None
+) -> str | None:
     """The real, prescribed exercise breakdown for a calisthenics session —
     `config/athlete.yaml: comp_prep.strength_sessions[subtype].exercises` —
     formatted into one readable line for Today's session card.
@@ -174,7 +198,7 @@ def calisthenics_exercise_breakdown(config: dict[str, Any], subtype: str | None)
     `SessionCard.tsx`'s `notes` slot renders a single paragraph, no
     multi-line support needed for a list this short.
     """
-    strength_sessions = config.get("comp_prep", {}).get("strength_sessions", {})
+    strength_sessions = active_plan(config, on_date).get("strength_sessions", {})
     session_config = strength_sessions.get(subtype or "") if subtype else None
     if not session_config:
         return None

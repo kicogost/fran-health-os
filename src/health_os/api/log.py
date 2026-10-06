@@ -29,6 +29,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from health_os.coach import rules
 from health_os.core import db
 from health_os.core.models import (
     Allergy,
@@ -252,9 +253,11 @@ def save_illness(conn: sqlite3.Connection, req: IllnessRequest) -> IllnessLog:
     return entry
 
 
-def prescribed_exercises(config: dict[str, Any], session_type: str) -> list[str]:
+def prescribed_exercises(
+    config: dict[str, Any], session_type: str, on_date: str | None = None
+) -> list[str]:
     return (
-        config.get("comp_prep", {})
+        rules.active_plan(config, on_date)
         .get("strength_sessions", {})
         .get(session_type, {})
         .get("exercises", [])

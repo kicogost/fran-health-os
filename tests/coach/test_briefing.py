@@ -345,3 +345,58 @@ class TestBuildBriefing:
     ) -> None:
         text = build_briefing(conn, _CONFIG, "2026-08-26")  # Wednesday, not in _CONFIG
         assert "Nothing scheduled today." in text
+
+
+class TestPostCompGoalObservation:
+    """The post-comp body-composition goal speaks up in the briefing only for
+    its two failure modes, and only once the phase has started (2026-10-06)."""
+
+    _CONFIG = {
+        "goals": {
+            "primary": {"date": "2026-10-18", "weight_division_kg": 77.0},
+            "post_comp": {
+                "starts": "2026-10-19",
+                "target_body_fat_pct": 15,
+                "fat_loss_kg_per_week_range": [0.4, 0.55],
+            },
+        }
+    }
+
+    def _rows(self, conn, lean_per_day: float):
+        from datetime import date, timedelta
+
+        from health_os.coach.briefing import _fetch_daily_metrics
+        from health_os.core import db
+        from health_os.core.models import DailyMetric
+
+        start = date(2026, 10, 1)
+        for i in range(30):
+            day = (start + timedelta(days=i)).isoformat()
+            metric = DailyMetric(
+                date=day,
+                weight_kg=80.0 - 0.45 / 7 * i,
+                body_fat_pct=25.0,
+                lean_body_mass_kg=60.0 + lean_per_day * i,
+            )
+            db.upsert(conn, "daily_metrics", metric.to_row(), ["date"])
+        return _fetch_daily_metrics(conn)
+
+    def test_lean_mass_drop_warns_after_start(self, conn) -> None:
+        from health_os.coach.briefing import _notable_trend_observation
+
+        rows = self._rows(conn, -0.3 / 7)
+        message = _notable_trend_observation(rows, self._CONFIG, "2026-10-30")
+        assert message is not None and "lean mass" in message
+
+    def test_silent_before_the_phase_starts(self, conn) -> None:
+        from health_os.coach.briefing import _notable_trend_observation
+
+        rows = [r for r in self._rows(conn, -0.3 / 7) if r["date"] <= "2026-10-15"]
+        message = _notable_trend_observation(rows, self._CONFIG, "2026-10-15")
+        assert message is None or "lean mass" not in message
+
+    def test_silent_when_on_track(self, conn) -> None:
+        from health_os.coach.briefing import _notable_trend_observation
+
+        rows = self._rows(conn, 0.0)
+        assert _notable_trend_observation(rows, self._CONFIG, "2026-10-30") is None

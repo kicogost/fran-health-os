@@ -86,7 +86,7 @@ def _session_completion(
     current = week_start
     while current <= week_end:
         weekday_name = current.strftime("%A").lower()
-        for session in rules.scheduled_sessions_for(config, weekday_name):
+        for session in rules.scheduled_sessions_for(config, weekday_name, current.isoformat()):
             iso = current.isoformat()
             if session["type"] == "bjj":
                 status = "completed" if iso in bjj_dates else "missed"

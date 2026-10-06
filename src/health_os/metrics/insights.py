@@ -23,6 +23,7 @@ supporting context (or `None` when there's nothing more useful to add).
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 
@@ -429,4 +430,80 @@ def correlation_insight(result: dict[str, Any]) -> dict[str, Any] | None:
     return {
         "headline": f"Real pattern found: {plain} — {direction}.",
         "detail": f"Backed by {result.get('n')} real days of data, not a coincidence.",
+    }
+
+
+def _short_date(iso: str) -> str:
+    """ISO date to a short label, e.g. 2026-10-19 -> 19 Oct."""
+    d = date.fromisoformat(iso)
+    return f"{d.day} {d:%b}"
+
+
+def body_goal_insight(progress: dict[str, Any]) -> dict[str, Any]:
+    """Plain-English read of `body_comp.body_recomp_progress()` -- the
+    post-comp goal (15% body fat, lean mass kept or gained). Fixed templates
+    per status, same discipline as every other insight here."""
+    if progress.get("status") == "insufficient_data":
+        return {
+            "metric": "goal",
+            "tone": "unknown",
+            "headline": "Body-fat goal: not enough scale readings to track it yet.",
+        }
+    target = progress["target_body_fat_pct"]
+    bf = progress["current_body_fat_pct"]
+    lean = progress["current_lean_mass_kg"]
+    slow, fast = progress["loss_kg_per_week_range"]
+    weeks_lo, weeks_hi = progress["weeks_at_safe_pace"]
+    plan = (
+        f"{bf:.1f}% now → {target:g}%: about {progress['kg_to_lose']:.1f}kg of fat at today's "
+        f"lean mass ({lean:.1f}kg), roughly {weeks_lo}–{weeks_hi} weeks at a muscle-safe "
+        f"{slow:g}–{fast:g}kg/week. Target weight {progress['target_weight_kg']:.1f}kg — it moves "
+        "up as you add muscle."
+    )
+    if not progress["active"]:
+        return {
+            "metric": "goal",
+            "tone": "info",
+            "headline": f"After the comp (from {_short_date(progress['starts'])}): reach "
+            f"{target:g}% body fat "
+            "while keeping or gaining muscle.",
+            "detail": plan,
+        }
+    status = progress["status"]
+    if status == "reached":
+        return {
+            "metric": "goal",
+            "tone": "good",
+            "headline": f"You've reached your {target:g}% body-fat goal ({bf:.1f}%).",
+            "detail": f"Lean mass {lean:.1f}kg — keep it climbing with the strength sessions.",
+        }
+    if status == "lean_mass_dropping":
+        return {
+            "metric": "goal",
+            "tone": "bad",
+            "headline": (
+                "Your lean mass has been trending down — the one thing this cut must avoid."
+            ),
+            "detail": "Keep protein at your daily target, keep progressing the strength sessions, "
+            "and don't speed the cut up. " + plan,
+        }
+    if status == "losing_too_fast":
+        return {
+            "metric": "goal",
+            "tone": "bad",
+            "headline": f"You're losing faster than {fast:g}kg/week — too fast to protect muscle.",
+            "detail": "Eat a little more; the slower pace keeps the muscle. " + plan,
+        }
+    if status == "on_track":
+        return {
+            "metric": "goal",
+            "tone": "good",
+            "headline": f"On track for {target:g}% body fat, with muscle held.",
+            "detail": plan,
+        }
+    return {
+        "metric": "goal",
+        "tone": "neutral",
+        "headline": f"Body fat {bf:.1f}% — not trending down yet toward your {target:g}% goal.",
+        "detail": plan,
     }

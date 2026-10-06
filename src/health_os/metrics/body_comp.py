@@ -31,6 +31,7 @@ wrong. See `compute_fat_mass_series()` and `body_fat_pct_trend_ols()` below.
 
 from __future__ import annotations
 
+import math
 from datetime import date, timedelta
 from typing import Any
 
@@ -267,4 +268,83 @@ def comp_countdown(
         "required_kg_per_week": required_kg_per_week,
         "actual_kg_per_week": actual_kg_per_week,
         "red_flag": red_flag,
+    }
+
+
+def body_recomp_progress(
+    *,
+    weight_obs: list[tuple[str, float]],
+    body_fat_obs: list[tuple[str, float]],
+    lean_obs: list[tuple[str, float]],
+    target_body_fat_pct: float,
+    loss_kg_per_week_range: tuple[float, float],
+    starts: str,
+    today: str,
+) -> dict[str, Any]:
+    """Post-comp goal tracker (2026-10-06): reach `target_body_fat_pct`
+    while keeping or gaining lean mass. Researched the same day (CLAUDE.md
+    "Post-comp ideal week"): fat loss at ~0.5-0.7% of bodyweight a week
+    preserves lean mass (Garthe et al. 2011), here expressed as an absolute
+    `loss_kg_per_week_range` from config.
+
+    Every "current" value is the 7-day EWMA, not a single reading (consumer
+    bioimpedance is noisy -- trust the trend). The target weight is computed
+    at TODAY's lean mass, so it moves up if muscle is gained, which is the
+    point. Status priority, first match wins:
+
+    - `insufficient_data`: no weight, body-fat or lean-mass readings.
+    - `reached`: body fat at or under target.
+    - `lean_mass_dropping`: lean-mass 21-day trend is distinguishably
+      negative (95% CI entirely below zero) -- the one failure this goal
+      exists to prevent. Checked before pace, since it matters more.
+    - `losing_too_fast`: weight loss distinguishably faster than the top of
+      the muscle-safe range.
+    - `on_track`: weight distinguishably trending down.
+    - `not_losing`: no distinguishable downward weight trend.
+
+    Before `starts` the status is still computed, but `active` is False so
+    callers can frame it as "starts on..." rather than as a verdict on a
+    phase that hasn't begun.
+    """
+    if not weight_obs or not body_fat_obs or not lean_obs:
+        return {"status": "insufficient_data", "active": today >= starts}
+
+    weight = compute_weight_ewma(weight_obs)[-1][1]
+    body_fat = compute_weight_ewma(body_fat_obs)[-1][1]
+    lean = compute_weight_ewma(lean_obs)[-1][1]
+    target_weight = lean / (1 - target_body_fat_pct / 100.0)
+    to_lose = max(weight - target_weight, 0.0)
+    slow, fast = loss_kg_per_week_range
+
+    weight_trend = weight_trend_ols(weight_obs)
+    lean_trend = weight_trend_ols(lean_obs)  # kg series, so the kg-labeled fields are accurate
+
+    if body_fat <= target_body_fat_pct:
+        status = "reached"
+    elif lean_trend["confidence"] == "full" and lean_trend["ci_high_kg_per_week"] < 0:
+        status = "lean_mass_dropping"
+    elif weight_trend["confidence"] == "full" and weight_trend["ci_high_kg_per_week"] < -fast:
+        status = "losing_too_fast"
+    elif weight_trend["confidence"] == "full" and weight_trend["ci_high_kg_per_week"] < 0:
+        status = "on_track"
+    else:
+        status = "not_losing"
+
+    return {
+        "status": status,
+        "active": today >= starts,
+        "starts": starts,
+        "target_body_fat_pct": target_body_fat_pct,
+        "current_weight_kg": round(weight, 1),
+        "current_body_fat_pct": round(body_fat, 1),
+        "current_lean_mass_kg": round(lean, 1),
+        "target_weight_kg": round(target_weight, 1),
+        "kg_to_lose": round(to_lose, 1),
+        "weeks_at_safe_pace": (
+            [math.ceil(to_lose / fast), math.ceil(to_lose / slow)] if to_lose > 0 else [0, 0]
+        ),
+        "loss_kg_per_week_range": [slow, fast],
+        "weight_slope_kg_per_week": weight_trend["slope_kg_per_week"],
+        "lean_slope_kg_per_week": lean_trend["slope_kg_per_week"],
+        "lean_trend_confidence": lean_trend["confidence"],
     }

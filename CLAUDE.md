@@ -4432,6 +4432,83 @@ estimate ~56, likely range 49-63, low confidence**. BJJ rest drops: 13 / 18 /
 meter / smart trainer / lab test) can re-anchor it. 27 new tests, suite green,
 ruff/tsc/build clean, verified via Chrome-headless screenshot of the live page.
 
+## Post-comp "ideal week" + target body composition researched (2026-10-06)
+
+Francisco asked what his ideal training week and ideal weight are (muscular but
+lean, max BJJ performance), for after the 2026-10-18 comp. Research agent pass
+(citations verified via PMID/DOI/repository records; no fabricated papers
+found). Nothing built or changed in config yet -- recommendation only, pending
+his decision on whether to encode it as the post-comp `weekly_architecture`.
+
+**Correction to an earlier claim in this file**: the 2026-09-11 "Body fat %
+trend" section cites Almeda et al. 2023 as DXA-measured with elite BJJ at
+"8-13%". This pass could confirm the paper exists (Sports 11(1):13, n=13 pilot)
+but NOT the DXA method or those numbers (full text inaccessible) -- treat them
+as unverified. The verified BJJ figure is Andreato et al. 2017 (systematic
+review, DOI 10.1186/s40798-016-0069-5): male BF 5.3-19.9%, mean ~12%, and body
+composition mostly does NOT discriminate competitive level.
+
+**Key verified findings**: concurrent training doesn't blunt hypertrophy/max
+strength, only explosive strength when done in the same session -- space
+strength and BJJ >=3h apart, lift first if they must share a session (Schumann
+2022 PMID 34757594; Murlasits 2018 PMID 28783467; Wilson 2012). Hypertrophy
+dose-response >=10 sets/muscle/week, >=2x/week (Schoenfeld meta-analyses). Bike
+4x4 intervals 2x/week raised BJJ athletes' VO2max 52.7->56.8 in 6 weeks
+(Ovretveit 2019, small RCT) -- but VO2max doesn't discriminate BJJ level.
+Fat loss at ~0.5-0.7%/week preserves lean mass (Garthe 2011). Consumer BIA
+scales misread fat mass vs DEXA by ~2-4 kg (JMIR 2021, PMC8122302); no
+RENPHO-specific validation exists -- treat 23.6% as roughly 20-28%.
+
+**Recommendation given**: 2 full-body strength sessions/week (Mon/Wed AM, BJJ
+PM), 2 hard BJJ days (Tue, Fri), 2 technical, Thu full rest, Sat Z2 bike kept
+easy (his own data: Fri+Sat back-to-back hard days gave his worst recovery
+night, 2026-10-03/04), optional Sun bike 4x4. Target 12-15% BF -> roughly
+67-72 kg at today's lean mass (69-74 kg if he adds 2-4 kg lean over 1-2 years),
+via ~0.4-0.55 kg/week blocks with maintenance breaks. Highest-value next
+measurement: one DXA scan (every weight target shifts with the BIA error).
+Waist has never actually been logged (`body_measurements` is empty).
+
+**Built, same day, at Francisco's OK** ("sure thing"): the recommended week
+is now `config/athlete.yaml: weekly_architecture` (active, `starts:
+2026-10-19`), replacing the old unused steady-state schedule. His own design
+for strength days: his strength-yoga flow paired with pull-ups, toes-to-bar and
+a push, plus one loaded leg exercise per day (Bulgarian split squats Mon,
+barbell RDL Wed -- added at his explicit OK), strength block first, yoga after.
+**Real gap closed in the process**: `coach/rules.py` read
+`comp_prep.weekly_template`/`strength_sessions` unconditionally, so after the
+comp the coaching layer would have narrated the camp schedule forever. New
+`rules.active_plan(config, on_date)` picks by date; wired into
+`scheduled_sessions_for()`, `calisthenics_exercise_breakdown()`,
+`coach/briefing.py`, `coach/weekly_retro.py`, `api/log.py:
+prescribed_exercises()` (+ optional `date` query param, defaults to today) and
+`scripts/log_calisthenics.py`. New `("bike", "intervals_4x4")` guidance (green
+only; amber/red say skip). Verified via `scripts/briefing.py` across the
+switch (10-14 taper day, 10-19/24/25 new week). The Log page's calisthenics tab
+still fetches without a date (today's plan) -- deliberately, since making its
+exercise list follow the date picker would re-introduce the 2026-08-31
+"changing the date wipes entered sets" bug. The frozen Streamlit dashboard
+still reads `comp_prep` directly, consistent with its not-kept-in-sync status.
+`goals.body_fat_pct_target_range: [12, 15]` added; Trends' body-fat meaning
+now appends distance to target (tone stays trend-driven). 9 new/updated tests.
+
+**Post-comp goal made a tracked goal, same day.** Francisco: "my goal after the
+comp is to hit that 15% target whilst maintaining or even gaining muscle thanks
+to the strength sessions." Now `config/athlete.yaml: goals.post_comp` (starts
+2026-10-19, target 15%, safe fat-loss pace 0.4-0.55 kg/week). New pure
+`metrics/body_comp.py: body_recomp_progress()` (7-day EWMA weight/body fat/lean
+mass; target weight computed at TODAY's lean mass so it rises as muscle is
+gained; status priority reached > lean_mass_dropping > losing_too_fast >
+on_track > not_losing, lean-mass loss checked before pace because it's the
+failure the goal exists to prevent) + `metrics/insights.py:
+body_goal_insight()`. Shown as a Trends insight card (framed as "After the
+comp..." until 19 Oct); the briefing's `_notable_trend_observation()` warns
+only for lean-mass loss or too-fast loss, only once the phase has started.
+Also verified the new week reaches the Today page's own payload
+(`api/today.py: build_today_payload()` for 2026-10-19/21/22/25 -- full strength
+exercise lists, rest, optional intervals). Real output 2026-10-06: 23.8% →
+15% = ~8.1 kg of fat at today's lean mass (59.3 kg), 15-21 weeks at the safe
+pace, target weight ~69.7 kg. 14 new tests, 926 passing.
+
 ## Definition of done for v1
 
 One command each morning: syncs Garmin + Strava, recomputes everything, prints a

@@ -164,8 +164,11 @@ def get_correlations() -> list[dict[str, Any]]:
 
 
 @app.get("/api/log/prescribed-exercises")
-def get_prescribed_exercises(session_type: str) -> list[str]:
-    return log_api.prescribed_exercises(_load_config(), session_type)
+def get_prescribed_exercises(session_type: str, date: str | None = None) -> list[str]:
+    # The plan in force on the date being logged (comp prep vs post-comp week),
+    # defaulting to today in Europe/Madrid.
+    on_date = date or to_local_date(datetime.now(UTC))
+    return log_api.prescribed_exercises(_load_config(), session_type, on_date)
 
 
 @app.get("/api/log/bjj")

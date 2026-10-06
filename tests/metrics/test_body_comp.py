@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 import pytest
 
 from health_os.metrics.body_comp import (
@@ -263,3 +265,88 @@ class TestBodyFatPctTrendOls:
         )
         assert pct_result["n"] == weight_result["n"]
         assert pct_result["confidence"] == weight_result["confidence"]
+
+
+class TestBodyRecompProgress:
+    """`body_recomp_progress()` -- the post-comp goal: 15% body fat with lean
+    mass kept or gained (2026-10-06)."""
+
+    START = date(2026, 10, 1)
+
+    def _series(self, days: int, first: float, per_day: float) -> list[tuple[str, float]]:
+        return [
+            ((self.START + timedelta(days=i)).isoformat(), first + per_day * i) for i in range(days)
+        ]
+
+    def _run(self, weight, bf, lean, today="2026-10-21"):
+        from health_os.metrics.body_comp import body_recomp_progress
+
+        return body_recomp_progress(
+            weight_obs=weight,
+            body_fat_obs=bf,
+            lean_obs=lean,
+            target_body_fat_pct=15.0,
+            loss_kg_per_week_range=(0.4, 0.55),
+            starts="2026-10-19",
+            today=today,
+        )
+
+    def test_target_weight_and_weeks_hand_computed(self) -> None:
+        # Flat 80kg / 25% / lean 60kg: target 60/0.85 = 70.588 -> 9.4kg to lose;
+        # 9.412/0.55 = 17.1 -> 18 weeks, 9.412/0.4 = 23.5 -> 24 weeks.
+        result = self._run(
+            self._series(21, 80.0, 0), self._series(21, 25.0, 0), self._series(21, 60.0, 0)
+        )
+        assert result["target_weight_kg"] == pytest.approx(70.6)
+        assert result["kg_to_lose"] == pytest.approx(9.4)
+        assert result["weeks_at_safe_pace"] == [18, 24]
+        assert result["status"] == "not_losing"
+        assert result["active"] is True
+
+    def test_on_track(self) -> None:
+        # -0.45 kg/week, lean flat.
+        result = self._run(
+            self._series(21, 80.0, -0.45 / 7),
+            self._series(21, 25.0, -0.05),
+            self._series(21, 60.0, 0),
+        )
+        assert result["status"] == "on_track"
+
+    def test_losing_too_fast(self) -> None:
+        # -1.0 kg/week is well past the 0.55 ceiling.
+        result = self._run(
+            self._series(21, 80.0, -1.0 / 7),
+            self._series(21, 25.0, -0.05),
+            self._series(21, 60.0, 0),
+        )
+        assert result["status"] == "losing_too_fast"
+
+    def test_lean_mass_dropping_outranks_pace(self) -> None:
+        # Losing at a fine pace, but lean mass clearly falling -- that's the
+        # failure this goal exists to prevent, so it wins.
+        result = self._run(
+            self._series(21, 80.0, -0.45 / 7),
+            self._series(21, 25.0, 0),
+            self._series(21, 60.0, -0.3 / 7),
+        )
+        assert result["status"] == "lean_mass_dropping"
+
+    def test_reached(self) -> None:
+        result = self._run(
+            self._series(21, 70.0, 0), self._series(21, 14.5, 0), self._series(21, 60.0, 0)
+        )
+        assert result["status"] == "reached"
+        assert result["weeks_at_safe_pace"] == [0, 0]
+
+    def test_not_active_before_start(self) -> None:
+        result = self._run(
+            self._series(21, 80.0, 0),
+            self._series(21, 25.0, 0),
+            self._series(21, 60.0, 0),
+            today="2026-10-10",
+        )
+        assert result["active"] is False
+
+    def test_missing_lean_mass_is_insufficient(self) -> None:
+        result = self._run(self._series(21, 80.0, 0), self._series(21, 25.0, 0), [])
+        assert result["status"] == "insufficient_data"

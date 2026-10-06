@@ -527,8 +527,8 @@ class TestSleepTotalWindowMeaning:
 
 class TestBodyFatPctWindowMeaning:
     """Direct unit tests of `_body_fat_pct_window_meaning()` -- added
-    2026-09-11, mirrors `_weight_window_meaning()`'s trend logic but with NO
-    target-body-fat-% comparison clause (no such target is decided yet).
+    2026-09-11, mirrors `_weight_window_meaning()`'s trend logic; the
+    target-body-fat-% clause was added 2026-10-06 once a researched target existed.
     """
 
     def test_no_data(self) -> None:
@@ -576,9 +576,7 @@ class TestBodyFatPctWindowMeaning:
         assert "trending up" in result["headline"]
         assert "0.4 points a week" in result["headline"]
 
-    def test_never_mentions_a_target_body_fat_percentage(self) -> None:
-        # Locks in the explicit scoping decision: no target-comparison
-        # clause exists yet anywhere in this function's output.
+    def test_no_target_clause_without_a_configured_target(self) -> None:
         trend = {
             "confidence": "full",
             "slope_pct_per_week": -0.5,
@@ -586,8 +584,28 @@ class TestBodyFatPctWindowMeaning:
             "ci_high_pct_per_week": -0.2,
         }
         result = _body_fat_pct_window_meaning(22.0, trend)
-        for banned in ("target", "goal", "division"):
-            assert banned not in result["headline"].lower()
+        assert "target" not in result["headline"].lower()
+
+    def test_above_target_reads_distance_but_keeps_trend_tone(self) -> None:
+        # 23.6 vs a 12-15% target -> 8.6 points above. Trending down is still
+        # "good": progress, even though the target is a long way off.
+        trend = {
+            "confidence": "full",
+            "slope_pct_per_week": -0.5,
+            "ci_low_pct_per_week": -0.8,
+            "ci_high_pct_per_week": -0.2,
+        }
+        result = _body_fat_pct_window_meaning(23.6, trend, [12, 15])
+        assert result["tone"] == "good"
+        assert "about 8.6 points above your 12–15% target" in result["headline"]
+
+    def test_inside_target(self) -> None:
+        result = _body_fat_pct_window_meaning(13.0, {"confidence": "insufficient_data"}, [12, 15])
+        assert "inside your 12–15% target" in result["headline"]
+
+    def test_below_target(self) -> None:
+        result = _body_fat_pct_window_meaning(10.5, {"confidence": "insufficient_data"}, [12, 15])
+        assert "below your 12–15% target range" in result["headline"]
 
 
 class TestFatMassWindowMeaning:
