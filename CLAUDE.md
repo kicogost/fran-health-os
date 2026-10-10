@@ -4509,6 +4509,24 @@ exercise lists, rest, optional intervals). Real output 2026-10-06: 23.8% →
 15% = ~8.1 kg of fat at today's lean mass (59.3 kg), 15-21 weeks at the safe
 pace, target weight ~69.7 kg. 14 new tests, 926 passing.
 
+## October weights were silently missing — two causes fixed (2026-10-10)
+
+Weights stopped after 2026-10-04. Two separate causes: (1) **Health Auto Export
+failed on every scheduled run** with `[Errno 11] Resource deadlock avoided`.
+Under launchd, macOS can't bring an iCloud file it has evicted to the cloud
+back down. The same sync run from an interactive shell read the files fine.
+Every file was read inside one try, so one unreadable file failed the whole
+import. Each file is now its own recorded warning in `ingest_runs.errors`.
+Real fix for the root cause is phone/Mac-side: right-click the `HealthOS`
+iCloud folder → "Keep Downloaded". (2) **A fresh RENPHO export changed
+format**: a leading `No.` column, `YYYY.MM.DD` dates, renamed percentage
+headers (`Body Fat Percentage(%)`, ...) and extra kg-mass columns, which are
+not ingested because each one is derivable. `ingest/renpho_csv.py` accepts
+both formats. Saved as `data/raw/renpho/RENPHO Health-Francisco-2026-10-10.csv`
+alongside the September file (raw stays immutable). Result: 4-10 Oct
+backfilled (no weigh-in on 10-05, a genuine gap). Weight EWMA 77.01 kg,
+21-day trend -0.72 kg/week with a 95% CI that excludes zero.
+
 ## Definition of done for v1
 
 One command each morning: syncs Garmin + Strava, recomputes everything, prints a
