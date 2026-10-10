@@ -198,7 +198,16 @@ def parse_body_composition(
     latest_by_date: dict[str, dict[str, tuple[datetime, float, str]]] = {}
 
     for path in sorted(Path(export_dir).glob(_FILE_GLOB)):
-        payload = _read_json_with_retry(path)
+        try:
+            payload = _read_json_with_retry(path)
+        except (OSError, json.JSONDecodeError) as exc:
+            # One unreadable file must not sink every other file's readings. Real
+            # case (Oct 2026): under launchd, an iCloud file macOS had evicted to
+            # the cloud raised EDEADLK ("Resource deadlock avoided") and failed
+            # every scheduled run for a week, though an interactive run read it fine.
+            if errors is not None:
+                errors.append(f"{path.name}: unreadable, skipped — {exc}")
+            continue
         for metric in payload.get("data", {}).get("metrics", []):
             field = _METRIC_FIELD_MAP.get(metric.get("name"))
             if field is None:

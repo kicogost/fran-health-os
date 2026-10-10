@@ -80,6 +80,46 @@ class TestParseBodyComposition:
         (tmp_path / "not_a_health_export.json").write_text("{}")
         assert list(parse_body_composition(tmp_path)) == []
 
+    def test_unreadable_file_is_skipped_not_fatal(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Real case, Oct 2026: under launchd an evicted iCloud file raised
+        # EDEADLK and failed the entire import every scheduled run for a week.
+        good = {
+            "data": {
+                "metrics": [
+                    {
+                        "name": "weight_body_mass",
+                        "units": "kg",
+                        "data": [
+                            {
+                                "qty": 76.8,
+                                "date": "2026-10-07 00:00:00 +0200",
+                                "source": "RENPHO Health",
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+        (tmp_path / "HealthAutoExport-2026-40.json").write_text("{}")
+        (tmp_path / "HealthAutoExport-2026-41.json").write_text(json.dumps(good))
+
+        import health_os.ingest.health_auto_export as hae
+
+        real_read = hae._read_json_with_retry
+
+        def fake_read(path: Path) -> dict:
+            if path.name.endswith("-40.json"):
+                raise OSError(11, "Resource deadlock avoided")
+            return real_read(path)
+
+        monkeypatch.setattr(hae, "_read_json_with_retry", fake_read)
+        errors: list[str] = []
+        metrics = list(parse_body_composition(tmp_path, errors=errors))
+        assert [(m.date, m.weight_kg) for m in metrics] == [("2026-10-07", 76.8)]
+        assert len(errors) == 1 and "HealthAutoExport-2026-40.json" in errors[0]
+
     def test_one_malformed_entry_does_not_discard_other_valid_readings(
         self, tmp_path: Path
     ) -> None:

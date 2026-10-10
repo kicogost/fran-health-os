@@ -126,3 +126,32 @@ class TestParseBodyComposition:
         by_date = {m.date: m for m in parse_body_composition(tmp_path, errors=errors)}
         assert set(by_date) == {"2026-01-02"}
         assert errors == []  # a blank date/time is a skip, not a parse error
+
+    def test_oct_2026_export_format_parsed(self, tmp_path: Path) -> None:
+        """The 2026-10 RENPHO export: leading `No.` column, YYYY.MM.DD dates,
+        renamed percentage headers, extra kg-mass columns (ignored)."""
+        (tmp_path / "export.csv").write_text(
+            "No.,Date,Time,Weight(kg),BMI,Body Fat Percentage(%),Body Fat Mass(kg),"
+            "Muscle Percentage(%),Muscle Mass(kg),Skeletal Muscle Percentage(%),"
+            "Skeletal Muscle Mass(kg),Bone Percentage(%),Bone Mass(kg),"
+            "Protein Percentage(%),Protein Mass(kg),Body Water Percentage(%),"
+            "Body Water Mass(kg),Fat-Free Mass(kg),Subcutaneous Fat(%),Visceral Fat,"
+            "BMR(kcal),Metabolic Age,WHR (Waist-to-Hip Ratio),Optimal Weight(kg),"
+            "Weight Level,Body Type,Target to optimal weight(kg),"
+            "Target to optimal muscle mass(kg),Target to optimal fat mass(kg),Remarks\n"
+            "1,2026.10.10,09:54:23,76.45,24.5,23.0,17.58,73.1,55.88,49.6,37.92,3.9,2.99,"
+            "17.6,13.46,55.6,42.51,58.87,20.5,8,1661,23,--,--,--,--,--,--,--,--\n"
+        )
+        (metric,) = list(parse_body_composition(tmp_path))
+        assert metric.date == "2026-10-10"
+        assert metric.weight_kg == 76.45
+        assert metric.body_fat_pct == 23.0
+        assert metric.skeletal_muscle_pct == 49.6
+        assert metric.body_water_pct == 55.6
+        assert metric.protein_pct == 17.6
+        assert metric.muscle_mass_kg == 55.88
+        assert metric.bone_mass_kg == 2.99
+        assert metric.lean_body_mass_kg == 58.87
+        assert metric.visceral_fat_rating == 8
+        assert metric.bmr_kcal == 1661
+        assert metric.metabolic_age == 23

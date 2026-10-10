@@ -72,6 +72,15 @@ Real gotchas, verified rather than assumed:
   Body Mass" are standard synonyms for the same body-composition quantity,
   and this real cross-check confirms it's genuinely the same number here.
 
+**2026-10 export format**: a fresh export from the RENPHO app (2026-10-10)
+came out in a different shape -- a leading `No.` column, `YYYY.MM.DD` dates,
+renamed percentage headers (`Body Fat Percentage(%)`, `Skeletal Muscle
+Percentage(%)`, `Body Water Percentage(%)`, `Protein Percentage(%)`) and new
+kg-mass columns (`Body Fat Mass(kg)`, `Protein Mass(kg)`, ...) plus
+`WHR`/`Weight Level`. Both formats are accepted; the new mass columns are
+not ingested (each is weight x its own percentage, so derivable, not new
+information).
+
 **A real, investigated discrepancy** (2026-09-01, see CLAUDE.md for the full
 writeup): the CSV has three rows for this date — a fasted 05:59 morning
 reading (78.95 kg) and two near-identical 21:1x evening rows (83.75 kg,
@@ -116,25 +125,30 @@ from health_os.core.timezones import localize_to_utc, to_local_date
 
 _FILE_GLOB = "*.csv"
 _MISSING = "--"
-_DATETIME_FORMAT = "%d/%m/%Y %H:%M:%S"  # DD/MM/YYYY -- verified, see module docstring
+# Two real export formats seen so far (see "2026-10 export format" in the module
+# docstring): DD/MM/YYYY (Sept 2026 export) and YYYY.MM.DD (Oct 2026 export).
+_DATETIME_FORMATS = ("%d/%m/%Y %H:%M:%S", "%Y.%m.%d %H:%M:%S")
 
 # RENPHO CSV header name -> DailyMetric field name. Optimal-weight/target/body-type/
 # remarks columns are deliberately excluded (see module docstring: every real row has
 # "--" in all of them).
-_FIELD_MAP: dict[str, str] = {
-    "Weight(kg)": "weight_kg",
-    "BMI": "bmi",
-    "Body Fat(%)": "body_fat_pct",
-    "Skeletal Muscle(%)": "skeletal_muscle_pct",
-    "Fat-Free Mass(kg)": "lean_body_mass_kg",  # reused, not a new column -- see docstring
-    "Subcutaneous Fat(%)": "subcutaneous_fat_pct",
-    "Visceral Fat": "visceral_fat_rating",
-    "Body Water(%)": "body_water_pct",
-    "Muscle Mass(kg)": "muscle_mass_kg",
-    "Bone Mass(kg)": "bone_mass_kg",
-    "Protein (%)": "protein_pct",  # note the literal internal space before "(%)"
-    "BMR(kcal)": "bmr_kcal",
-    "Metabolic Age": "metabolic_age",
+_FIELD_MAP: dict[str, tuple[str, ...]] = {
+    # DailyMetric field -> header names it appears under (Sept 2026 export first,
+    # then the renamed Oct 2026 export header where it differs).
+    "weight_kg": ("Weight(kg)",),
+    "bmi": ("BMI",),
+    "body_fat_pct": ("Body Fat(%)", "Body Fat Percentage(%)"),
+    "skeletal_muscle_pct": ("Skeletal Muscle(%)", "Skeletal Muscle Percentage(%)"),
+    "lean_body_mass_kg": ("Fat-Free Mass(kg)",),  # reused, not a new column -- see docstring
+    "subcutaneous_fat_pct": ("Subcutaneous Fat(%)",),
+    "visceral_fat_rating": ("Visceral Fat",),
+    "body_water_pct": ("Body Water(%)", "Body Water Percentage(%)"),
+    "muscle_mass_kg": ("Muscle Mass(kg)",),
+    "bone_mass_kg": ("Bone Mass(kg)",),
+    # note the literal internal space before "(%)" in the Sept header
+    "protein_pct": ("Protein (%)", "Protein Percentage(%)"),
+    "bmr_kcal": ("BMR(kcal)",),
+    "metabolic_age": ("Metabolic Age",),
 }
 _INT_FIELDS = {"visceral_fat_rating", "bmr_kcal", "metabolic_age"}
 _SOURCE_TAG = "renpho_csv"
@@ -151,11 +165,21 @@ def _parse_field(raw: str | None, *, as_int: bool) -> float | int | None:
 
 def _row_values(row: dict[str, str]) -> dict[str, float | int]:
     values: dict[str, float | int] = {}
-    for header_name, field in _FIELD_MAP.items():
-        parsed = _parse_field(row.get(header_name), as_int=field in _INT_FIELDS)
+    for field, header_names in _FIELD_MAP.items():
+        raw = next((row[h] for h in header_names if h in row), None)
+        parsed = _parse_field(raw, as_int=field in _INT_FIELDS)
         if parsed is not None:
             values[field] = parsed
     return values
+
+
+def _parse_local_datetime(text: str) -> datetime:
+    for fmt in _DATETIME_FORMATS:
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    raise ValueError(f"unrecognised RENPHO date/time {text!r}")
 
 
 def parse_body_composition(
@@ -183,7 +207,7 @@ def parse_body_composition(
                 if not date_raw or not time_raw:
                     continue
                 try:
-                    naive_local = datetime.strptime(f"{date_raw} {time_raw}", _DATETIME_FORMAT)
+                    naive_local = _parse_local_datetime(f"{date_raw} {time_raw}")
                     dt_utc = localize_to_utc(naive_local)
                     values = _row_values(row)
                 except (ValueError, TypeError) as exc:
