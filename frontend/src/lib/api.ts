@@ -20,6 +20,7 @@ import type {
   WaistRequest,
   WellnessRequest,
 } from "@/types/log"
+import type { SchedulePayload } from "@/types/schedule"
 import type { TodayPayload } from "@/types/today"
 import type { TrainingPayload } from "@/types/training"
 import type { CorrelationResult, TrendsPayload } from "@/types/trends"
@@ -103,6 +104,10 @@ export function triggerSync(): Promise<SyncResult> {
 
 export function fetchToday(): Promise<TodayPayload> {
   return getJson<TodayPayload>("/today")
+}
+
+export function fetchSchedule(): Promise<SchedulePayload> {
+  return getJson<SchedulePayload>("/schedule")
 }
 
 export function fetchTrends(windowDays: number): Promise<TrendsPayload> {

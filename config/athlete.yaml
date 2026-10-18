@@ -215,10 +215,8 @@ weekly_architecture:
           notes: "technical focus"
     - day: tuesday
       sessions:
-        - type: bjj
-          subtype: hard_rounds
-          format: "60min drilling + 30min rolling (4-5 x 5min rounds)"
-          notes: "hard day 1 of 2"
+        - type: rest
+          notes: "No BJJ -- Francisco dropped Tuesday classes (2026-10-18). Rest, or 20-30 min easy mobility yoga."
     - day: wednesday
       sessions:
         - type: calisthenics
@@ -238,7 +236,7 @@ weekly_architecture:
         - type: bjj
           subtype: open_mat
           format: "up to 10-15 x rolls"
-          notes: "hard day 2 of 2"
+          notes: "the one hard BJJ day of the week (Tuesday dropped 2026-10-18)"
     - day: saturday
       sessions:
         - type: bike
@@ -252,6 +250,67 @@ weekly_architecture:
           subtype: intervals_4x4
           duration_min: 25
           notes: "Optional, green days only: 4 x 4 min at 85-95% max HR (~167-187 bpm), 3 min easy between. Otherwise rest or light strength yoga."
+  # Strict daily routine with clock times (2026-10-18, Francisco's own choices:
+  # wake 07:00, lights out 22:30, BJJ Mon/Wed/Fri 18:30-20:00, keep the
+  # 12:00-21:00 eating window). Rendered by the dashboard's Schedule page
+  # (api/schedule.py). `every_day` blocks apply to all 7 days; each day adds
+  # its own. Kinds drive icons/colours: routine, mind, mobility, log, meal,
+  # coffee, training, rest, wind_down, sleep.
+  daily_routine:
+    wake: "07:00"
+    lights_out: "22:30"
+    eating_window: ["12:00", "21:00"]
+    every_day:
+      - {start: "07:00", end: "07:05", kind: routine, title: "Wake up, toilet, weigh in", notes: "Renpho scale, same conditions every day."}
+      - {start: "07:05", end: "07:10", kind: mind, title: "Meditation", notes: "5 minutes."}
+      - {start: "07:10", end: "07:25", kind: mobility, title: "Morning mobility & stretching", notes: "10-15 minutes."}
+      - {start: "07:25", end: "07:30", kind: log, title: "Wellness check-in", notes: "Sleep quality, stress, fatigue, soreness — Log page."}
+      - {start: "07:30", kind: coffee, title: "Coffee 1", notes: "Black."}
+      - {start: "13:30", kind: coffee, title: "Coffee 2", notes: "Black. No caffeine after 14:00."}
+      - {start: "22:00", end: "22:30", kind: wind_down, title: "Screens off, wind down"}
+      - {start: "22:30", kind: sleep, title: "Lights out"}
+    days:
+      monday:
+        - {start: "09:30", end: "10:40", kind: training, title: "Strength A + strength-yoga flow", notes: "Fasted is fine. Strength block first, yoga after."}
+        - {start: "12:00", kind: meal, title: "Meal 1 — break the fast", notes: "Big protein serving after this morning's strength."}
+        - {start: "16:00", kind: meal, title: "Meal 2 — pre-BJJ", notes: "Protein + carbs, 2.5h before class."}
+        - {start: "18:30", end: "20:00", kind: training, title: "BJJ — no-gi technical"}
+        - {start: "20:30", kind: meal, title: "Meal 3 — dinner", notes: "Finish by 21:00."}
+      tuesday:
+        - {start: "12:00", kind: meal, title: "Meal 1 — break the fast"}
+        - {start: "16:00", kind: meal, title: "Meal 2"}
+        - {start: "18:30", end: "19:00", kind: rest, title: "Optional easy mobility yoga or a walk", notes: "No BJJ on Tuesdays."}
+        - {start: "20:00", kind: meal, title: "Meal 3 — dinner", notes: "Finish by 21:00."}
+      wednesday:
+        - {start: "09:30", end: "10:40", kind: training, title: "Strength B + strength-yoga flow", notes: "Fasted is fine. Strength block first, yoga after."}
+        - {start: "12:00", kind: meal, title: "Meal 1 — break the fast", notes: "Big protein serving after this morning's strength."}
+        - {start: "16:00", kind: meal, title: "Meal 2 — pre-BJJ", notes: "Protein + carbs, 2.5h before class."}
+        - {start: "18:30", end: "20:00", kind: training, title: "BJJ — no-gi technical, lighter rolls"}
+        - {start: "20:30", kind: meal, title: "Meal 3 — dinner", notes: "Finish by 21:00."}
+      thursday:
+        - {start: "12:00", kind: meal, title: "Meal 1 — break the fast"}
+        - {start: "16:00", kind: meal, title: "Meal 2"}
+        - {start: "18:30", end: "19:00", kind: rest, title: "Full rest — optional 20-30 min easy mobility yoga"}
+        - {start: "20:00", kind: meal, title: "Meal 3 — dinner", notes: "Finish by 21:00."}
+      friday:
+        - {start: "12:00", kind: meal, title: "Meal 1 — break the fast"}
+        - {start: "16:00", kind: meal, title: "Meal 2 — pre-BJJ", notes: "Protein + carbs, 2.5h before open mat."}
+        - {start: "18:30", end: "20:00", kind: training, title: "BJJ — open mat (hard day)", notes: "Up to 10-15 rolls."}
+        - {start: "20:30", kind: meal, title: "Meal 3 — dinner", notes: "Finish by 21:00."}
+      saturday:
+        - {start: "08:15", end: "10:45", kind: training, title: "Easy Z2 bike ride with Dad", notes: "40-60 km, genuinely easy. Water; a banana on the ride if needed."}
+        - {start: "11:00", kind: meal, title: "Meal 1 — after the ride", notes: "Window opens at 11:00 on Saturdays to refuel after the ride."}
+        - {start: "16:00", kind: meal, title: "Meal 2"}
+        - {start: "20:30", kind: meal, title: "Dinner — planned restaurant meal", notes: "Planned for, not a violation. Finish by 21:00."}
+      sunday:
+        - {start: "07:30", end: "07:35", kind: log, title: "Weekly waist measurement", notes: "Fasted, below the navel — before coffee."}
+        - {start: "10:00", end: "10:30", kind: training, title: "Optional 4x4 bike intervals", notes: "Green readiness only. Otherwise rest or light strength yoga."}
+        - {start: "12:00", kind: meal, title: "Meal 1 — break the fast"}
+        - {start: "16:00", kind: meal, title: "Meal 2"}
+        - {start: "19:00", end: "19:15", kind: log, title: "Review the weekly retro", notes: "Health OS weekly summary."}
+        - {start: "20:00", kind: meal, title: "Meal 3 — dinner", notes: "Finish by 21:00."}
+    day_eating_window:
+      saturday: ["11:00", "21:00"]
   strength_sessions:
     strength_a:
       day: monday

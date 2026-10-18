@@ -4527,6 +4527,36 @@ alongside the September file (raw stays immutable). Result: 4-10 Oct
 backfilled (no weigh-in on 10-05, a genuine gap). Weight EWMA 77.01 kg,
 21-day trend -0.72 kg/week with a 95% CI that excludes zero.
 
+## Comp cancelled; strict daily schedule page built (2026-10-18)
+
+**The 2026-10-18 comp was cancelled** after a week of health issues: a
+thrombosed external haemorrhoid (11-16 Oct, treated with Daflon, a
+hydrocortisone/neomycin/benzocaine cream and ibuprofen; resolving), plus
+urinary symptoms from 14 Oct (urgency, frequency, stinging, bladder pressure,
+right lower-back pain). A urine culture and a full blood panel were done
+2026-10-16; results not yet logged. All of it is in `illness_log`
+(2026-10-11..16) and the Health History tables.
+`docs/`-style test request for the doctor saved to Francisco's desktop, not
+the repo.
+
+**Post-comp week changes, from 2026-10-19:** Francisco dropped Tuesday BJJ.
+BJJ is now Mon/Wed/Fri 18:30-20:00: Mon and Wed technical, Fri open mat as
+the one hard day. Tuesday is a rest day in `weekly_architecture.weekly_template`.
+
+**`weekly_architecture.daily_routine`** (config) holds the strict daily
+routine with clock times, all Francisco's own choices: wake 07:00, 5 min
+meditation, 15 min mobility, wellness check-in, two black coffees (none after
+14:00), the 12:00-21:00 eating window (Saturday opens at 11:00 after the
+08:15 ride), strength Mon/Wed 09:30-10:40, wind-down 22:00, lights out 22:30.
+`every_day` blocks merge into each day's own blocks. New
+`api/schedule.py` (`build_schedule_payload()`, `validate_routine()`: end
+after start, no overlaps, meals inside the day's window), `GET /api/schedule`,
+and a new **Schedule** page (sidebar, after Today): a day selector, a
+timeline with live Now/Next markers on today, and a week-at-a-glance grid.
+A test runs `validate_routine()` against the real config, and it caught a
+real clash on first run (Sunday's waist measurement on top of the wellness
+check-in). 14 new tests, 941 passing.
+
 ## Definition of done for v1
 
 One command each morning: syncs Garmin + Strava, recomputes everything, prints a

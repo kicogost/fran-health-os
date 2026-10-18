@@ -6,6 +6,9 @@ import { AppShell } from "@/components/layout/AppShell"
 // dependency that shouldn't be in the initial bundle just to show the Today
 // page. Each page's own chunk loads only when its route is actually visited.
 const TodayPage = lazy(() => import("@/pages/Today").then((m) => ({ default: m.TodayPage })))
+const SchedulePage = lazy(() =>
+  import("@/pages/Schedule").then((m) => ({ default: m.SchedulePage })),
+)
 const TrendsPage = lazy(() => import("@/pages/Trends").then((m) => ({ default: m.TrendsPage })))
 const TrainingPage = lazy(() =>
   import("@/pages/Training").then((m) => ({ default: m.TrainingPage })),
@@ -35,6 +38,7 @@ function App() {
         <Routes>
           <Route element={<AppShell />}>
             <Route index element={<TodayPage />} />
+            <Route path="schedule" element={<SchedulePage />} />
             <Route path="trends" element={<TrendsPage />} />
             <Route path="training" element={<TrainingPage />} />
             <Route path="comp-prep" element={<CompPrepPage />} />

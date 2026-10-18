@@ -19,6 +19,7 @@ from health_os.api import log as log_api
 from health_os.api.comp_prep import build_comp_prep_payload
 from health_os.api.data_health import build_data_health_payload
 from health_os.api.fitness import build_fitness_payload
+from health_os.api.schedule import build_schedule_payload
 from health_os.api.sync import run_manual_sync
 from health_os.api.today import build_today_payload
 from health_os.api.training import build_training_payload
@@ -136,6 +137,13 @@ def get_comp_prep() -> dict[str, Any]:
         return build_comp_prep_payload(conn, _load_config())
     finally:
         conn.close()
+
+
+@app.get("/api/schedule")
+def get_schedule() -> dict[str, Any]:
+    """The strict weekly routine (config only, no database)."""
+    today = datetime.fromisoformat(to_local_date(datetime.now(UTC))).date()
+    return build_schedule_payload(_load_config(), today)
 
 
 @app.get("/api/data-health")
