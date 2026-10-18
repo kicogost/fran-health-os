@@ -4536,7 +4536,7 @@ urinary symptoms from 14 Oct (urgency, frequency, stinging, bladder pressure,
 right lower-back pain). A urine culture and a full blood panel were done
 2026-10-16; results not yet logged. All of it is in `illness_log`
 (2026-10-11..16) and the Health History tables.
-`docs/`-style test request for the doctor saved to Francisco's desktop, not
+A Spanish test-request note for the doctor was saved to Francisco's desktop, not
 the repo.
 
 **Post-comp week changes, from 2026-10-19:** Francisco dropped Tuesday BJJ.
