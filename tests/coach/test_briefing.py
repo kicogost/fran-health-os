@@ -200,6 +200,25 @@ class TestComputeDailyPlanShape:
         assert sleep_component is not None
         assert sleep_component["raw"]["quality_score"] == 74
 
+    def test_an_older_night_never_stands_in_for_last_night(self, conn: sqlite3.Connection) -> None:
+        # Real bug 2026-10-19: the 07:04 run ran before the watch synced that
+        # night, so the score used the previous night (3h26m, Garmin 39) as
+        # "last night" and read RED on a good night.
+        db_module.upsert(
+            conn,
+            "daily_metrics",
+            DailyMetric(date="2026-08-23", sleep_total_min=206, sleep_score=39).to_row(),
+            ["date"],
+        )
+        db_module.upsert(
+            conn, "daily_metrics", DailyMetric(date="2026-08-24", steps=500).to_row(), ["date"]
+        )
+        plan = compute_daily_plan(conn, _CONFIG, "2026-08-24")
+        sleep_component = plan["score_result"]["components"].get("sleep")
+        if sleep_component is not None:
+            assert sleep_component["raw"]["last_night_hours"] is None
+            assert sleep_component["raw"]["quality_score"] is None
+
     def test_taper_day_override_actually_replaces_the_weekly_template(
         self, conn: sqlite3.Connection
     ) -> None:

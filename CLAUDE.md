@@ -4557,6 +4557,23 @@ A test runs `validate_routine()` against the real config, and it caught a
 real clash on first run (Sunday's waist measurement on top of the wellness
 check-in). 14 new tests, 941 passing.
 
+## Readiness used an older night when last night hadn't synced (2026-10-19)
+
+Francisco slept 8h01m (Garmin sleep score 92) and the morning notification
+said RED (48.8). Cause: the 07:04 morning run synced before the watch had
+uploaded that night, and both readiness call sites (`coach/briefing.py`,
+`metrics/derived_daily.py`) took the newest sleep/HRV/RHR reading as "last
+night" without checking its date. Their comments claimed a "last element ==
+as_of_date" convention that nothing enforced, so Saturday's 3h26m night
+(score 39) stood in. New `metrics/readiness.py: reading_on(obs, as_of_date)`
+returns a value only if it's dated `as_of_date`. Sleep duration, Garmin sleep
+score, and the HRV/RHR deviations now all go through it in both call sites,
+so a missing reading drops out and the remaining weights renormalize
+(`confidence="partial"`) rather than being filled by a stale one.
+Regression tests were confirmed to fail on the old code. Full `derived_daily`
+history was recomputed (215 days). Today after the fix: 69.5 Amber (sleep 98,
+HRV 52 at +0.55 SD, RHR 63; no wellness check-in logged yet).
+
 ## Definition of done for v1
 
 One command each morning: syncs Garmin + Strava, recomputes everything, prints a

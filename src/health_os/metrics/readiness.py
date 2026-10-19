@@ -74,6 +74,21 @@ DEFAULT_READINESS_WEIGHTS = {
 _HOOPER_INDEX_RANGE = (4.0, 40.0)  # best, worst — see core.models.SubjectiveLogEntry
 
 
+def reading_on(obs: list[tuple[str, float]], as_of_date: str) -> float | None:
+    """The newest observation's value, but only if it is dated `as_of_date`.
+
+    Last night's sleep, HRV and resting heart rate must be last night's, not
+    the most recent night that happens to have synced. Real bug (2026-10-19):
+    the 07:04 morning run ran before the watch had synced that night, so the
+    score silently used the previous night's 3h26m sleep and read RED on a
+    genuinely good night. A missing reading is dropped (and the remaining
+    weights renormalize) instead of being stood in for by an older one.
+    """
+    if obs and obs[-1][0] == as_of_date:
+        return obs[-1][1]
+    return None
+
+
 def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
 

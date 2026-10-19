@@ -196,6 +196,23 @@ class TestReadinessScoreMetric:
         readiness = metrics["readiness_score"]
         assert readiness.inputs["components"]["sleep"]["raw"]["quality_score"] == 74
 
+    def test_an_older_night_never_stands_in_for_last_night(self, conn: sqlite3.Connection) -> None:
+        # Same real bug as coach/briefing.py's matching test (2026-10-19).
+        db_module.upsert(
+            conn,
+            "daily_metrics",
+            DailyMetric(date="2026-08-23", sleep_total_min=206, sleep_score=39).to_row(),
+            ["date"],
+        )
+        db_module.upsert(
+            conn, "daily_metrics", DailyMetric(date="2026-08-24", steps=500).to_row(), ["date"]
+        )
+        metrics = {m.metric_name: m for m in compute_derived_metrics(conn, _CONFIG, "2026-08-24")}
+        sleep = (metrics["readiness_score"].inputs or {}).get("components", {}).get("sleep")
+        if sleep is not None:
+            assert sleep["raw"]["last_night_hours"] is None
+            assert sleep["raw"]["quality_score"] is None
+
 
 class TestStoreDerivedMetrics:
     def test_computed_at_bumps_on_recompute(self, conn: sqlite3.Connection) -> None:

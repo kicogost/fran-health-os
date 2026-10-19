@@ -88,22 +88,28 @@ def _readiness_result_as_of(
     rhr_result = baselines.compute_rhr_baseline(rhr_obs)
     sleep_debt_result = baselines.compute_sleep_debt(sleep_obs)
 
+    # Only readings dated as_of_date count as "last night" -- see
+    # readiness_metrics.reading_on() for the real bug this guards against.
+    has_hrv = readiness_metrics.reading_on(hrv_obs, as_of_date) is not None
+    has_rhr = readiness_metrics.reading_on(rhr_obs, as_of_date) is not None
+    last_sleep = readiness_metrics.reading_on(sleep_obs, as_of_date)
+
     def _if_full(result: dict[str, Any], key: str) -> float | None:
         return result[key] if result.get("confidence") == "full" else None
 
     return readiness_metrics.compute_readiness_score(
-        hrv_deviation_sd=_if_full(hrv_result, "deviation_sd"),
-        rhr_deviation_sd=_if_full(rhr_result, "deviation_sd"),
-        last_night_sleep_hours=(sleep_obs[-1][1] / 60.0) if sleep_obs else None,
+        hrv_deviation_sd=_if_full(hrv_result, "deviation_sd") if has_hrv else None,
+        rhr_deviation_sd=_if_full(rhr_result, "deviation_sd") if has_rhr else None,
+        last_night_sleep_hours=(last_sleep / 60.0) if last_sleep is not None else None,
         sleep_debt_hours=sleep_debt_result["debt_hours"]
         if sleep_debt_result["confidence"] != "insufficient_data"
         else None,
         # Garmin's own sleep_score -- factors in REM/deep/restlessness/timing,
         # something the duration+debt math above never looked at on its own
         # (real gap Francisco found 2026-08-30: our score read 97 the same
-        # night Garmin's read 74 "Fair" for low REM). Same "last element ==
-        # as_of_date" convention already used for last_night_sleep_hours above.
-        sleep_quality_score=sleep_quality_obs[-1][1] if sleep_quality_obs else None,
+        # night Garmin's read 74 "Fair" for low REM). Only counted when dated
+        # as_of_date, same as last_night_sleep_hours above.
+        sleep_quality_score=readiness_metrics.reading_on(sleep_quality_obs, as_of_date),
         hooper_index=hooper_by_date.get(as_of_date),
         weights=weights,
     )

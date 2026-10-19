@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from health_os.metrics.readiness import compute_readiness_score
+from health_os.metrics.readiness import compute_readiness_score, reading_on
 
 
 class TestComputeReadinessScore:
@@ -225,3 +225,13 @@ class TestComputeReadinessScore:
         # score.
         with pytest.raises(TypeError):
             compute_readiness_score(tsb_z_score=0.0)  # type: ignore[call-arg]
+
+
+class TestReadingOn:
+    def test_returns_value_only_when_dated_as_of(self) -> None:
+        obs = [("2026-10-17", 413.0), ("2026-10-18", 206.0)]
+        assert reading_on(obs, "2026-10-18") == 206.0
+        assert reading_on(obs, "2026-10-19") is None
+
+    def test_empty(self) -> None:
+        assert reading_on([], "2026-10-19") is None
