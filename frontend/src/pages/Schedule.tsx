@@ -5,6 +5,7 @@ import {
   Bike,
   Brain,
   CalendarClock,
+  ChevronDown,
   ClipboardCheck,
   Coffee,
   Dumbbell,
@@ -74,8 +75,27 @@ function blockStates(blocks: ScheduleBlock[], nowMin: number): BlockState[] {
   return states
 }
 
+function Workout({ block }: { block: ScheduleBlock }) {
+  return (
+    <div className="mt-2 rounded-lg bg-accent/40 p-3">
+      <ol className="space-y-1.5">
+        {block.exercises?.map((exercise, i) => (
+          <li key={exercise} className="flex gap-2 text-sm text-foreground">
+            <span className="w-4 shrink-0 tabular-nums text-muted-foreground">{i + 1}.</span>
+            <span>{exercise}</span>
+          </li>
+        ))}
+      </ol>
+      {block.workout_notes && (
+        <p className="mt-3 text-xs text-muted-foreground">{block.workout_notes}</p>
+      )}
+    </div>
+  )
+}
+
 function Timeline({ day, nowMin }: { day: ScheduleDay; nowMin: number | null }) {
   const states = nowMin === null ? null : blockStates(day.blocks, nowMin)
+  const [open, setOpen] = useState<string | null>(null)
   return (
     <ol className="relative">
       {day.blocks.map((block, i) => {
@@ -83,9 +103,12 @@ function Timeline({ day, nowMin }: { day: ScheduleDay; nowMin: number | null }) 
         const Icon = iconFor(block)
         const color = KIND_STYLE[block.kind].color
         const isTraining = block.kind === "training"
+        const key = `${day.day}-${block.start}-${block.title}`
+        const hasWorkout = (block.exercises?.length ?? 0) > 0
+        const isOpen = open === key
         return (
           <li
-            key={`${block.start}-${block.title}`}
+            key={key}
             className={[
               "flex gap-3 py-2.5 px-2 rounded-lg",
               state === "past" ? "opacity-40" : "",
@@ -97,14 +120,32 @@ function Timeline({ day, nowMin }: { day: ScheduleDay; nowMin: number | null }) 
               {block.end ? `–${block.end}` : ""}
             </span>
             <Icon className="h-4 w-4 shrink-0 mt-0.5" style={{ color }} strokeWidth={2} />
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p
                 className={[
                   "text-sm text-foreground",
                   isTraining ? "font-semibold" : "font-medium",
                 ].join(" ")}
               >
-                {block.title}
+                {hasWorkout ? (
+                  <button
+                    type="button"
+                    onClick={() => setOpen(isOpen ? null : key)}
+                    aria-expanded={isOpen}
+                    className="inline-flex items-center gap-1 text-left hover:underline underline-offset-2"
+                  >
+                    {block.title}
+                    <ChevronDown
+                      className={[
+                        "h-4 w-4 text-muted-foreground transition-transform",
+                        isOpen ? "rotate-180" : "",
+                      ].join(" ")}
+                      strokeWidth={2}
+                    />
+                  </button>
+                ) : (
+                  block.title
+                )}
                 {state === "now" && (
                   <span className="ml-2 rounded-full bg-[var(--band-blue)] px-2 py-0.5 text-[10px] font-semibold uppercase text-[#0a0a0b]">
                     Now
@@ -117,6 +158,10 @@ function Timeline({ day, nowMin }: { day: ScheduleDay; nowMin: number | null }) 
                 )}
               </p>
               {block.notes && <p className="text-xs text-muted-foreground mt-0.5">{block.notes}</p>}
+              {hasWorkout && !isOpen && (
+                <p className="text-xs text-[var(--band-blue)] mt-0.5">Tap to see the workout</p>
+              )}
+              {isOpen && <Workout block={block} />}
             </div>
           </li>
         )

@@ -13,9 +13,6 @@ const TrendsPage = lazy(() => import("@/pages/Trends").then((m) => ({ default: m
 const TrainingPage = lazy(() =>
   import("@/pages/Training").then((m) => ({ default: m.TrainingPage })),
 )
-const CompPrepPage = lazy(() =>
-  import("@/pages/CompPrep").then((m) => ({ default: m.CompPrepPage })),
-)
 const LogPage = lazy(() => import("@/pages/Log").then((m) => ({ default: m.LogPage })))
 const HealthHistoryPage = lazy(() =>
   import("@/pages/HealthHistory").then((m) => ({ default: m.HealthHistoryPage })),
@@ -41,7 +38,6 @@ function App() {
             <Route path="schedule" element={<SchedulePage />} />
             <Route path="trends" element={<TrendsPage />} />
             <Route path="training" element={<TrainingPage />} />
-            <Route path="comp-prep" element={<CompPrepPage />} />
             <Route path="log" element={<LogPage />} />
             <Route path="health-history" element={<HealthHistoryPage />} />
             <Route path="data-health" element={<DataHealthPage />} />

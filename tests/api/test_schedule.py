@@ -65,6 +65,61 @@ class TestBuildSchedulePayload:
         assert routine["every_day"][0]["title"] == "Lights out"
 
 
+class TestStrengthWorkouts:
+    def test_linked_block_gets_exercises_and_notes(self) -> None:
+        routine = _routine(
+            days={
+                "monday": [
+                    {
+                        "start": "09:30",
+                        "end": "10:40",
+                        "kind": "training",
+                        "strength_session": "strength_a",
+                        "title": "Strength A",
+                    }
+                ]
+            }
+        )
+        config = _config(routine)
+        config["weekly_architecture"]["strength_sessions"] = {
+            "strength_a": {"exercises": ["pull-ups: 4x5-8", "dips: 3x6-10"]},
+            "notes": "Strength first,\n  yoga after.",
+        }
+        payload = build_schedule_payload(config, date(2026, 10, 19))
+        block = next(b for b in payload["days"][0]["blocks"] if b["title"] == "Strength A")
+        assert block["exercises"] == ["pull-ups: 4x5-8", "dips: 3x6-10"]
+        assert block["workout_notes"] == "Strength first, yoga after."
+
+    def test_unlinked_blocks_get_no_workout(self) -> None:
+        payload = build_schedule_payload(_config(_routine()), date(2026, 10, 19))
+        assert all("exercises" not in b for b in payload["days"][0]["blocks"])
+
+    def test_unknown_link_flagged(self) -> None:
+        routine = _routine(
+            days={
+                "monday": [
+                    {
+                        "start": "09:30",
+                        "kind": "training",
+                        "strength_session": "strength_z",
+                        "title": "X",
+                    }
+                ]
+            }
+        )
+        assert validate_routine(routine, {"strength_a": {}}) == [
+            "monday: 'X' links unknown session 'strength_z'"
+        ]
+
+    def test_real_monday_and_wednesday_show_their_workouts(self) -> None:
+        config = yaml.safe_load(REAL_CONFIG.read_text(encoding="utf-8"))
+        payload = build_schedule_payload(config, date(2026, 10, 19))
+        by_day = {d["day"]: d for d in payload["days"]}
+        for day in ("monday", "wednesday"):
+            strength = [b for b in by_day[day]["blocks"] if b.get("strength_session")]
+            assert len(strength) == 1 and strength[0]["exercises"], day
+
+
 class TestValidateRoutine:
     def test_clean_routine_has_no_problems(self) -> None:
         assert validate_routine(_routine()) == []
@@ -97,7 +152,8 @@ class TestValidateRoutine:
 class TestRealConfig:
     def test_real_routine_is_consistent(self) -> None:
         config = yaml.safe_load(REAL_CONFIG.read_text(encoding="utf-8"))
-        assert validate_routine(config["weekly_architecture"]["daily_routine"]) == []
+        plan = config["weekly_architecture"]
+        assert validate_routine(plan["daily_routine"], plan["strength_sessions"]) == []
 
     def test_real_routine_covers_all_days_with_morning_routine(self) -> None:
         config = yaml.safe_load(REAL_CONFIG.read_text(encoding="utf-8"))

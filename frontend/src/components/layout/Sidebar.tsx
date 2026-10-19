@@ -1,4 +1,4 @@
-import { CalendarClock, Dumbbell, HeartPulse, Home, PenLine, Stethoscope, TrendingUp, Trophy } from "lucide-react"
+import { CalendarClock, Dumbbell, HeartPulse, Home, PenLine, Stethoscope, TrendingUp } from "lucide-react"
 import { NavLink } from "react-router-dom"
 import { SyncButton } from "@/components/layout/SyncButton"
 
@@ -13,7 +13,6 @@ const NAV_ITEMS = [
   { to: "/schedule", label: "Schedule", icon: CalendarClock },
   { to: "/trends", label: "Trends", icon: TrendingUp },
   { to: "/training", label: "Training", icon: Dumbbell },
-  { to: "/comp-prep", label: "Comp Prep", icon: Trophy },
   { to: "/log", label: "Log", icon: PenLine },
   { to: "/health-history", label: "Health History", icon: HeartPulse },
   { to: "/data-health", label: "Data Health", icon: Stethoscope },

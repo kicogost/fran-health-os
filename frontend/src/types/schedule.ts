@@ -16,6 +16,10 @@ export interface ScheduleBlock {
   kind: BlockKind
   title: string
   notes?: string
+  /** Set on strength blocks: the prescribed session, shown when opened. */
+  strength_session?: string
+  exercises?: string[]
+  workout_notes?: string
 }
 
 export interface ScheduleDay {

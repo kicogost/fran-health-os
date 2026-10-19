@@ -36,11 +36,14 @@ def _eating_window(routine: dict[str, Any], day: str) -> list[str]:
     return list(overrides.get(day, routine["eating_window"]))
 
 
-def validate_routine(routine: dict[str, Any]) -> list[str]:
+def validate_routine(
+    routine: dict[str, Any], strength_sessions: dict[str, Any] | None = None
+) -> list[str]:
     """Return a list of human-readable problems; empty means consistent.
 
-    Checks: end after start, timed blocks on the same day don't overlap, and
-    every meal falls inside that day's eating window.
+    Checks: end after start, timed blocks on the same day don't overlap,
+    every meal falls inside that day's eating window, and (when
+    `strength_sessions` is given) every `strength_session` link exists.
     """
     problems: list[str] = []
     for day in WEEKDAYS:
@@ -54,6 +57,9 @@ def validate_routine(routine: dict[str, Any]) -> list[str]:
                 if end <= start:
                     problems.append(f"{day}: '{b['title']}' ends before it starts")
                 timed.append((start, end, b["title"]))
+            link = b.get("strength_session")
+            if link and strength_sessions is not None and link not in strength_sessions:
+                problems.append(f"{day}: '{b['title']}' links unknown session '{link}'")
             if b["kind"] == "meal" and not window_start <= start <= window_end:
                 problems.append(f"{day}: meal '{b['title']}' at {b['start']} is outside the window")
         timed.sort()
@@ -63,19 +69,36 @@ def validate_routine(routine: dict[str, Any]) -> list[str]:
     return problems
 
 
+def _attach_workouts(blocks: list[dict[str, Any]], plan: dict[str, Any]) -> None:
+    """A block with `strength_session` gets that session's prescribed
+    exercise list and coaching notes, so the page can show the workout when
+    the block is opened. An unknown session name is a config mistake, caught
+    by `validate_routine()`."""
+    sessions = plan.get("strength_sessions") or {}
+    for block in blocks:
+        session = sessions.get(block.get("strength_session") or "")
+        if session:
+            block["exercises"] = list(session.get("exercises") or [])
+            if sessions.get("notes"):
+                block["workout_notes"] = " ".join(str(sessions["notes"]).split())
+
+
 def build_schedule_payload(config: dict[str, Any], today: date) -> dict[str, Any]:
     plan = config["weekly_architecture"]
     routine = plan["daily_routine"]
     today_name = WEEKDAYS[today.weekday()]
-    days = [
-        {
-            "day": day,
-            "is_today": day == today_name,
-            "eating_window": _eating_window(routine, day),
-            "blocks": _day_blocks(routine, day),
-        }
-        for day in WEEKDAYS
-    ]
+    days = []
+    for day in WEEKDAYS:
+        blocks = _day_blocks(routine, day)
+        _attach_workouts(blocks, plan)
+        days.append(
+            {
+                "day": day,
+                "is_today": day == today_name,
+                "eating_window": _eating_window(routine, day),
+                "blocks": blocks,
+            }
+        )
     return {
         "today": today_name,
         "starts": plan.get("starts"),

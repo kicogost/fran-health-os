@@ -255,7 +255,8 @@ weekly_architecture:
   # 12:00-21:00 eating window). Rendered by the dashboard's Schedule page
   # (api/schedule.py). `every_day` blocks apply to all 7 days; each day adds
   # its own. Kinds drive icons/colours: routine, mind, mobility, log, meal,
-  # coffee, training, rest, wind_down, sleep.
+  # coffee, training, rest, wind_down, sleep. A `strength_session` key links a
+  # block to `strength_sessions` below, so the page can show the workout.
   daily_routine:
     wake: "07:00"
     lights_out: "22:30"
@@ -271,7 +272,7 @@ weekly_architecture:
       - {start: "22:30", kind: sleep, title: "Lights out"}
     days:
       monday:
-        - {start: "09:30", end: "10:40", kind: training, title: "Strength A + strength-yoga flow", notes: "Fasted is fine. Strength block first, yoga after."}
+        - {start: "09:30", end: "10:40", kind: training, strength_session: strength_a, title: "Strength A + strength-yoga flow", notes: "Fasted is fine. Strength block first, yoga after."}
         - {start: "12:00", kind: meal, title: "Meal 1 — break the fast", notes: "Big protein serving after this morning's strength."}
         - {start: "16:00", kind: meal, title: "Meal 2 — pre-BJJ", notes: "Protein + carbs, 2.5h before class."}
         - {start: "18:30", end: "20:00", kind: training, title: "BJJ — no-gi technical"}
@@ -282,7 +283,7 @@ weekly_architecture:
         - {start: "18:30", end: "19:00", kind: rest, title: "Optional easy mobility yoga or a walk", notes: "No BJJ on Tuesdays."}
         - {start: "20:00", kind: meal, title: "Meal 3 — dinner", notes: "Finish by 21:00."}
       wednesday:
-        - {start: "09:30", end: "10:40", kind: training, title: "Strength B + strength-yoga flow", notes: "Fasted is fine. Strength block first, yoga after."}
+        - {start: "09:30", end: "10:40", kind: training, strength_session: strength_b, title: "Strength B + strength-yoga flow", notes: "Fasted is fine. Strength block first, yoga after."}
         - {start: "12:00", kind: meal, title: "Meal 1 — break the fast", notes: "Big protein serving after this morning's strength."}
         - {start: "16:00", kind: meal, title: "Meal 2 — pre-BJJ", notes: "Protein + carbs, 2.5h before class."}
         - {start: "18:30", end: "20:00", kind: training, title: "BJJ — no-gi technical, lighter rolls"}

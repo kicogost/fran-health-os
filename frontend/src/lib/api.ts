@@ -1,4 +1,3 @@
-import type { CompPrepPayload } from "@/types/compPrep"
 import type { DataHealthPayload } from "@/types/dataHealth"
 import type { Vo2maxPayload } from "@/types/fitness"
 import type {
@@ -116,10 +115,6 @@ export function fetchTrends(windowDays: number): Promise<TrendsPayload> {
 
 export function fetchTraining(): Promise<TrainingPayload> {
   return getJson<TrainingPayload>("/training")
-}
-
-export function fetchCompPrep(): Promise<CompPrepPayload> {
-  return getJson<CompPrepPayload>("/comp-prep")
 }
 
 export function fetchDataHealth(): Promise<DataHealthPayload> {

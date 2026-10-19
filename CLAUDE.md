@@ -4574,6 +4574,21 @@ Regression tests were confirmed to fail on the old code. Full `derived_daily`
 history was recomputed (215 days). Today after the fix: 69.5 Amber (sleep 98,
 HRV 52 at +0.55 SD, RHR 63; no wellness check-in logged yet).
 
+## Comp Prep page removed; Schedule strength blocks open to show the workout (2026-10-19)
+
+With the comp cancelled, the **Comp Prep page was removed from the frontend**
+(page, route, sidebar entry, `WeightTrajectoryChart`, the Comp-Prep-only
+`StatCard`, its types and `fetchCompPrep`). The backend `GET /api/comp-prep`
+and `api/comp_prep.py` were left in place, unused by the frontend.
+
+Schedule strength blocks now link to their prescribed session via a
+`strength_session: strength_a|strength_b` key in
+`weekly_architecture.daily_routine`. `api/schedule.py: _attach_workouts()` adds
+that session's `exercises` and the shared `strength_sessions.notes`
+(`workout_notes`), and `validate_routine()` flags a link to an unknown
+session. On the page, a linked block shows "Tap to see the workout" and
+expands into the numbered exercise list plus notes. 4 new tests, 949 passing.
+
 ## Definition of done for v1
 
 One command each morning: syncs Garmin + Strava, recomputes everything, prints a
