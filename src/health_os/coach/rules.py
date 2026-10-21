@@ -11,11 +11,12 @@ metrics, never recomputing them itself.
 
 Two hard safety rails are enforced BY CONSTRUCTION rather than by a runtime
 check, and that's documented explicitly rather than left implicit:
-- **Never recommend running.** `_SESSION_GUIDANCE`'s vocabulary of session
-  types (drawn from the active plan's `weekly_template`, see `active_plan()`) never
-  includes running in the first place — there is no code path that could
-  emit it, because the athlete's own weekly architecture never schedules it
-  (the prior knee injury guardrail lives at the config layer already).
+- **Never recommend running**, with one explicit exception. `_SESSION_GUIDANCE`'s
+  vocabulary of session types (drawn from the active plan's `weekly_template`,
+  see `active_plan()`) has no general running entry, so no code path can emit
+  one. The single exception is `("sprints", "hill_sprints")`, added 2026-10-21
+  at Francisco's explicit choice to override his own knee guardrail: uphill
+  sprints only, walking back down, with "stop at any knee pain" in every band.
 - **Never add a 4th/5th hard session.** `session_guidance()` only ever
   narrates sessions already present in `weekly_template` for the day; it has
   no mechanism to add one that isn't already scheduled.
@@ -117,6 +118,23 @@ _SESSION_GUIDANCE: dict[tuple[str, str | None], dict[str, str]] = {
         "green": "Attempt a load progression.",
         "amber": "Hold current load, don't push a new PR.",
         "red": "Mobility + light kettlebell instead of the full session.",
+    },
+    ("calisthenics", "strength_c"): {
+        "green": "Attempt a load progression — keep legs light, sprints tomorrow.",
+        "amber": "Hold current load, don't push a new PR.",
+        "red": "Mobility + light kettlebell instead of the full session.",
+    },
+    ("calisthenics", "yoga_flow"): {
+        "green": "Full flow, longer holds are fine.",
+        "amber": "Full flow, keep the holds comfortable.",
+        "red": "Gentle version: mobility focus, short holds.",
+    },
+    # Running exception (2026-10-21, Francisco's explicit choice): uphill
+    # sprints only, walking back down. Every band repeats the knee rule.
+    ("sprints", "hill_sprints"): {
+        "green": "Go for it — uphill only, walk back down, stop at any knee pain.",
+        "amber": "Cut it to 3 reps at about 90% — uphill only, stop at any knee pain.",
+        "red": "Skip the sprints today — an easy walk instead.",
     },
     ("bike", "intervals_4x4"): {
         "green": "Optional — go for it if you feel good: 4 x 4 min hard, 3 min easy between.",

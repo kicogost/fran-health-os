@@ -49,7 +49,7 @@ class TestResolveSessionFlagMode:
 
     def test_invalid_session_type_raises_value_error(self) -> None:
         with pytest.raises(ValueError):
-            log_calisthenics.resolve_session(_args(session_type="strength_c"))
+            log_calisthenics.resolve_session(_args(session_type="strength_d"))
 
 
 class TestResolveSessionInteractiveMode:

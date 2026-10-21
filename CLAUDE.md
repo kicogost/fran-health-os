@@ -4589,6 +4589,37 @@ that session's `exercises` and the shared `strength_sessions.notes`
 session. On the page, a linked block shows "Tap to see the workout" and
 expands into the numbered exercise list plus notes. 4 new tests, 949 passing.
 
+## New week: 08:00 wake, deep-work blocks, hill sprints (2026-10-21)
+
+Francisco reworked the post-comp week (`config/athlete.yaml:
+weekly_architecture`, still `starts: 2026-10-19`): wake 08:00, lights out
+23:00 (his choice), deep work 10-12 and 15-17 on weekdays (Sunday half day,
+10-12 only; Saturday off work), Saturday bike dropped. Training: strength A
+Mon, B Wed, C Sat (new, upper body + core, legs light because Sunday is a
+sprint day); strength-yoga flow is now its own session (Thu, Sat) instead of
+being tacked onto A/B; BJJ Mon/Wed + open mat Fri; **hill sprints Tue + Sun**
+(5 x 30 s all-out uphill, 3-5 min rest, building 3 -> 4 -> 5 reps over ~4
+weeks). Advised 3 strength sessions rather than 4; he agreed.
+
+**Running exception, his explicit choice.** Offered bike sprints (same
+protocol, no knee impact) given the permanent no-running knee guardrail; he
+chose running hill sprints. Encoded narrowly: `injuries.hard_no` rule text
+records the exception, `weekly_architecture.sprint_sessions.hill_sprints`
+holds the protocol (uphill only, walk down, stop at any knee pain), and
+`coach/rules.py` has one `("sprints", "hill_sprints")` guidance entry whose
+green/amber text always carries the knee rule (red = skip). The module
+docstring's "never recommend running" rail now names this single exception.
+No general running guidance exists.
+
+Built: migration **0011** rebuilds `calisthenics_sessions` so its CHECK
+allows `strength_c` and `yoga_flow` (both existing rows preserved, DB backed
+up first); `core/models.CALISTHENICS_SESSION_TYPES` is the shared list (CLI
+uses it). `api/schedule.py` generalised to `WORKOUT_LINKS`
+(`strength_session` and `sprint_session`), so sprint blocks also open to
+show the protocol. New block kind `work`. Weekly retro counts a sprint day
+done when a `run`/`*running*` activity exists that date. Log page offers
+Strength C and yoga flow. 16 new/updated tests, 957 passing.
+
 ## Definition of done for v1
 
 One command each morning: syncs Garmin + Strava, recomputes everything, prints a

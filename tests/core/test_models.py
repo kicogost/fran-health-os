@@ -190,7 +190,12 @@ class TestBjjSession:
 class TestCalisthenicsSession:
     def test_rejects_invalid_session_type(self) -> None:
         with pytest.raises(ValueError):
-            CalisthenicsSession(date="2026-08-24", session_type="strength_c")
+            CalisthenicsSession(date="2026-08-24", session_type="strength_d")
+
+    def test_accepts_strength_c_and_yoga_flow(self) -> None:
+        # Added 2026-10-21 (migration 0011): third strength day + standalone yoga flow.
+        for session_type in ("strength_c", "yoga_flow"):
+            CalisthenicsSession(date="2026-10-24", session_type=session_type)
 
     def test_rejects_out_of_range_rpe(self) -> None:
         with pytest.raises(ValueError):

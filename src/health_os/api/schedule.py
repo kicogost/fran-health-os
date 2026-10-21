@@ -36,14 +36,21 @@ def _eating_window(routine: dict[str, Any], day: str) -> list[str]:
     return list(overrides.get(day, routine["eating_window"]))
 
 
+# A block links to a workout through one of these keys; each points at the
+# plan section the workout is defined in.
+WORKOUT_LINKS = {"strength_session": "strength_sessions", "sprint_session": "sprint_sessions"}
+
+
 def validate_routine(
-    routine: dict[str, Any], strength_sessions: dict[str, Any] | None = None
+    routine: dict[str, Any],
+    strength_sessions: dict[str, Any] | None = None,
+    sprint_sessions: dict[str, Any] | None = None,
 ) -> list[str]:
     """Return a list of human-readable problems; empty means consistent.
 
     Checks: end after start, timed blocks on the same day don't overlap,
-    every meal falls inside that day's eating window, and (when
-    `strength_sessions` is given) every `strength_session` link exists.
+    every meal falls inside that day's eating window, and (when the sessions
+    are given) every `strength_session` / `sprint_session` link exists.
     """
     problems: list[str] = []
     for day in WEEKDAYS:
@@ -57,9 +64,13 @@ def validate_routine(
                 if end <= start:
                     problems.append(f"{day}: '{b['title']}' ends before it starts")
                 timed.append((start, end, b["title"]))
-            link = b.get("strength_session")
-            if link and strength_sessions is not None and link not in strength_sessions:
-                problems.append(f"{day}: '{b['title']}' links unknown session '{link}'")
+            for key, sessions in (
+                ("strength_session", strength_sessions),
+                ("sprint_session", sprint_sessions),
+            ):
+                link = b.get(key)
+                if link and sessions is not None and link not in sessions:
+                    problems.append(f"{day}: '{b['title']}' links unknown session '{link}'")
             if b["kind"] == "meal" and not window_start <= start <= window_end:
                 problems.append(f"{day}: meal '{b['title']}' at {b['start']} is outside the window")
         timed.sort()
@@ -70,17 +81,18 @@ def validate_routine(
 
 
 def _attach_workouts(blocks: list[dict[str, Any]], plan: dict[str, Any]) -> None:
-    """A block with `strength_session` gets that session's prescribed
-    exercise list and coaching notes, so the page can show the workout when
-    the block is opened. An unknown session name is a config mistake, caught
-    by `validate_routine()`."""
-    sessions = plan.get("strength_sessions") or {}
+    """A block with a `strength_session` or `sprint_session` link gets that
+    session's prescribed exercise list and its section's coaching notes, so
+    the page can show the workout when the block is opened. An unknown session
+    name is a config mistake, caught by `validate_routine()`."""
     for block in blocks:
-        session = sessions.get(block.get("strength_session") or "")
-        if session:
-            block["exercises"] = list(session.get("exercises") or [])
-            if sessions.get("notes"):
-                block["workout_notes"] = " ".join(str(sessions["notes"]).split())
+        for key, section in WORKOUT_LINKS.items():
+            sessions = plan.get(section) or {}
+            session = sessions.get(block.get(key) or "")
+            if session:
+                block["exercises"] = list(session.get("exercises") or [])
+                if sessions.get("notes"):
+                    block["workout_notes"] = " ".join(str(sessions["notes"]).split())
 
 
 def build_schedule_payload(config: dict[str, Any], today: date) -> dict[str, Any]:

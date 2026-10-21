@@ -71,6 +71,13 @@ def _session_completion(
             "SELECT local_date FROM activities WHERE sport = 'cycling'"
         ).fetchall()
     }
+    # Hill sprints (2026-10-21) are recorded on the watch as a run.
+    run_dates = {
+        r["local_date"]
+        for r in conn.execute(
+            "SELECT local_date FROM activities WHERE sport = 'run' OR sport LIKE '%running%'"
+        ).fetchall()
+    }
     calisthenics_placeholders = ", ".join("?" for _ in _CALISTHENICS_SPORTS)
     calisthenics_dates = {
         r["date"] for r in conn.execute("SELECT date FROM calisthenics_sessions").fetchall()
@@ -94,6 +101,8 @@ def _session_completion(
                 status = "completed" if iso in bike_dates else "missed"
             elif session["type"] == "calisthenics":
                 status = "completed" if iso in calisthenics_dates else "missed"
+            elif session["type"] == "sprints":
+                status = "completed" if iso in run_dates else "missed"
             else:  # rest
                 status = "n/a"
             entries.append(

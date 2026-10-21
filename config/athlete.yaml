@@ -202,141 +202,195 @@ comp_prep:
 weekly_architecture:
   active: true
   starts: "2026-10-19"
+  # Reworked 2026-10-21 at Francisco's request: wake 08:00, deep-work blocks
+  # 10-12 and 15-17 on weekdays (Sunday half day, 10-12 only, Saturday off),
+  # no Saturday bike, 3 strength sessions (A Mon, B Wed, C Sat), 2 standalone
+  # strength-yoga flows (Thu, Sat), 2 hill-sprint sessions (Tue, Sun), BJJ
+  # Mon/Wed + open mat Fri. Thursday is the lightest day.
   weekly_template:
     - day: monday
       sessions:
         - type: calisthenics
           subtype: strength_a
-          duration_min: 70
-          notes: "Morning, 3h+ before BJJ. Strength block first, strength-yoga flow after."
+          duration_min: 55
+          notes: "Morning, 3h+ before BJJ."
         - type: bjj
           subtype: no_gi_technical
           format: "60min drilling + 30min rolling (4-5 x 5min rounds)"
           notes: "technical focus"
     - day: tuesday
       sessions:
-        - type: rest
-          notes: "No BJJ -- Francisco dropped Tuesday classes (2026-10-18). Rest, or 20-30 min easy mobility yoga."
+        - type: sprints
+          subtype: hill_sprints
+          duration_min: 50
+          notes: "Uphill only, walk back down. Stop at any knee pain."
     - day: wednesday
       sessions:
         - type: calisthenics
           subtype: strength_b
-          duration_min: 70
-          notes: "Morning, 3h+ before BJJ. Strength block first, strength-yoga flow after."
+          duration_min: 55
+          notes: "Morning, 3h+ before BJJ."
         - type: bjj
           subtype: no_gi_technical
           format: "60min drilling + 30min rolling (4-5 x 5min rounds)"
           notes: "technical focus, lighter rolls"
     - day: thursday
       sessions:
-        - type: rest
-          notes: "Full rest. Optional 20-30 min easy mobility yoga."
+        - type: calisthenics
+          subtype: yoga_flow
+          duration_min: 40
+          notes: "The week's lightest day."
     - day: friday
       sessions:
         - type: bjj
           subtype: open_mat
           format: "up to 10-15 x rolls"
-          notes: "the one hard BJJ day of the week (Tuesday dropped 2026-10-18)"
+          notes: "the one hard BJJ day of the week"
     - day: saturday
       sessions:
-        - type: bike
-          subtype: easy_z2
-          distance_km_range: [40, 60]
-          zone_range: "Z2, kept genuinely easy"
-          notes: "Easy on purpose -- the day after open mat."
+        - type: calisthenics
+          subtype: strength_c
+          duration_min: 55
+          notes: "Upper body and core; legs kept light for Sunday's sprints."
+        - type: calisthenics
+          subtype: yoga_flow
+          duration_min: 40
+          notes: "Later in the day, separate from the strength session."
     - day: sunday
       sessions:
-        - type: bike
-          subtype: intervals_4x4
-          duration_min: 25
-          notes: "Optional, green days only: 4 x 4 min at 85-95% max HR (~167-187 bpm), 3 min easy between. Otherwise rest or light strength yoga."
-  # Strict daily routine with clock times (2026-10-18, Francisco's own choices:
-  # wake 07:00, lights out 22:30, BJJ Mon/Wed/Fri 18:30-20:00, keep the
-  # 12:00-21:00 eating window). Rendered by the dashboard's Schedule page
-  # (api/schedule.py). `every_day` blocks apply to all 7 days; each day adds
-  # its own. Kinds drive icons/colours: routine, mind, mobility, log, meal,
-  # coffee, training, rest, wind_down, sleep. A `strength_session` key links a
-  # block to `strength_sessions` below, so the page can show the workout.
+        - type: sprints
+          subtype: hill_sprints
+          duration_min: 50
+          notes: "Uphill only, walk back down. Stop at any knee pain."
+  # Strict daily routine with clock times (Francisco's own choices, last
+  # changed 2026-10-21: wake 08:00, lights out 23:00, deep work 10-12 and
+  # 15-17, 12:00-21:00 eating window). Rendered by the dashboard's Schedule
+  # page (api/schedule.py). `every_day` blocks apply to all 7 days; each day
+  # adds its own. Kinds drive icons/colours: routine, mind, mobility, log,
+  # meal, coffee, training, work, rest, wind_down, sleep. A `strength_session`
+  # or `sprint_session` key links a block to `strength_sessions` /
+  # `sprint_sessions` below, so the page can show the workout.
   daily_routine:
-    wake: "07:00"
-    lights_out: "22:30"
+    wake: "08:00"
+    lights_out: "23:00"
     eating_window: ["12:00", "21:00"]
     every_day:
-      - {start: "07:00", end: "07:05", kind: routine, title: "Wake up, toilet, weigh in", notes: "Renpho scale, same conditions every day."}
-      - {start: "07:05", end: "07:10", kind: mind, title: "Meditation", notes: "5 minutes."}
-      - {start: "07:10", end: "07:25", kind: mobility, title: "Morning mobility & stretching", notes: "10-15 minutes."}
-      - {start: "07:25", end: "07:30", kind: log, title: "Wellness check-in", notes: "Sleep quality, stress, fatigue, soreness — Log page."}
-      - {start: "07:30", kind: coffee, title: "Coffee 1", notes: "Black."}
+      - {start: "08:00", end: "08:05", kind: routine, title: "Wake up, toilet, weigh in", notes: "Renpho scale, same conditions every day."}
+      - {start: "08:05", end: "08:10", kind: mind, title: "Meditation", notes: "5 minutes."}
+      - {start: "08:10", end: "08:25", kind: mobility, title: "Morning stretching & mobility", notes: "10-15 minutes."}
+      - {start: "08:25", end: "08:30", kind: log, title: "Wellness check-in", notes: "Sleep quality, stress, fatigue, soreness — Log page."}
+      - {start: "08:30", kind: coffee, title: "Coffee 1", notes: "Black."}
       - {start: "13:30", kind: coffee, title: "Coffee 2", notes: "Black. No caffeine after 14:00."}
-      - {start: "22:00", end: "22:30", kind: wind_down, title: "Screens off, wind down"}
-      - {start: "22:30", kind: sleep, title: "Lights out"}
+      - {start: "22:30", end: "23:00", kind: wind_down, title: "Screens off, wind down"}
+      - {start: "23:00", kind: sleep, title: "Lights out"}
     days:
       monday:
-        - {start: "09:30", end: "10:40", kind: training, strength_session: strength_a, title: "Strength A + strength-yoga flow", notes: "Fasted is fine. Strength block first, yoga after."}
+        - {start: "08:40", end: "09:35", kind: training, strength_session: strength_a, title: "Strength A", notes: "Fasted is fine."}
+        - {start: "10:00", end: "12:00", kind: work, title: "Deep work"}
         - {start: "12:00", kind: meal, title: "Meal 1 — break the fast", notes: "Big protein serving after this morning's strength."}
-        - {start: "16:00", kind: meal, title: "Meal 2 — pre-BJJ", notes: "Protein + carbs, 2.5h before class."}
+        - {start: "15:00", end: "17:00", kind: work, title: "Deep work"}
+        - {start: "17:00", kind: meal, title: "Meal 2 — pre-BJJ", notes: "Moderate size, protein + carbs, 1.5h before class."}
         - {start: "18:30", end: "20:00", kind: training, title: "BJJ — no-gi technical"}
         - {start: "20:30", kind: meal, title: "Meal 3 — dinner", notes: "Finish by 21:00."}
       tuesday:
-        - {start: "12:00", kind: meal, title: "Meal 1 — break the fast"}
-        - {start: "16:00", kind: meal, title: "Meal 2"}
-        - {start: "18:30", end: "19:00", kind: rest, title: "Optional easy mobility yoga or a walk", notes: "No BJJ on Tuesdays."}
+        - {start: "08:40", end: "09:30", kind: training, sprint_session: hill_sprints, title: "Hill sprints", notes: "Uphill only, walk back down. Stop at any knee pain."}
+        - {start: "10:00", end: "12:00", kind: work, title: "Deep work"}
+        - {start: "12:00", kind: meal, title: "Meal 1 — break the fast", notes: "Refuel after the sprints."}
+        - {start: "15:00", end: "17:00", kind: work, title: "Deep work"}
+        - {start: "17:00", kind: meal, title: "Meal 2"}
         - {start: "20:00", kind: meal, title: "Meal 3 — dinner", notes: "Finish by 21:00."}
       wednesday:
-        - {start: "09:30", end: "10:40", kind: training, strength_session: strength_b, title: "Strength B + strength-yoga flow", notes: "Fasted is fine. Strength block first, yoga after."}
+        - {start: "08:40", end: "09:35", kind: training, strength_session: strength_b, title: "Strength B", notes: "Fasted is fine."}
+        - {start: "10:00", end: "12:00", kind: work, title: "Deep work"}
         - {start: "12:00", kind: meal, title: "Meal 1 — break the fast", notes: "Big protein serving after this morning's strength."}
-        - {start: "16:00", kind: meal, title: "Meal 2 — pre-BJJ", notes: "Protein + carbs, 2.5h before class."}
+        - {start: "15:00", end: "17:00", kind: work, title: "Deep work"}
+        - {start: "17:00", kind: meal, title: "Meal 2 — pre-BJJ", notes: "Moderate size, protein + carbs, 1.5h before class."}
         - {start: "18:30", end: "20:00", kind: training, title: "BJJ — no-gi technical, lighter rolls"}
         - {start: "20:30", kind: meal, title: "Meal 3 — dinner", notes: "Finish by 21:00."}
       thursday:
+        - {start: "08:40", end: "09:20", kind: training, strength_session: yoga_flow, title: "Strength-yoga flow"}
+        - {start: "10:00", end: "12:00", kind: work, title: "Deep work"}
         - {start: "12:00", kind: meal, title: "Meal 1 — break the fast"}
-        - {start: "16:00", kind: meal, title: "Meal 2"}
-        - {start: "18:30", end: "19:00", kind: rest, title: "Full rest — optional 20-30 min easy mobility yoga"}
+        - {start: "15:00", end: "17:00", kind: work, title: "Deep work"}
+        - {start: "17:00", kind: meal, title: "Meal 2"}
         - {start: "20:00", kind: meal, title: "Meal 3 — dinner", notes: "Finish by 21:00."}
       friday:
+        - {start: "10:00", end: "12:00", kind: work, title: "Deep work"}
         - {start: "12:00", kind: meal, title: "Meal 1 — break the fast"}
-        - {start: "16:00", kind: meal, title: "Meal 2 — pre-BJJ", notes: "Protein + carbs, 2.5h before open mat."}
+        - {start: "15:00", end: "17:00", kind: work, title: "Deep work"}
+        - {start: "17:00", kind: meal, title: "Meal 2 — pre-BJJ", notes: "Moderate size, protein + carbs, 1.5h before open mat."}
         - {start: "18:30", end: "20:00", kind: training, title: "BJJ — open mat (hard day)", notes: "Up to 10-15 rolls."}
         - {start: "20:30", kind: meal, title: "Meal 3 — dinner", notes: "Finish by 21:00."}
       saturday:
-        - {start: "08:15", end: "10:45", kind: training, title: "Easy Z2 bike ride with Dad", notes: "40-60 km, genuinely easy. Water; a banana on the ride if needed."}
-        - {start: "11:00", kind: meal, title: "Meal 1 — after the ride", notes: "Window opens at 11:00 on Saturdays to refuel after the ride."}
+        - {start: "10:00", end: "10:55", kind: training, strength_session: strength_c, title: "Strength C", notes: "Free day. Upper body and core; legs light for tomorrow's sprints."}
+        - {start: "12:00", kind: meal, title: "Meal 1 — break the fast", notes: "Big protein serving after this morning's strength."}
         - {start: "16:00", kind: meal, title: "Meal 2"}
+        - {start: "17:30", end: "18:10", kind: training, strength_session: yoga_flow, title: "Strength-yoga flow"}
         - {start: "20:30", kind: meal, title: "Dinner — planned restaurant meal", notes: "Planned for, not a violation. Finish by 21:00."}
       sunday:
-        - {start: "07:30", end: "07:35", kind: log, title: "Weekly waist measurement", notes: "Fasted, below the navel — before coffee."}
-        - {start: "10:00", end: "10:30", kind: training, title: "Optional 4x4 bike intervals", notes: "Green readiness only. Otherwise rest or light strength yoga."}
-        - {start: "12:00", kind: meal, title: "Meal 1 — break the fast"}
+        - {start: "08:30", end: "08:35", kind: log, title: "Weekly waist measurement", notes: "Fasted, below the navel."}
+        - {start: "08:50", end: "09:40", kind: training, sprint_session: hill_sprints, title: "Hill sprints", notes: "Uphill only, walk back down. Stop at any knee pain."}
+        - {start: "10:00", end: "12:00", kind: work, title: "Deep work — half day"}
+        - {start: "12:00", kind: meal, title: "Meal 1 — break the fast", notes: "Refuel after the sprints."}
         - {start: "16:00", kind: meal, title: "Meal 2"}
         - {start: "19:00", end: "19:15", kind: log, title: "Review the weekly retro", notes: "Health OS weekly summary."}
         - {start: "20:00", kind: meal, title: "Meal 3 — dinner", notes: "Finish by 21:00."}
-    day_eating_window:
-      saturday: ["11:00", "21:00"]
   strength_sessions:
     strength_a:
       day: monday
-      duration_min: 70
+      duration_min: 55
       exercises:
         - "pull-ups (add weight once 4x8 is easy): 4x5-8"
         - "push-ups or dips (progress via deficit or added weight): 3x6-10"
         - "Bulgarian split squats, backpack or kettlebell: 3x8/leg"
         - "toes-to-bar: 3x6-10"
-        - "strength-yoga flow (chaturanga holds, leg holds, back work, mobility): 30-40 min"
     strength_b:
       day: wednesday
-      duration_min: 70
+      duration_min: 55
       exercises:
         - "chin-ups or towel pull-ups (grip): 4x5-8"
         - "archer or pseudo-planche push-ups: 3x6-10"
         - "barbell Romanian deadlift (up to 60 kg is plenty for now): 3x6-8"
         - "toes-to-bar: 3x6-10"
-        - "strength-yoga flow (chaturanga holds, leg holds, back work, mobility): 30-40 min"
+    strength_c:
+      day: saturday
+      duration_min: 55
+      exercises:
+        - "weighted or slow-tempo pull-ups: 4x5-8"
+        - "dips or deficit push-ups: 3x6-10"
+        - "inverted rows or single-arm kettlebell rows: 3x8-12"
+        - "hanging knee raises or L-sit holds: 3x8-12 / 3x15-30 s"
+        - "kettlebell suitcase carry: 3x30-40 m per side"
+    yoga_flow:
+      day: thursday
+      duration_min: 40
+      exercises:
+        - "chaturanga holds"
+        - "leg holds (warrior and chair holds)"
+        - "back work (locust, bridges)"
+        - "mobility to finish"
     notes: >
-      Strength block first, then yoga (long static stretching right before lifting
-      slightly reduces strength). Progress when every set hits the top of the rep
-      range at RPE 8 or below. Chaturanga holds count as pushing volume, so the
-      separate push stays at 3 sets. No pressing progression in a week with a logged
-      neck niggle (hard guardrail, enforced in coach/rules.py).
+      Progress when every set hits the top of the rep range at RPE 8 or below.
+      The strength-yoga flow is its own session now (Thursday and Saturday), so
+      strength sessions are strength only. Chaturanga holds count as pushing
+      volume. Strength C keeps legs light because Sunday is a sprint day. No
+      pressing progression in a week with a logged neck niggle (hard guardrail,
+      enforced in coach/rules.py).
+  # Running exception, 2026-10-21: Francisco explicitly chose running hill
+  # sprints over the bike alternative, overriding his own no-running knee rule
+  # (see `injuries` below). Uphill only, so the knee takes no downhill braking.
+  sprint_sessions:
+    hill_sprints:
+      duration_min: 50
+      exercises:
+        - "warm-up 10-15 min: brisk uphill walk, leg swings, skips, 2-3 build-up strides at 70-80%"
+        - "5 x 30 s all-out uphill sprint (vary the hills)"
+        - "walk back down; 3-5 min total rest between reps"
+        - "cool-down 5-10 min easy walk"
+    notes: >
+      Uphill only, walk back down: running downhill loads the knee most. Stop
+      the session at any knee pain. Build up: 3 sprints per session for the
+      first 2 weeks, then 4 for 2 weeks, then 5.
 
 nutrition:
   protein_g_daily_min: 160         # the one hard number -- lowered from 180 on 2026-09-28 per
@@ -368,7 +422,11 @@ equipment:
 injuries:
   hard_no:
     - condition: "prior right knee injury from running"
-      rule: "never recommend running, in any readiness band, permanently"
+      rule: >
+        never recommend running, in any readiness band, permanently -- with one
+        explicit exception Francisco chose on 2026-10-21: the scheduled uphill
+        hill sprints (walk back down; stop at any knee pain). See
+        weekly_architecture.sprint_sessions.
   conditional:
     - condition: "recurring neck vulnerability, aggravated by forward head position under load"
       rule: >

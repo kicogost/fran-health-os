@@ -111,6 +111,28 @@ class TestStrengthWorkouts:
             "monday: 'X' links unknown session 'strength_z'"
         ]
 
+    def test_real_week_links_every_training_morning_to_a_workout(self) -> None:
+        # 2026-10-21 week: strength A/B/C, yoga flow Thu + Sat, sprints Tue + Sun.
+        config = yaml.safe_load(REAL_CONFIG.read_text(encoding="utf-8"))
+        payload = build_schedule_payload(config, date(2026, 10, 19))
+        linked = {
+            d["day"]: sorted(
+                b.get("strength_session") or b.get("sprint_session")
+                for b in d["blocks"]
+                if b.get("exercises")
+            )
+            for d in payload["days"]
+        }
+        assert linked == {
+            "monday": ["strength_a"],
+            "tuesday": ["hill_sprints"],
+            "wednesday": ["strength_b"],
+            "thursday": ["yoga_flow"],
+            "friday": [],
+            "saturday": ["strength_c", "yoga_flow"],
+            "sunday": ["hill_sprints"],
+        }
+
     def test_real_monday_and_wednesday_show_their_workouts(self) -> None:
         config = yaml.safe_load(REAL_CONFIG.read_text(encoding="utf-8"))
         payload = build_schedule_payload(config, date(2026, 10, 19))
@@ -153,7 +175,10 @@ class TestRealConfig:
     def test_real_routine_is_consistent(self) -> None:
         config = yaml.safe_load(REAL_CONFIG.read_text(encoding="utf-8"))
         plan = config["weekly_architecture"]
-        assert validate_routine(plan["daily_routine"], plan["strength_sessions"]) == []
+        problems = validate_routine(
+            plan["daily_routine"], plan["strength_sessions"], plan["sprint_sessions"]
+        )
+        assert problems == []
 
     def test_real_routine_covers_all_days_with_morning_routine(self) -> None:
         config = yaml.safe_load(REAL_CONFIG.read_text(encoding="utf-8"))
@@ -162,6 +187,11 @@ class TestRealConfig:
         for day in payload["days"]:
             kinds = {b["kind"] for b in day["blocks"]}
             assert {"mind", "mobility", "sleep"} <= kinds, day["day"]
+
+    def test_no_saturday_bike(self) -> None:
+        config = yaml.safe_load(REAL_CONFIG.read_text(encoding="utf-8"))
+        template = config["weekly_architecture"]["weekly_template"]
+        assert all(s["type"] != "bike" for d in template for s in d["sessions"])
 
     def test_no_bjj_on_tuesday(self) -> None:
         config = yaml.safe_load(REAL_CONFIG.read_text(encoding="utf-8"))

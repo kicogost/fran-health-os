@@ -37,9 +37,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from health_os.coach import rules  # noqa: E402
 from health_os.core import db  # noqa: E402
-from health_os.core.models import CalisthenicsSession  # noqa: E402
+from health_os.core.models import CALISTHENICS_SESSION_TYPES, CalisthenicsSession  # noqa: E402
 
-SESSION_TYPES = ("strength_a", "strength_b")
+SESSION_TYPES = CALISTHENICS_SESSION_TYPES
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "athlete.yaml"
 
 

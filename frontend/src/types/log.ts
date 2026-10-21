@@ -42,7 +42,7 @@ export interface ExerciseEntry {
 
 export interface CalisthenicsRequest {
   date: string
-  session_type: "strength_a" | "strength_b"
+  session_type: "strength_a" | "strength_b" | "strength_c" | "yoga_flow"
   session_rpe?: number | null
   exercises?: ExerciseEntry[] | null
   notes?: string | null

@@ -9,12 +9,14 @@ import {
   ClipboardCheck,
   Coffee,
   Dumbbell,
+  Laptop,
   Moon,
   MoonStar,
   PersonStanding,
   Sunrise,
   Swords,
   Utensils,
+  Zap,
 } from "lucide-react"
 import { ApiError, fetchSchedule } from "@/lib/api"
 import { CARD_CLASS, CARD_CLASS_FLAT } from "@/lib/styles"
@@ -39,6 +41,7 @@ const KIND_STYLE: Record<BlockKind, { icon: LucideIcon; color: string }> = {
   meal: { icon: Utensils, color: "var(--band-green)" },
   coffee: { icon: Coffee, color: "var(--muted-foreground)" },
   training: { icon: Dumbbell, color: "var(--band-red)" },
+  work: { icon: Laptop, color: "var(--muted-foreground)" },
   rest: { icon: BedDouble, color: "var(--band-green)" },
   wind_down: { icon: MoonStar, color: "var(--band-blue)" },
   sleep: { icon: Moon, color: "var(--band-blue)" },
@@ -49,6 +52,8 @@ function iconFor(block: ScheduleBlock): LucideIcon {
     const t = block.title.toLowerCase()
     if (t.includes("bjj")) return Swords
     if (t.includes("bike")) return Bike
+    if (t.includes("sprint")) return Zap
+    if (t.includes("yoga")) return PersonStanding
   }
   return KIND_STYLE[block.kind].icon
 }

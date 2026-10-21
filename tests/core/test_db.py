@@ -33,7 +33,7 @@ class TestMigrations:
 
     def test_records_applied_version(self, conn: sqlite3.Connection) -> None:
         versions = [row["version"] for row in conn.execute("SELECT version FROM schema_migrations")]
-        assert versions == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        assert versions == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 
     def test_is_idempotent(self, conn: sqlite3.Connection) -> None:
         newly_applied = db_module.apply_migrations(conn)
@@ -525,3 +525,19 @@ class TestIngestRuns:
         # being the audit trail for noticing a silently-broken pipeline.
         with pytest.raises(ValueError, match="no ingest_runs row"):
             db_module.finish_ingest_run(conn, 999999, status="success")
+
+
+class TestCalisthenicsSessionTypesMigration:
+    def test_db_accepts_new_types_and_rejects_unknown(self, conn: sqlite3.Connection) -> None:
+        # Migration 0011 widened the CHECK constraint at the database level too,
+        # not just in core.models.CalisthenicsSession.
+        for session_type in ("strength_a", "strength_c", "yoga_flow"):
+            conn.execute(
+                "INSERT INTO calisthenics_sessions (date, session_type) VALUES (?, ?)",
+                ("2026-10-24", session_type),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO calisthenics_sessions (date, session_type) VALUES (?, ?)",
+                ("2026-10-24", "strength_d"),
+            )

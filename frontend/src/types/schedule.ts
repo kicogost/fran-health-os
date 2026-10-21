@@ -6,6 +6,7 @@ export type BlockKind =
   | "meal"
   | "coffee"
   | "training"
+  | "work"
   | "rest"
   | "wind_down"
   | "sleep"
@@ -16,8 +17,9 @@ export interface ScheduleBlock {
   kind: BlockKind
   title: string
   notes?: string
-  /** Set on strength blocks: the prescribed session, shown when opened. */
+  /** Set on strength / sprint blocks: the prescribed session, shown when opened. */
   strength_session?: string
+  sprint_session?: string
   exercises?: string[]
   workout_notes?: string
 }

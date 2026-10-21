@@ -7,6 +7,7 @@ import {
 } from "@/lib/api"
 import { todayLocal } from "@/lib/date"
 import { CARD_CLASS } from "@/lib/styles"
+import type { CalisthenicsRequest } from "@/types/log"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -17,6 +18,8 @@ import { SliderField } from "@/components/log/SliderField"
 const SESSION_TYPES = [
   { value: "strength_a", label: "Strength A" },
   { value: "strength_b", label: "Strength B" },
+  { value: "strength_c", label: "Strength C" },
+  { value: "yoga_flow", label: "Strength-yoga flow" },
 ]
 
 interface ExerciseInput {
@@ -163,7 +166,7 @@ export function LogCalisthenicsTab() {
     try {
       const session = await saveCalisthenics({
         date,
-        session_type: sessionType as "strength_a" | "strength_b",
+        session_type: sessionType as CalisthenicsRequest["session_type"],
         session_rpe: rpe,
         exercises: exercises.length > 0 ? exercises : null,
         notes: notes || null,

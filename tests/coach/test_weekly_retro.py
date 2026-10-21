@@ -243,3 +243,42 @@ class TestFormatWeeklyRetro:
         plan = compute_weekly_retro(conn, _CONFIG, WEEK_ENDING)
         text = format_weekly_retro(plan)
         assert "pull-ups: 4x5 @ +5.0kg" in text
+
+
+class TestSprintSessions:
+    """Hill sprints (2026-10-21) count as done when the watch recorded a run."""
+
+    def _config_with_sunday_sprints(self) -> dict:
+        import copy
+
+        config = copy.deepcopy(_CONFIG)
+        plan_key = next(
+            k for k, v in config.items() if isinstance(v, dict) and "weekly_template" in v
+        )
+        for day in config[plan_key]["weekly_template"]:
+            if day["day"] == "sunday":
+                day["sessions"] = [{"type": "sprints", "subtype": "hill_sprints"}]
+        return config
+
+    def test_sprints_completed_from_a_recorded_run(self, conn: sqlite3.Connection) -> None:
+        db.upsert(
+            conn,
+            "activities",
+            Activity(
+                activity_id="garmin:9",
+                source="garmin",
+                source_id="9",
+                start_utc="2026-08-30T07:00:00Z",
+                local_date="2026-08-30",
+                sport="running",
+            ).to_row(),
+            ["source", "source_id"],
+        )
+        plan = compute_weekly_retro(conn, self._config_with_sunday_sprints(), WEEK_ENDING)
+        by_date = {(s["date"], s["type"]): s["status"] for s in plan["sessions"]}
+        assert by_date[("2026-08-30", "sprints")] == "completed"
+
+    def test_sprints_without_a_run_are_missed(self, conn: sqlite3.Connection) -> None:
+        plan = compute_weekly_retro(conn, self._config_with_sunday_sprints(), WEEK_ENDING)
+        by_date = {(s["date"], s["type"]): s["status"] for s in plan["sessions"]}
+        assert by_date[("2026-08-30", "sprints")] == "missed"

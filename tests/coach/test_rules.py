@@ -84,6 +84,20 @@ class TestSessionGuidance:
     def test_rest_session(self) -> None:
         assert "rest" in session_guidance({"type": "rest"}, "green").lower()
 
+    def test_hill_sprints_always_carry_the_knee_rule(self) -> None:
+        # Running exception (2026-10-21): every band that runs says stop at knee pain.
+        session = {"type": "sprints", "subtype": "hill_sprints"}
+        for band in ("green", "amber"):
+            text = session_guidance(session, band).lower()
+            assert "uphill" in text and "knee pain" in text
+        assert "skip" in session_guidance(session, "red").lower()
+
+    def test_new_calisthenics_types_have_guidance(self) -> None:
+        for subtype in ("strength_c", "yoga_flow"):
+            for band in ("green", "amber", "red"):
+                text = session_guidance({"type": "calisthenics", "subtype": subtype}, band)
+                assert "No guidance rule" not in text
+
     def test_no_data_band_ignores_session_type(self) -> None:
         result = session_guidance({"type": "bjj", "subtype": "open_mat"}, "no_data")
         assert "go by feel" in result.lower()

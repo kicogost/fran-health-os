@@ -7,7 +7,7 @@
 -- without reading every migration in sequence. tests/core/test_schema_sync.py fails
 -- if this drifts from the migrations.
 --
--- Current version: 10 (core/migrations/0001_initial_schema.sql,
+-- Current version: 11 (core/migrations/0001_initial_schema.sql,
 -- core/migrations/0002_bjj_wellness_and_load.sql,
 -- core/migrations/0003_calisthenics_sessions.sql,
 -- core/migrations/0004_activity_laps.sql,
@@ -16,7 +16,8 @@
 -- core/migrations/0007_renpho_body_composition.sql,
 -- core/migrations/0008_calisthenics_load.sql,
 -- core/migrations/0009_health_history.sql,
--- core/migrations/0010_activity_auto_segments.sql)
+-- core/migrations/0010_activity_auto_segments.sql,
+-- core/migrations/0011_calisthenics_more_session_types.sql)
 --
 -- Note: this snapshot is semantically compared against the migrated schema
 -- (column name/type/notnull/pk/default per table), not byte-for-byte SQL text —
@@ -200,7 +201,9 @@ CREATE TABLE IF NOT EXISTS bjj_sessions (
 CREATE TABLE IF NOT EXISTS calisthenics_sessions (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     date           TEXT NOT NULL,
-    session_type   TEXT NOT NULL CHECK (session_type IN ('strength_a', 'strength_b')),
+    session_type   TEXT NOT NULL CHECK (
+        session_type IN ('strength_a', 'strength_b', 'strength_c', 'yoga_flow')
+    ),
     session_rpe    INTEGER CHECK (session_rpe BETWEEN 1 AND 10),
     exercises_json TEXT,
     notes          TEXT,

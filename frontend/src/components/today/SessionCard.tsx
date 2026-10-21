@@ -1,4 +1,12 @@
-import { BedDouble, Bike, Dumbbell, Swords, TriangleAlert, type LucideIcon } from "lucide-react"
+import {
+  BedDouble,
+  Bike,
+  Dumbbell,
+  Swords,
+  TriangleAlert,
+  Zap,
+  type LucideIcon,
+} from "lucide-react"
 import { CARD_CLASS } from "@/lib/styles"
 import type { Session, StructuralFlags } from "@/types/today"
 
@@ -23,6 +31,7 @@ const SESSION_ICONS: Record<string, LucideIcon> = {
   bike: Bike,
   calisthenics: Dumbbell,
   rest: BedDouble,
+  sprints: Zap,
 }
 
 interface SessionCardProps {

@@ -352,6 +352,9 @@ class BjjSession:
         )
 
 
+CALISTHENICS_SESSION_TYPES = ("strength_a", "strength_b", "strength_c", "yoga_flow")
+
+
 @dataclass(slots=True)
 class CalisthenicsSession:
     """One row of `calisthenics_sessions` (migration 0003) — grain:
@@ -380,7 +383,7 @@ class CalisthenicsSession:
     """
 
     date: str
-    session_type: str  # "strength_a" | "strength_b"
+    session_type: str  # "strength_a" | "strength_b" | "strength_c" | "yoga_flow"
     id: int | None = None
     session_rpe: int | None = None
     exercises: list[dict[str, Any]] | None = None
@@ -389,7 +392,7 @@ class CalisthenicsSession:
     computed_load: float | None = None
 
     def __post_init__(self) -> None:
-        if self.session_type not in ("strength_a", "strength_b"):
+        if self.session_type not in CALISTHENICS_SESSION_TYPES:
             raise ValueError(f"invalid session_type: {self.session_type!r}")
         if self.session_rpe is not None and not 1 <= self.session_rpe <= 10:
             raise ValueError(f"session_rpe must be 1-10, got {self.session_rpe!r}")
