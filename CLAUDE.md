@@ -4620,6 +4620,13 @@ show the protocol. New block kind `work`. Weekly retro counts a sprint day
 done when a `run`/`*running*` activity exists that date. Log page offers
 Strength C and yoga flow. 16 new/updated tests, 957 passing.
 
+**Changed 2026-10-23:** weekdays are now deep work 09:00-13:00 and
+14:00-18:00, lunch 13:00-14:00 (breaks the fast), a pre-training snack at
+17:00, and all training at 18:30. Strength A moved from Monday morning to
+Tuesday, straight after the hill sprints. Strength B moved from Wednesday to
+Thursday evening, followed by the yoga flow. Mon/Wed are BJJ only, Fri is
+open mat. Weekend unchanged. The schedule tests were updated to match.
+
 ## Definition of done for v1
 
 One command each morning: syncs Garmin + Strava, recomputes everything, prints a

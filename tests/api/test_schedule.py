@@ -112,7 +112,7 @@ class TestStrengthWorkouts:
         ]
 
     def test_real_week_links_every_training_morning_to_a_workout(self) -> None:
-        # 2026-10-21 week: strength A/B/C, yoga flow Thu + Sat, sprints Tue + Sun.
+        # 2026-10-23 week: sprints + A Tue, B + yoga Thu, C + yoga Sat, sprints Sun.
         config = yaml.safe_load(REAL_CONFIG.read_text(encoding="utf-8"))
         payload = build_schedule_payload(config, date(2026, 10, 19))
         linked = {
@@ -124,21 +124,21 @@ class TestStrengthWorkouts:
             for d in payload["days"]
         }
         assert linked == {
-            "monday": ["strength_a"],
-            "tuesday": ["hill_sprints"],
-            "wednesday": ["strength_b"],
-            "thursday": ["yoga_flow"],
+            "monday": [],
+            "tuesday": ["hill_sprints", "strength_a"],
+            "wednesday": [],
+            "thursday": ["strength_b", "yoga_flow"],
             "friday": [],
             "saturday": ["strength_c", "yoga_flow"],
             "sunday": ["hill_sprints"],
         }
 
-    def test_real_monday_and_wednesday_show_their_workouts(self) -> None:
+    def test_real_tuesday_and_thursday_show_their_workouts(self) -> None:
         config = yaml.safe_load(REAL_CONFIG.read_text(encoding="utf-8"))
         payload = build_schedule_payload(config, date(2026, 10, 19))
         by_day = {d["day"]: d for d in payload["days"]}
-        for day in ("monday", "wednesday"):
-            strength = [b for b in by_day[day]["blocks"] if b.get("strength_session")]
+        for day, session in (("tuesday", "strength_a"), ("thursday", "strength_b")):
+            strength = [b for b in by_day[day]["blocks"] if b.get("strength_session") == session]
             assert len(strength) == 1 and strength[0]["exercises"], day
 
 

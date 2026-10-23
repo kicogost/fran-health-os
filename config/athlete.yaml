@@ -202,18 +202,15 @@ comp_prep:
 weekly_architecture:
   active: true
   starts: "2026-10-19"
-  # Reworked 2026-10-21 at Francisco's request: wake 08:00, deep-work blocks
-  # 10-12 and 15-17 on weekdays (Sunday half day, 10-12 only, Saturday off),
-  # no Saturday bike, 3 strength sessions (A Mon, B Wed, C Sat), 2 standalone
-  # strength-yoga flows (Thu, Sat), 2 hill-sprint sessions (Tue, Sun), BJJ
-  # Mon/Wed + open mat Fri. Thursday is the lightest day.
+  # Reworked 2026-10-21 at Francisco's request (wake 08:00, no Saturday bike,
+  # 3 strength sessions, 2 strength-yoga flows, 2 hill-sprint sessions, BJJ
+  # Mon/Wed + open mat Fri). Changed again 2026-10-23: weekdays are now deep
+  # work 09-13 and 14-18 with lunch 13-14, and every weekday session moved
+  # to 18:30 -- Strength A to Tuesday after the sprints, Strength B to
+  # Thursday before the yoga flow. Weekend unchanged.
   weekly_template:
     - day: monday
       sessions:
-        - type: calisthenics
-          subtype: strength_a
-          duration_min: 55
-          notes: "Morning, 3h+ before BJJ."
         - type: bjj
           subtype: no_gi_technical
           format: "60min drilling + 30min rolling (4-5 x 5min rounds)"
@@ -224,12 +221,12 @@ weekly_architecture:
           subtype: hill_sprints
           duration_min: 50
           notes: "Uphill only, walk back down. Stop at any knee pain."
+        - type: calisthenics
+          subtype: strength_a
+          duration_min: 55
+          notes: "Straight after the sprints, same evening."
     - day: wednesday
       sessions:
-        - type: calisthenics
-          subtype: strength_b
-          duration_min: 55
-          notes: "Morning, 3h+ before BJJ."
         - type: bjj
           subtype: no_gi_technical
           format: "60min drilling + 30min rolling (4-5 x 5min rounds)"
@@ -237,9 +234,13 @@ weekly_architecture:
     - day: thursday
       sessions:
         - type: calisthenics
+          subtype: strength_b
+          duration_min: 55
+          notes: "Evening, before the yoga flow."
+        - type: calisthenics
           subtype: yoga_flow
           duration_min: 40
-          notes: "The week's lightest day."
+          notes: "Straight after Strength B."
     - day: friday
       sessions:
         - type: bjj
@@ -263,8 +264,9 @@ weekly_architecture:
           duration_min: 50
           notes: "Uphill only, walk back down. Stop at any knee pain."
   # Strict daily routine with clock times (Francisco's own choices, last
-  # changed 2026-10-21: wake 08:00, lights out 23:00, deep work 10-12 and
-  # 15-17, 12:00-21:00 eating window). Rendered by the dashboard's Schedule
+  # changed 2026-10-23: wake 08:00, lights out 23:00, weekday deep work 09-13
+  # and 14-18 with lunch 13-14, training at 18:30, 12:00-21:00 eating
+  # window). Rendered by the dashboard's Schedule
   # page (api/schedule.py). `every_day` blocks apply to all 7 days; each day
   # adds its own. Kinds drive icons/colours: routine, mind, mobility, log,
   # meal, coffee, training, work, rest, wind_down, sleep. A `strength_session`
@@ -285,42 +287,42 @@ weekly_architecture:
       - {start: "23:00", kind: sleep, title: "Lights out"}
     days:
       monday:
-        - {start: "08:40", end: "09:35", kind: training, strength_session: strength_a, title: "Strength A", notes: "Fasted is fine."}
-        - {start: "10:00", end: "12:00", kind: work, title: "Deep work"}
-        - {start: "12:00", kind: meal, title: "Meal 1 — break the fast", notes: "Big protein serving after this morning's strength."}
-        - {start: "15:00", end: "17:00", kind: work, title: "Deep work"}
-        - {start: "17:00", kind: meal, title: "Meal 2 — pre-BJJ", notes: "Moderate size, protein + carbs, 1.5h before class."}
+        - {start: "09:00", end: "13:00", kind: work, title: "Deep work"}
+        - {start: "13:00", end: "14:00", kind: meal, title: "Lunch — break the fast"}
+        - {start: "14:00", end: "18:00", kind: work, title: "Deep work"}
+        - {start: "17:00", kind: meal, title: "Pre-training snack at your desk", notes: "Moderate, protein + carbs, 1.5h before training."}
         - {start: "18:30", end: "20:00", kind: training, title: "BJJ — no-gi technical"}
-        - {start: "20:30", kind: meal, title: "Meal 3 — dinner", notes: "Finish by 21:00."}
+        - {start: "20:30", kind: meal, title: "Dinner", notes: "Finish by 21:00."}
       tuesday:
-        - {start: "08:40", end: "09:30", kind: training, sprint_session: hill_sprints, title: "Hill sprints", notes: "Uphill only, walk back down. Stop at any knee pain."}
-        - {start: "10:00", end: "12:00", kind: work, title: "Deep work"}
-        - {start: "12:00", kind: meal, title: "Meal 1 — break the fast", notes: "Refuel after the sprints."}
-        - {start: "15:00", end: "17:00", kind: work, title: "Deep work"}
-        - {start: "17:00", kind: meal, title: "Meal 2"}
-        - {start: "20:00", kind: meal, title: "Meal 3 — dinner", notes: "Finish by 21:00."}
+        - {start: "09:00", end: "13:00", kind: work, title: "Deep work"}
+        - {start: "13:00", end: "14:00", kind: meal, title: "Lunch — break the fast"}
+        - {start: "14:00", end: "18:00", kind: work, title: "Deep work"}
+        - {start: "17:00", kind: meal, title: "Pre-training snack at your desk", notes: "Moderate, protein + carbs, 1.5h before training."}
+        - {start: "18:30", end: "19:20", kind: training, sprint_session: hill_sprints, title: "Hill sprints", notes: "Uphill only, walk back down. Stop at any knee pain."}
+        - {start: "19:25", end: "20:20", kind: training, strength_session: strength_a, title: "Strength A"}
+        - {start: "20:30", kind: meal, title: "Dinner", notes: "Big protein serving after strength. Finish by 21:00."}
       wednesday:
-        - {start: "08:40", end: "09:35", kind: training, strength_session: strength_b, title: "Strength B", notes: "Fasted is fine."}
-        - {start: "10:00", end: "12:00", kind: work, title: "Deep work"}
-        - {start: "12:00", kind: meal, title: "Meal 1 — break the fast", notes: "Big protein serving after this morning's strength."}
-        - {start: "15:00", end: "17:00", kind: work, title: "Deep work"}
-        - {start: "17:00", kind: meal, title: "Meal 2 — pre-BJJ", notes: "Moderate size, protein + carbs, 1.5h before class."}
+        - {start: "09:00", end: "13:00", kind: work, title: "Deep work"}
+        - {start: "13:00", end: "14:00", kind: meal, title: "Lunch — break the fast"}
+        - {start: "14:00", end: "18:00", kind: work, title: "Deep work"}
+        - {start: "17:00", kind: meal, title: "Pre-training snack at your desk", notes: "Moderate, protein + carbs, 1.5h before training."}
         - {start: "18:30", end: "20:00", kind: training, title: "BJJ — no-gi technical, lighter rolls"}
-        - {start: "20:30", kind: meal, title: "Meal 3 — dinner", notes: "Finish by 21:00."}
+        - {start: "20:30", kind: meal, title: "Dinner", notes: "Finish by 21:00."}
       thursday:
-        - {start: "08:40", end: "09:20", kind: training, strength_session: yoga_flow, title: "Strength-yoga flow"}
-        - {start: "10:00", end: "12:00", kind: work, title: "Deep work"}
-        - {start: "12:00", kind: meal, title: "Meal 1 — break the fast"}
-        - {start: "15:00", end: "17:00", kind: work, title: "Deep work"}
-        - {start: "17:00", kind: meal, title: "Meal 2"}
-        - {start: "20:00", kind: meal, title: "Meal 3 — dinner", notes: "Finish by 21:00."}
+        - {start: "09:00", end: "13:00", kind: work, title: "Deep work"}
+        - {start: "13:00", end: "14:00", kind: meal, title: "Lunch — break the fast"}
+        - {start: "14:00", end: "18:00", kind: work, title: "Deep work"}
+        - {start: "17:00", kind: meal, title: "Pre-training snack at your desk", notes: "Moderate, protein + carbs, 1.5h before training."}
+        - {start: "18:30", end: "19:25", kind: training, strength_session: strength_b, title: "Strength B"}
+        - {start: "19:30", end: "20:10", kind: training, strength_session: yoga_flow, title: "Strength-yoga flow"}
+        - {start: "20:30", kind: meal, title: "Dinner", notes: "Big protein serving after strength. Finish by 21:00."}
       friday:
-        - {start: "10:00", end: "12:00", kind: work, title: "Deep work"}
-        - {start: "12:00", kind: meal, title: "Meal 1 — break the fast"}
-        - {start: "15:00", end: "17:00", kind: work, title: "Deep work"}
-        - {start: "17:00", kind: meal, title: "Meal 2 — pre-BJJ", notes: "Moderate size, protein + carbs, 1.5h before open mat."}
+        - {start: "09:00", end: "13:00", kind: work, title: "Deep work"}
+        - {start: "13:00", end: "14:00", kind: meal, title: "Lunch — break the fast"}
+        - {start: "14:00", end: "18:00", kind: work, title: "Deep work"}
+        - {start: "17:00", kind: meal, title: "Pre-training snack at your desk", notes: "Moderate, protein + carbs, 1.5h before training."}
         - {start: "18:30", end: "20:00", kind: training, title: "BJJ — open mat (hard day)", notes: "Up to 10-15 rolls."}
-        - {start: "20:30", kind: meal, title: "Meal 3 — dinner", notes: "Finish by 21:00."}
+        - {start: "20:30", kind: meal, title: "Dinner", notes: "Finish by 21:00."}
       saturday:
         - {start: "10:00", end: "10:55", kind: training, strength_session: strength_c, title: "Strength C", notes: "Free day. Upper body and core; legs light for tomorrow's sprints."}
         - {start: "12:00", kind: meal, title: "Meal 1 — break the fast", notes: "Big protein serving after this morning's strength."}
@@ -337,7 +339,7 @@ weekly_architecture:
         - {start: "20:00", kind: meal, title: "Meal 3 — dinner", notes: "Finish by 21:00."}
   strength_sessions:
     strength_a:
-      day: monday
+      day: tuesday
       duration_min: 55
       exercises:
         - "pull-ups (add weight once 4x8 is easy): 4x5-8"
@@ -345,7 +347,7 @@ weekly_architecture:
         - "Bulgarian split squats, backpack or kettlebell: 3x8/leg"
         - "toes-to-bar: 3x6-10"
     strength_b:
-      day: wednesday
+      day: thursday
       duration_min: 55
       exercises:
         - "chin-ups or towel pull-ups (grip): 4x5-8"
@@ -371,8 +373,10 @@ weekly_architecture:
         - "mobility to finish"
     notes: >
       Progress when every set hits the top of the rep range at RPE 8 or below.
-      The strength-yoga flow is its own session now (Thursday and Saturday), so
-      strength sessions are strength only. Chaturanga holds count as pushing
+      The strength-yoga flow is its own session (Thursday after Strength B, and
+      Saturday), so strength sessions are strength only. Strength A comes
+      straight after Tuesday's sprints, so its split squats will feel heavier;
+      that's expected. Chaturanga holds count as pushing
       volume. Strength C keeps legs light because Sunday is a sprint day. No
       pressing progression in a week with a logged neck niggle (hard guardrail,
       enforced in coach/rules.py).
